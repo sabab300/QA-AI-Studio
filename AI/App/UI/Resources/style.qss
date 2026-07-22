@@ -1,0 +1,476 @@
+/******************************************************************************
+ QA AI Studio
+ Enterprise Theme v1.0
+ Inspired by Pakistan Single Window (PSW)
+
+ Author : QA AI Studio
+******************************************************************************/
+
+/* ==========================================================================
+   GLOBAL
+   ========================================================================== */
+
+*{
+    font-family: "Segoe UI";
+    font-size: 10pt;
+    outline: none;
+}
+
+
+/* ==========================================================================
+   MAIN WINDOW
+   ========================================================================== */
+
+QMainWindow{
+
+    background:#F4F7FB;
+
+}
+
+
+/* ==========================================================================
+   CENTRAL AREA
+   ========================================================================== */
+
+QWidget#CentralWidget{
+
+    background:#F4F7FB;
+
+}
+
+
+/* ==========================================================================
+   TOP BAR
+   ========================================================================== */
+
+QFrame#TopBar{
+
+    background:#0C4DA2;
+
+    border:none;
+
+    min-height:64px;
+
+    max-height:64px;
+
+}
+
+
+QLabel#AppTitle{
+
+    color:white;
+
+    font-size:18pt;
+
+    font-weight:bold;
+
+}
+
+
+QLabel#AppSubtitle{
+
+    color:white;
+
+    font-size:9pt;
+
+}
+
+
+/* ==========================================================================
+   LEFT MENU
+   ========================================================================== */
+
+QFrame#SideMenu{
+
+    background:white;
+
+    border-right:1px solid #D9DDE4;
+
+    min-width:240px;
+
+    max-width:240px;
+
+}
+
+
+/* ==========================================================================
+   MENU BUTTONS
+   ========================================================================== */
+
+QPushButton#MenuButton{
+
+    background:transparent;
+
+    border:none;
+
+    color:#23313F;
+
+    text-align:left;
+
+    padding-left:18px;
+
+    height:42px;
+
+    font-size:11pt;
+
+}
+
+
+QPushButton#MenuButton:hover{
+
+    background:#EAF3FF;
+
+    color:#0C4DA2;
+
+}
+
+
+QPushButton#MenuButton:checked{
+
+    background:#D6E9FF;
+
+    color:#0C4DA2;
+
+    font-weight:bold;
+
+}
+
+
+/* ==========================================================================
+   PAGE AREA
+   ========================================================================== */
+
+QFrame#ContentArea{
+
+    background:#F4F7FB;
+
+}
+
+
+/* ==========================================================================
+   PAGE TITLE
+   ========================================================================== */
+
+QLabel#PageTitle{
+
+    font-size:18pt;
+
+    font-weight:bold;
+
+    color:#23313F;
+
+}
+
+
+QLabel#SectionTitle{
+
+    font-size:12pt;
+
+    font-weight:bold;
+
+    color:#0C4DA2;
+
+}
+
+
+/* ==========================================================================
+   CARDS
+   ========================================================================== */
+
+QFrame#Card{
+
+    background:white;
+
+    border:1px solid #D9DDE4;
+
+    border-radius:10px;
+
+}
+
+
+QFrame#Card:hover{
+
+    border:1px solid #0C4DA2;
+
+}
+
+
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
+
+QPushButton{
+
+    background:#0C4DA2;
+
+    color:white;
+
+    border:none;
+
+    border-radius:6px;
+
+    min-height:36px;
+
+    padding-left:18px;
+
+    padding-right:18px;
+
+}
+
+
+QPushButton:hover{
+
+    background:#145FC1;
+
+}
+
+
+QPushButton:pressed{
+
+    background:#09397A;
+
+}
+
+
+QPushButton:disabled{
+
+    background:#B9C7DB;
+
+    color:white;
+
+}
+
+
+/* ==========================================================================
+   SUCCESS BUTTON
+   ========================================================================== */
+
+QPushButton#SuccessButton{
+
+    background:#2E8B57;
+
+}
+
+
+QPushButton#SuccessButton:hover{
+
+    background:#38A567;
+
+}
+
+
+/* ==========================================================================
+   WARNING BUTTON
+   ========================================================================== */
+
+QPushButton#WarningButton{
+
+    background:#E68A00;
+
+}
+
+
+QPushButton#WarningButton:hover{
+
+    background:#F49C15;
+
+}
+
+
+/* ==========================================================================
+   DANGER BUTTON
+   ========================================================================== */
+
+QPushButton#DangerButton{
+
+    background:#D9534F;
+
+}
+
+
+QPushButton#DangerButton:hover{
+
+    background:#E76561;
+
+}
+
+
+/* ==========================================================================
+   INPUTS
+   ========================================================================== */
+
+QLineEdit,
+QPlainTextEdit,
+QTextEdit,
+QComboBox,
+QSpinBox{
+
+    background:white;
+
+    border:1px solid #D5D9E0;
+
+    border-radius:6px;
+
+    min-height:34px;
+
+    padding-left:8px;
+
+}
+
+
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QTextEdit:focus,
+QComboBox:focus{
+
+    border:1px solid #0C4DA2;
+
+}
+
+
+/* ==========================================================================
+   TREE
+   ========================================================================== */
+
+QTreeWidget{
+
+    background:white;
+
+    border:1px solid #D5D9E0;
+
+    border-radius:6px;
+
+}
+
+
+QTreeWidget::item{
+
+    height:30px;
+
+}
+
+
+QTreeWidget::item:selected{
+
+    background:#D6E9FF;
+
+    color:#23313F;
+
+}
+
+
+/* ==========================================================================
+   TABLE
+   ========================================================================== */
+
+QTableWidget{
+
+    background:white;
+
+    border:1px solid #D5D9E0;
+
+    gridline-color:#E8EDF3;
+
+}
+
+
+QHeaderView::section{
+
+    background:#EEF3FA;
+
+    border:none;
+
+    border-bottom:1px solid #D5D9E0;
+
+    height:32px;
+
+    font-weight:bold;
+
+}
+
+
+/* ==========================================================================
+   STATUS BAR
+   ========================================================================== */
+
+QStatusBar{
+
+    background:white;
+
+    border-top:1px solid #D5D9E0;
+
+}
+
+
+/* ==========================================================================
+   SPLITTER
+   ========================================================================== */
+
+QSplitter::handle{
+
+    background:#E2E6ED;
+
+}
+
+
+/* ==========================================================================
+   SCROLLBAR
+   ========================================================================== */
+
+QScrollBar:vertical{
+
+    background:#EEF2F7;
+
+    width:12px;
+
+}
+
+
+QScrollBar::handle:vertical{
+
+    background:#BFC9D7;
+
+    border-radius:5px;
+
+}
+
+
+QScrollBar::handle:vertical:hover{
+
+    background:#9EABBD;
+
+}
+
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical{
+
+    height:0;
+
+}
+
+
+QScrollBar:horizontal{
+
+    background:#EEF2F7;
+
+    height:12px;
+
+}
+
+
+QScrollBar::handle:horizontal{
+
+    background:#BFC9D7;
+
+    border-radius:5px;
+
+}
+
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal{
+
+    width:0;
+
+}

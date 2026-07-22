@@ -1,0 +1,89 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# ==========================
+# Virtual Environment
+# ==========================
+venv/
+.venv/
+AI/venv/
+
+# ==========================
+# IDE
+# ==========================
+.vscode/
+.idea/
+
+# ==========================
+# Logs
+# ==========================
+*.log
+
+# ==========================
+# AI Runtime / Generated
+# ==========================
+AI/Output/
+AI/Backups/
+AI/Repository/
+AI/Repository_Archive/
+AI/Repository_Export/
+AI/Repository_Imported/
+AI/Restore_Test/
+
+# ==========================
+# Vector Database
+# ==========================
+AI/Database/chroma_db/
+AI/AI/Database/chroma_db/
+
+# ==========================
+# Environment
+# ==========================
+.env
+
+# ==========================
+# Windows
+# ==========================
+Thumbs.db
+Desktop.ini
+
+# ==========================
+# macOS
+# ==========================
+.DS_Store
+
+# Environment
+AI/.env
+
+# Knowledge documents
+AI/Knowledge/
+AI/AI/Knowledge/
+
+# Repository data
+AI/Repository/
+
+# AI Models
+AI/Models/
+
+# Database runtime files
+AI/Database/*.db
+
+# Node
+node_modules/
+package-lock.json
+package.json
+pages/
+tests/
+playwright.config.ts
+
+# Analysis files
+git_objects.txt
+largest_files.txt
+project_tree.txt
+project_tree.zip

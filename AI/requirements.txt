@@ -1,0 +1,11 @@
+customtkinter
+chromadb
+sentence-transformers
+torch
+transformers
+pypdf
+python-docx
+openpyxl
+requests
+pandas
+numpy

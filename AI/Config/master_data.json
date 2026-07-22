@@ -1,0 +1,67 @@
+{
+  "business_domains": [
+    "PSW Core",
+    "WeBOC",
+    "WeBOC 2.0",
+    "PCS",
+    "ACS",
+    "Special Projects"
+  ],
+
+  "platforms": [
+    "PSW Core",
+    "WeBOC",
+    "WeBOC 2.0",
+    "PCS",
+    "ACS"
+  ],
+
+  "categories": [
+    "CRF",
+    "API",
+    "Business Rule",
+    "Validation",
+    "SOP",
+    "Test Case",
+    "Automation",
+    "Defect",
+    "Database",
+    "Screen",
+    "Report",
+    "Release Note",
+    "User Manual",
+    "Meeting Minutes",
+    "Other"
+  ],
+
+  "business_processes": [
+    "Export Commercial SD",
+    "Export Commercial GD",
+    "Import GD",
+    "Export GD",
+    "Import SD",
+    "Manifest",
+    "Payment",
+    "Risk Management",
+    "PCT",
+    "LPCO",
+    "CPVP",
+    "Laboratory",
+    "Animal Quarantine",
+    "Plant Quarantine",
+    "Certificates",
+    "Licensing"
+  ],
+
+  "document_types": [
+    "Business Document",
+    "SOP",
+    "API",
+    "Validation",
+    "Test Case",
+    "Release Note",
+    "User Manual",
+    "Image",
+    "Other"
+  ]
+}

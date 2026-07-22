@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+AI/venv/
+
+# Environment
+AI/.env
+
+# Chroma Database
+AI/AI/Database/chroma_db/
+AI/Database/chroma_db/
+
+# HuggingFace Models
+AI/Models/huggingface/
+
+# Logs
+*.log
+
+# Temporary Files
+installed_packages.txt
+project_tree.txt
+project_structure.txt
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
