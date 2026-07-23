@@ -437,3 +437,50 @@ class MemoryManager:
 
 
         return row[0] if row else 0
+    
+    # ==================================================
+    # Domain CRUD
+    # ==================================================
+
+    def create_domain(self, name):
+
+        pass
+
+
+    def list_domains(self):
+
+        pass
+
+
+    def update_domain(self, domain_id, name):
+
+        pass
+
+
+    def delete_domain(self, domain_id):
+
+        pass
+
+
+    # ==================================================
+    # Module CRUD
+    # ==================================================
+
+    def create_module(self, domain_name, module_name):
+
+        pass
+
+
+    def list_modules(self, domain_name):
+
+        pass
+
+
+    def update_module(self, module_id, module_name):
+
+        pass
+
+
+    def delete_module(self, module_id):
+
+        pass

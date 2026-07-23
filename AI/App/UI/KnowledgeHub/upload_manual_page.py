@@ -22,6 +22,7 @@ Features:
 import os
 
 from PySide6.QtCore import QThread
+from Core.metadata_manager import MetadataManager
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -58,7 +59,11 @@ class UploadManualPage(QWidget):
 
         self.worker = None
 
+        self.metadata = MetadataManager()
+
         self.build_ui()
+
+        self.load_domains()
 
 
     # ======================================================
@@ -69,8 +74,8 @@ class UploadManualPage(QWidget):
 
         root = QVBoxLayout(self)
 
-        root.setSpacing(15)
-
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(18)
 
         title = QLabel(
             "Enterprise Knowledge Upload Studio"
@@ -102,17 +107,43 @@ class UploadManualPage(QWidget):
             info_group
         )
 
+        info_layout.setHorizontalSpacing(12)
+        info_layout.setVerticalSpacing(10)
+
+
+        # Column sizing
+        info_layout.setColumnStretch(0, 0)
+        info_layout.setColumnStretch(1, 1)
+        info_layout.setColumnStretch(2, 0)
+
+        info_layout.setColumnStretch(3, 0)
+        info_layout.setColumnStretch(4, 1)
+        info_layout.setColumnStretch(5, 0)
+
+        info_layout.setColumnMinimumWidth(
+            2,
+            40
+        )
+
+        info_layout.setColumnMinimumWidth(
+            5,
+            40
+        )
+
+
+        # --------------------------------------------------
+        # Domain
+        # --------------------------------------------------
 
         self.domain = QComboBox()
 
-        self.domain.addItems(
-            [
-                "PSW Core",
-                "WeBOC",
-                "PCS",
-                "ACS",
-                "Other"
-            ]
+        self.domain.setMinimumSize(
+            220,
+            34
+        )
+
+        self.domain.currentIndexChanged.connect(
+            self.refresh_modules
         )
 
 
@@ -120,11 +151,21 @@ class UploadManualPage(QWidget):
             "+"
         )
 
+        self.add_domain_btn.setFixedSize(
+            34,
+            34
+        )
+
+
+        # --------------------------------------------------
+        # Module
+        # --------------------------------------------------
 
         self.module = QComboBox()
 
-        self.module.setEditable(
-            True
+        self.module.setMinimumSize(
+            220,
+            34
         )
 
 
@@ -132,18 +173,47 @@ class UploadManualPage(QWidget):
             "+"
         )
 
+        self.add_module_btn.setFixedSize(
+            34,
+            34
+        )
+
+
+        # --------------------------------------------------
+        # Knowledge Name
+        # --------------------------------------------------
 
         self.knowledge_name = QLineEdit()
+
+        self.knowledge_name.setMinimumHeight(
+            34
+        )
 
         self.knowledge_name.setPlaceholderText(
             "Knowledge Name"
         )
 
 
+        # --------------------------------------------------
+        # Version
+        # --------------------------------------------------
+
         self.version = QLineEdit(
             "1.0"
         )
 
+        self.version.setFixedWidth(
+            120
+        )
+
+        self.version.setMinimumHeight(
+            34
+        )
+
+
+        # --------------------------------------------------
+        # Document Type
+        # --------------------------------------------------
 
         self.document_type = QComboBox()
 
@@ -160,6 +230,17 @@ class UploadManualPage(QWidget):
             ]
         )
 
+        self.document_type.setMinimumSize(
+            220,
+            34
+        )
+
+
+        # ==================================================
+        # Layout Rows
+        # ==================================================
+
+        # Row 0
 
         info_layout.addWidget(
             QLabel("Domain *"),
@@ -199,6 +280,8 @@ class UploadManualPage(QWidget):
         )
 
 
+        # Row 1
+
         info_layout.addWidget(
             QLabel("Knowledge Name *"),
             1,
@@ -227,6 +310,8 @@ class UploadManualPage(QWidget):
         )
 
 
+        # Row 2
+
         info_layout.addWidget(
             QLabel("Document Type"),
             2,
@@ -236,14 +321,15 @@ class UploadManualPage(QWidget):
         info_layout.addWidget(
             self.document_type,
             2,
-            1
+            1,
+            1,
+            2
         )
 
 
         root.addWidget(
             info_group
         )
-
 
         # ==================================================
         # Source Selection
@@ -259,6 +345,8 @@ class UploadManualPage(QWidget):
 
 
         self.source_type = QComboBox()
+
+        self.source_type.setMinimumHeight(34)
 
         self.source_type.addItems(
             [
@@ -314,6 +402,9 @@ class UploadManualPage(QWidget):
             4
         )
 
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(180)
 
         self.table.setHorizontalHeaderLabels(
             [
@@ -434,6 +525,8 @@ class UploadManualPage(QWidget):
             True
         )
 
+        self.log.setMinimumHeight(140)
+
         progress_layout.addWidget(
             self.log
         )
@@ -475,7 +568,6 @@ class UploadManualPage(QWidget):
             bottom
         )
 
-
         # ==================================================
         # Events
         # ==================================================
@@ -500,7 +592,15 @@ class UploadManualPage(QWidget):
             self.add_module
         )
 
-
+    # ======================================================
+    # Load Domains
+    # ======================================================
+    # ======================================================
+    # Load Modules
+    # ======================================================
+    # ======================================================
+    # Refresh Modules
+    # ======================================================
     # ======================================================
     # Custom Add
     # ======================================================
@@ -513,14 +613,42 @@ class UploadManualPage(QWidget):
             "Domain Name"
         )
 
-        if ok and value.strip():
+        if not ok:
+            return
 
-            self.domain.addItem(
-                value.strip()
+        value = value.strip()
+
+        if not value:
+            return
+
+        try:
+
+            self.metadata.create_domain(value)
+
+            self.load_domains()
+
+            self.domain.setCurrentText(value)
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "Domain",
+                str(e)
             )
 
 
     def add_module(self):
+
+        if not self.domain.currentText():
+
+            QMessageBox.warning(
+                self,
+                "Module",
+                "Select Domain first."
+            )
+
+            return
 
         value, ok = QInputDialog.getText(
             self,
@@ -528,16 +656,32 @@ class UploadManualPage(QWidget):
             "Module Name"
         )
 
-        if ok and value.strip():
+        if not ok:
+            return
 
-            self.module.addItem(
-                value.strip()
+        value = value.strip()
+
+        if not value:
+            return
+
+        try:
+
+            self.metadata.create_module(
+                self.domain.currentText(),
+                value
             )
 
-            self.module.setCurrentText(
-                value.strip()
-            )
+            self.load_modules()
 
+            self.module.setCurrentText(value)
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "Module",
+                str(e)
+            )
 
     # ======================================================
     # Source Handling
@@ -693,6 +837,42 @@ class UploadManualPage(QWidget):
         self.total_label.setText(
             f"Total : {len(self.selected_files)}"
         )
+
+    def load_domains(self):
+
+        self.domain.blockSignals(True)
+
+        self.domain.clear()
+
+        rows = self.metadata.list_domains()
+
+        self.domain.addItems(rows)
+
+        self.domain.blockSignals(False)
+
+        self.refresh_modules()
+
+
+    def load_modules(self):
+
+        self.module.clear()
+
+        domain = self.domain.currentText()
+
+        if not domain:
+            return
+
+        modules = self.metadata.list_modules(domain)
+
+        self.module.clear()
+
+        for row in modules:
+            self.module.addItem(row[1])
+
+
+    def refresh_modules(self):
+
+        self.load_modules()
 
 
     # ======================================================

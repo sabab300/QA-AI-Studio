@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from UI.KnowledgeHub.upload_manual_page import UploadManualPage
 from UI.KnowledgeHub.manage_knowledge_page import ManageKnowledgePage
 from UI.KnowledgeHub.smart_upload_page import SmartUploadPage
-
+from UI.KnowledgeHub.domain_manager_page import DomainManagerPage
 
 class PlaceholderPage(QWidget):
 
@@ -98,17 +98,27 @@ class KnowledgeHubPage(QWidget):
             "Manage Knowledge"
         )
 
+        self.btn_domain = QPushButton(
+            "Domain Manager"
+        )
+
         self.btn_upload.setMinimumHeight(42)
 
         self.btn_smart.setMinimumHeight(42)
 
         self.btn_manage.setMinimumHeight(42)
 
+        self.btn_domain.setMinimumHeight(42)
+
         menu_layout.addWidget(self.btn_upload)
 
         menu_layout.addWidget(self.btn_smart)
 
         menu_layout.addWidget(self.btn_manage)
+
+        menu_layout.addWidget(
+            self.btn_domain
+        )
 
         menu_layout.addStretch()
 
@@ -152,6 +162,12 @@ class KnowledgeHubPage(QWidget):
             self.manage_page
         )
 
+        self.domain_page = DomainManagerPage()
+
+        self.pages.addWidget(
+            self.domain_page
+        )
+
         # ==================================================
         # Events
         # ==================================================
@@ -166,6 +182,10 @@ class KnowledgeHubPage(QWidget):
 
         self.btn_manage.clicked.connect(
             lambda: self.show_page(2)
+        )
+
+        self.btn_domain.clicked.connect(
+            lambda: self.show_page(3)
         )
 
         self.show_page(0)
@@ -188,7 +208,9 @@ class KnowledgeHubPage(QWidget):
 
             self.btn_smart,
 
-            self.btn_manage
+            self.btn_manage,
+
+            self.btn_domain
 
         ]
 

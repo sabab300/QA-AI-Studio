@@ -8,7 +8,8 @@ Version: 3.0
 import sqlite3
 from pathlib import Path
 
-import Database.schema_v3 as schema
+from Database import schema
+
 
 class DatabaseManager:
 
@@ -23,39 +24,42 @@ class DatabaseManager:
         return conn
 
     def initialize_database(self):
-
         conn = self.get_connection()
         cur = conn.cursor()
 
         try:
-
-            # Create all tables
-            for stmt in schema.ALL_TABLES:
-                cur.execute(stmt)
-
-            # Apply migrations (ignore already-existing columns)
+            # Create core knowledge tables
+            cur.execute(schema.KNOWLEDGE_ITEMS_TABLE)
             for migration in getattr(schema, "KNOWLEDGE_ITEMS_MIGRATION", []):
                 try:
                     cur.execute(migration)
                 except sqlite3.OperationalError:
                     pass
 
+            cur.execute(schema.KNOWLEDGE_VERSIONS_TABLE)
+            cur.execute(schema.KNOWLEDGE_TAGS_TABLE)
+            cur.execute(schema.EMBEDDING_QUEUE_TABLE)
+
+            # Create any additional tables declared in schema.ALL_TABLES
+            for stmt in getattr(schema, "ALL_TABLES", []):
+                cur.execute(stmt)
+
             # Create indexes
             for stmt in getattr(schema, "INDEXES", []):
                 cur.execute(stmt)
 
-            # Seed master data
+            # Seed default data
             for stmt, params in getattr(schema, "SEED_DATA", []):
                 cur.execute(stmt, params)
 
-            # Update schema version
-            cur.execute(f"PRAGMA user_version={schema.SCHEMA_VERSION}")
+            # Schema version
+            version = getattr(schema, "SCHEMA_VERSION", 3)
+            cur.execute(f"PRAGMA user_version={version}")
 
             conn.commit()
 
         except Exception:
             conn.rollback()
             raise
-
         finally:
             conn.close()

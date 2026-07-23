@@ -12,7 +12,7 @@ Enhancement:
 from datetime import datetime
 import json
 
-from Database.db_manager_v3 import DatabaseManager
+from Database.db_manager import DatabaseManager
 
 
 class MetadataManager:
@@ -534,67 +534,20 @@ class MetadataManager:
         conn.close()
 
         return True
+        # --------------------------------------------------
+    # Get Domains
+    # --------------------------------------------------
 
-   
-    # ==================================================
-    # Domain Management
-    # ==================================================
-
-    def create_domain(
-        self,
-        name,
-        description=""
-    ):
+    def get_domains(self):
 
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
-        now = datetime.now().isoformat()
-
         cursor.execute(
             """
-            INSERT INTO domains
-            (
-                name,
-                description,
-                status,
-                created_date,
-                modified_date
-            )
-            VALUES
-            (?,?,?,?,?)
-            """,
-            (
-                name,
-                description,
-                "Active",
-                now,
-                now
-            )
-        )
-
-        domain_id = cursor.lastrowid
-
-        conn.commit()
-        conn.close()
-
-        return domain_id
-
-
-    # ==================================================
-
-    def list_domains(self):
-
-        conn = self.db.get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT name
-            FROM domains
-            WHERE status='Active'
-            ORDER BY name
+            SELECT DISTINCT domain
+            FROM knowledge_items
+            ORDER BY domain
             """
         )
 
@@ -604,354 +557,59 @@ class MetadataManager:
 
         return rows
 
-    # ==================================================
+    # --------------------------------------------------
+    # Get Modules
+    # --------------------------------------------------
 
-    def get_domain(
-        self,
-        domain_id
-    ):
-
-        conn = self.db.get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT *
-            FROM domains
-            WHERE id=?
-            """,
-            (
-                domain_id,
-            )
-        )
-
-        row = cursor.fetchone()
-
-        conn.close()
-
-        return row
-
-
-    # ==================================================
-
-    def update_domain(
-        self,
-        domain_id,
-        name,
-        description
-    ):
-
-        conn = self.db.get_connection()
-
-        cursor = conn.cursor()
-
-        now = datetime.now().isoformat()
-
-        cursor.execute(
-            """
-            UPDATE domains
-            SET
-                name=?,
-                description=?,
-                modified_date=?
-            WHERE id=?
-            """,
-            (
-                name,
-                description,
-                now,
-                domain_id
-            )
-        )
-
-        conn.commit()
-
-        conn.close()
-
-        return True
-
-
-    # ==================================================
-
-    def delete_domain(
-        self,
-        domain_id
-    ):
-
-        conn = self.db.get_connection()
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            DELETE FROM domains
-            WHERE id=?
-            """,
-            (
-                domain_id,
-            )
-        )
-
-        conn.commit()
-
-        conn.close()
-
-        return True
-
-
-    # ==================================================
-
-    def update_domain_status(
-        self,
-        domain_id,
-        status
-    ):
-
-        conn = self.db.get_connection()
-
-        cursor = conn.cursor()
-
-        now = datetime.now().isoformat()
-
-        cursor.execute(
-            """
-            UPDATE domains
-            SET
-                status=?,
-                modified_date=?
-            WHERE id=?
-            """,
-            (
-                status,
-                now,
-                domain_id
-            )
-        )
-
-        conn.commit()
-
-        conn.close()
-
-        return True
-
-    # ==================================================
-    # Module Management
-    # ==================================================
-
-    def create_module(
-        self,
-        domain_name,
-        module_name,
-        description=""
-    ):
+    def get_modules(self, domain):
 
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
         cursor.execute(
             """
-            SELECT id
-            FROM domains
-            WHERE name=?
+            SELECT DISTINCT module
+            FROM knowledge_items
+            WHERE domain=?
+            ORDER BY module
             """,
-            (domain_name,)
+            (domain,)
         )
 
-        row = cursor.fetchone()
+        rows = [row[0] for row in cursor.fetchall()]
 
-        if not row:
-            conn.close()
-            raise Exception(f"Domain '{domain_name}' not found.")
-
-        domain_id = row[0]
-
-        now = datetime.now().isoformat()
-
-        cursor.execute(
-            """
-            INSERT INTO modules
-            (
-                domain_id,
-                name,
-                description,
-                status,
-                created_date,
-                modified_date
-            )
-            VALUES
-            (?, ?, ?, 'Active', ?, ?)
-            """,
-            (
-                domain_id,
-                module_name,
-                description,
-                now,
-                now
-            )
-        )
-
-        module_id = cursor.lastrowid
-
-        conn.commit()
         conn.close()
 
-        return module_id
+        return rows
 
+    # --------------------------------------------------
+    # Get Knowledge Names
+    # --------------------------------------------------
 
-    # ==================================================
-
-    def list_modules(self, domain_name):
+    def get_knowledge_names(self, domain, module):
 
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
         cursor.execute(
             """
-            SELECT m.name
-            FROM modules m
-            JOIN domains d
-                ON d.id = m.domain_id
-            WHERE d.name = ?
-            ORDER BY m.name
-            """,
-            (domain_name,)
-        )
-
-        modules = [row[0] for row in cursor.fetchall()]
-
-        conn.close()
-
-        print("Domain:", domain_name)
-        print("Modules:", modules)
-
-        return modules
-
-    # ==================================================
-
-    def get_module(
-        self,
-        module_id
-    ):
-
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT *
-            FROM modules
-            WHERE id=?
+            SELECT DISTINCT knowledge_name
+            FROM knowledge_items
+            WHERE domain=?
+            AND module=?
+            ORDER BY knowledge_name
             """,
             (
-                module_id,
+                domain,
+                module
             )
         )
 
-        row = cursor.fetchone()
+        rows = [row[0] for row in cursor.fetchall()]
 
         conn.close()
 
-        return row
-
-
-    # ==================================================
-
-    def update_module(
-        self,
-        module_id,
-        module_name,
-        description
-    ):
-
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-
-        now = datetime.now().isoformat()
-
-        cursor.execute(
-            """
-            UPDATE modules
-            SET
-                name=?,
-                description=?,
-                modified_date=?
-            WHERE id=?
-            """,
-            (
-                module_name,
-                description,
-                now,
-                module_id
-            )
-        )
-
-        conn.commit()
-        conn.close()
-
-        return True
-
-
-    # ==================================================
-
-    def delete_module(
-        self,
-        module_id
-    ):
-
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            DELETE
-            FROM modules
-            WHERE id=?
-            """,
-            (
-                module_id,
-            )
-        )
-
-        conn.commit()
-        conn.close()
-
-        return True
-
-
-    # ==================================================
-
-    def update_module_status(
-        self,
-        module_id,
-        status
-    ):
-
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-
-        now = datetime.now().isoformat()
-
-        cursor.execute(
-            """
-            UPDATE modules
-            SET
-                status=?,
-                modified_date=?
-            WHERE id=?
-            """,
-            (
-                status,
-                now,
-                module_id
-            )
-        )
-
-        conn.commit()
-        conn.close()
-
-        return True
-    
+        return rows
     
     # --------------------------------------------------
     # Get Versions
