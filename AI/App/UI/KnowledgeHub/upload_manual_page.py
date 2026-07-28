@@ -1,5 +1,4 @@
 # Replace/Create: App/UI/KnowledgeHub/upload_manual_page.py
-# Part 1/2
 
 """
 ==========================================================
@@ -7,7 +6,7 @@ QA AI Studio
 Knowledge Hub
 Enterprise Knowledge Upload Studio
 
-Version : 3.0
+Version : 3.1  (Layout Fix)
 
 Features:
     • Enterprise knowledge metadata capture
@@ -16,13 +15,28 @@ Features:
     • Image/document support
     • Future source connector support
     • Existing UploadWorker compatibility
+
+Fix Notes (v3.1):
+    • Root cause of overlapping UI: the page had no QScrollArea,
+      so 4 stacked QGroupBox sections were force-compressed into
+      the visible window height, pushing widgets below their
+      stylesheet min-height and causing them to visually overlap.
+    • Fix: entire page content now lives inside a QScrollArea.
+      The content keeps its natural size and scrolls instead of
+      being squeezed.
+    • Added explicit grid spacing/margins and column stretch so
+      fields line up cleanly instead of hugging the group title.
+    • Added sensible minimum heights for the table and log so
+      they render nicely at natural size.
 ==========================================================
 """
 
 import os
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Qt
 from Core.metadata_manager import MetadataManager
+from UI.KnowledgeHub.upload_summary_dialog import UploadSummaryDialog
+
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -41,7 +55,9 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QHeaderView,
     QMessageBox,
-    QInputDialog
+    QInputDialog,
+    QScrollArea,
+    QSizePolicy,
 )
 
 from UI.KnowledgeHub.upload_worker import UploadWorker
@@ -59,12 +75,9 @@ class UploadManualPage(QWidget):
 
         self.worker = None
 
-        self.metadata = MetadataManager()
+        self.upload_source = "-"
 
         self.build_ui()
-
-        self.load_domains()
-
 
     # ======================================================
     # Build UI
@@ -72,10 +85,37 @@ class UploadManualPage(QWidget):
 
     def build_ui(self):
 
-        root = QVBoxLayout(self)
+        # --------------------------------------------------
+        # Outer layout for this page just holds the scroll area.
+        # This is the key fix: without this, all the group boxes
+        # below get squeezed into whatever height the stacked
+        # widget has available, which causes overlap.
+        # --------------------------------------------------
+
+        outer = QVBoxLayout(self)
+
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+
+        scroll.setWidgetResizable(True)
+
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        outer.addWidget(scroll)
+
+        content = QWidget()
+
+        scroll.setWidget(content)
+
+        root = QVBoxLayout(content)
 
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(18)
+
+        root.setSpacing(15)
+
 
         title = QLabel(
             "Enterprise Knowledge Upload Studio"
@@ -107,65 +147,32 @@ class UploadManualPage(QWidget):
             info_group
         )
 
+        info_layout.setContentsMargins(15, 20, 15, 15)
+
         info_layout.setHorizontalSpacing(12)
+
         info_layout.setVerticalSpacing(10)
 
-
-        # Column sizing
-        info_layout.setColumnStretch(0, 0)
+        # Give the input columns room to grow, keep the
+        # "+" button columns fixed and small.
         info_layout.setColumnStretch(1, 1)
-        info_layout.setColumnStretch(2, 0)
 
-        info_layout.setColumnStretch(3, 0)
         info_layout.setColumnStretch(4, 1)
-        info_layout.setColumnStretch(5, 0)
 
-        info_layout.setColumnMinimumWidth(
-            2,
-            40
-        )
-
-        info_layout.setColumnMinimumWidth(
-            5,
-            40
-        )
-
-
-        # --------------------------------------------------
-        # Domain
-        # --------------------------------------------------
 
         self.domain = QComboBox()
-
-        self.domain.setMinimumSize(
-            220,
-            34
-        )
-
-        self.domain.currentIndexChanged.connect(
-            self.refresh_modules
-        )
-
-
+        
         self.add_domain_btn = QPushButton(
             "+"
         )
 
-        self.add_domain_btn.setFixedSize(
-            34,
-            34
-        )
+        self.add_domain_btn.setFixedWidth(36)
 
-
-        # --------------------------------------------------
-        # Module
-        # --------------------------------------------------
 
         self.module = QComboBox()
 
-        self.module.setMinimumSize(
-            220,
-            34
+        self.module.setEditable(
+            True
         )
 
 
@@ -173,47 +180,20 @@ class UploadManualPage(QWidget):
             "+"
         )
 
-        self.add_module_btn.setFixedSize(
-            34,
-            34
-        )
+        self.add_module_btn.setFixedWidth(36)
 
-
-        # --------------------------------------------------
-        # Knowledge Name
-        # --------------------------------------------------
 
         self.knowledge_name = QLineEdit()
-
-        self.knowledge_name.setMinimumHeight(
-            34
-        )
 
         self.knowledge_name.setPlaceholderText(
             "Knowledge Name"
         )
 
 
-        # --------------------------------------------------
-        # Version
-        # --------------------------------------------------
-
         self.version = QLineEdit(
             "1.0"
         )
 
-        self.version.setFixedWidth(
-            120
-        )
-
-        self.version.setMinimumHeight(
-            34
-        )
-
-
-        # --------------------------------------------------
-        # Document Type
-        # --------------------------------------------------
 
         self.document_type = QComboBox()
 
@@ -230,17 +210,6 @@ class UploadManualPage(QWidget):
             ]
         )
 
-        self.document_type.setMinimumSize(
-            220,
-            34
-        )
-
-
-        # ==================================================
-        # Layout Rows
-        # ==================================================
-
-        # Row 0
 
         info_layout.addWidget(
             QLabel("Domain *"),
@@ -280,8 +249,6 @@ class UploadManualPage(QWidget):
         )
 
 
-        # Row 1
-
         info_layout.addWidget(
             QLabel("Knowledge Name *"),
             1,
@@ -310,8 +277,6 @@ class UploadManualPage(QWidget):
         )
 
 
-        # Row 2
-
         info_layout.addWidget(
             QLabel("Document Type"),
             2,
@@ -321,15 +286,14 @@ class UploadManualPage(QWidget):
         info_layout.addWidget(
             self.document_type,
             2,
-            1,
-            1,
-            2
+            1
         )
 
 
         root.addWidget(
             info_group
         )
+
 
         # ==================================================
         # Source Selection
@@ -343,10 +307,12 @@ class UploadManualPage(QWidget):
             source_group
         )
 
+        source_layout.setContentsMargins(15, 20, 15, 15)
+
+        source_layout.setSpacing(8)
+
 
         self.source_type = QComboBox()
-
-        self.source_type.setMinimumHeight(34)
 
         self.source_type.addItems(
             [
@@ -396,15 +362,23 @@ class UploadManualPage(QWidget):
             docs_group
         )
 
+        docs_layout.setContentsMargins(15, 20, 15, 15)
+
+        docs_layout.setSpacing(10)
+
 
         self.table = QTableWidget(
             0,
             4
         )
 
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
         self.table.setMinimumHeight(180)
+
+        self.table.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
+
 
         self.table.setHorizontalHeaderLabels(
             [
@@ -427,6 +401,8 @@ class UploadManualPage(QWidget):
 
 
         buttons = QHBoxLayout()
+
+        buttons.setSpacing(10)
 
 
         self.add_source_btn = QPushButton(
@@ -458,7 +434,6 @@ class UploadManualPage(QWidget):
         root.addWidget(
             docs_group
         )
-    # Part 2/2
 
         # ==================================================
         # Progress Section
@@ -471,6 +446,10 @@ class UploadManualPage(QWidget):
         progress_layout = QVBoxLayout(
             progress_group
         )
+
+        progress_layout.setContentsMargins(15, 20, 15, 15)
+
+        progress_layout.setSpacing(10)
 
 
         self.progress = QProgressBar()
@@ -499,6 +478,8 @@ class UploadManualPage(QWidget):
 
         stats = QHBoxLayout()
 
+        stats.setSpacing(20)
+
         stats.addWidget(
             self.total_label
         )
@@ -525,7 +506,12 @@ class UploadManualPage(QWidget):
             True
         )
 
-        self.log.setMinimumHeight(140)
+        self.log.setMinimumHeight(120)
+
+        self.log.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
 
         progress_layout.addWidget(
             self.log
@@ -535,7 +521,6 @@ class UploadManualPage(QWidget):
         root.addWidget(
             progress_group
         )
-
 
         # ==================================================
         # Upload Button
@@ -592,15 +577,15 @@ class UploadManualPage(QWidget):
             self.add_module
         )
 
-    # ======================================================
-    # Load Domains
-    # ======================================================
-    # ======================================================
-    # Load Modules
-    # ======================================================
-    # ======================================================
-    # Refresh Modules
-    # ======================================================
+        self.metadata = MetadataManager()
+
+        self.load_domains()
+
+        self.domain.currentIndexChanged.connect(
+            self.load_modules
+        )
+
+
     # ======================================================
     # Custom Add
     # ======================================================
@@ -622,33 +607,21 @@ class UploadManualPage(QWidget):
             return
 
         try:
-
             self.metadata.create_domain(value)
 
             self.load_domains()
 
             self.domain.setCurrentText(value)
 
-        except Exception as e:
-
-            QMessageBox.warning(
+        except Exception as ex:
+            QMessageBox.critical(
                 self,
-                "Domain",
-                str(e)
+                "Error",
+                str(ex)
             )
 
 
     def add_module(self):
-
-        if not self.domain.currentText():
-
-            QMessageBox.warning(
-                self,
-                "Module",
-                "Select Domain first."
-            )
-
-            return
 
         value, ok = QInputDialog.getText(
             self,
@@ -665,7 +638,6 @@ class UploadManualPage(QWidget):
             return
 
         try:
-
             self.metadata.create_module(
                 self.domain.currentText(),
                 value
@@ -675,13 +647,52 @@ class UploadManualPage(QWidget):
 
             self.module.setCurrentText(value)
 
-        except Exception as e:
-
-            QMessageBox.warning(
+        except Exception as ex:
+            QMessageBox.critical(
                 self,
-                "Module",
-                str(e)
+                "Error",
+                str(ex)
             )
+    # ======================================================
+    # Load Domains
+    # ======================================================
+
+    def load_domains(self):
+
+        self.domain.blockSignals(True)
+
+        self.domain.clear()
+
+        domains = self.metadata.list_domains()
+
+        for domain in domains:
+            self.domain.addItem(domain)
+
+        self.domain.blockSignals(False)
+
+        self.load_modules()
+
+
+    # ======================================================
+    # Load Modules
+    # ======================================================
+
+    def load_modules(self):
+
+        self.module.blockSignals(True)
+
+        self.module.clear()
+
+        domain = self.domain.currentText()
+
+        if domain:
+
+            modules = self.metadata.list_modules(domain)
+
+            for module in modules:
+                self.module.addItem(module)
+
+        self.module.blockSignals(False)
 
     # ======================================================
     # Source Handling
@@ -838,42 +849,6 @@ class UploadManualPage(QWidget):
             f"Total : {len(self.selected_files)}"
         )
 
-    def load_domains(self):
-
-        self.domain.blockSignals(True)
-
-        self.domain.clear()
-
-        rows = self.metadata.list_domains()
-
-        self.domain.addItems(rows)
-
-        self.domain.blockSignals(False)
-
-        self.refresh_modules()
-
-
-    def load_modules(self):
-
-        self.module.clear()
-
-        domain = self.domain.currentText()
-
-        if not domain:
-            return
-
-        modules = self.metadata.list_modules(domain)
-
-        self.module.clear()
-
-        for row in modules:
-            self.module.addItem(row[1])
-
-
-    def refresh_modules(self):
-
-        self.load_modules()
-
 
     # ======================================================
     # Validation
@@ -943,9 +918,9 @@ class UploadManualPage(QWidget):
             False
         )
 
-
         self.thread = QThread()
 
+        self.upload_source = self.source_type.currentText()
 
         self.worker = UploadWorker(
 
@@ -956,6 +931,8 @@ class UploadManualPage(QWidget):
             self.knowledge_name.text(),
 
             self.version.text(),
+
+            self.document_type.currentText(),
 
             self.selected_files
 
@@ -1004,8 +981,6 @@ class UploadManualPage(QWidget):
 
         self.thread.start()
 
-
-
     # ======================================================
     # Progress
     # ======================================================
@@ -1045,19 +1020,75 @@ class UploadManualPage(QWidget):
             "Uploaded : Completed"
         )
 
+        upload_result = result.get("primary_result")
 
-        self.log.append(
-            "Knowledge upload completed."
+        if not upload_result:
+
+            results = result.get("results", [])
+
+            if results:
+
+                upload_result = results[0]
+
+            else:
+
+                upload_result = {}
+
+        self.log.append("=" * 60)
+        self.log.append("Knowledge Upload Completed")
+        self.log.append(f"Knowledge : {result.get('knowledge_name', '-')}")
+        self.log.append(f"Domain    : {result.get('domain', '-')}")
+        self.log.append(f"Module    : {result.get('module', '-')}")
+        self.log.append(f"Category  : {upload_result.get('category', '-')}")
+        self.log.append(f"Version   : {result.get('version', '-')}")
+        self.log.append(f"Chunks    : {upload_result.get('total_chunks', 0)}")
+        self.log.append(f"Vectors   : {upload_result.get('vectors_saved', 0)}")
+        self.log.append("=" * 60)
+
+        summary = upload_result.get("summary", "").strip()
+
+        summary = summary.strip()
+
+        if not summary:
+            summary = "No AI summary available."
+
+        elif len(summary) > 1500:
+            summary = summary[:1500].rstrip() + "..."
+
+        repository = (
+            f"{result.get('domain', '-')}/<br>"
+            f"└── {result.get('module', '-')}/<br>"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;└── {result.get('knowledge_name', '-')}/<br>"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── {result.get('version', '-')}/"
         )
 
+        message = f"""
+        <b>Knowledge uploaded successfully.</b><br><br>
 
-        QMessageBox.information(
-            self,
-            "QA AI Studio",
-            str(result)
-        )
+        ------------------------------------------------<br>
 
+        Domain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {result.get('domain', '-')}<br>
+        Module&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {result.get('module', '-')}<br>
+        Knowledge Name : {result.get('knowledge_name', '-')}<br>
+        Version&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {result.get('version', '-')}<br>
+        Document Type&nbsp;&nbsp;: {upload_result.get('document_type', '-')}<br>
+        Upload Source&nbsp;&nbsp;: {self.upload_source}<br><br>
 
+        <b>Repository</b><br>
+
+        ------------------------------------------------<br>
+
+        {repository}<br><br>
+
+        <b>AI Analysis Summary</b><br>
+
+        ------------------------------------------------<br>
+
+        {summary}
+        """
+
+        dialog = UploadSummaryDialog(message, self)
+        dialog.exec()
 
     # ======================================================
     # Error

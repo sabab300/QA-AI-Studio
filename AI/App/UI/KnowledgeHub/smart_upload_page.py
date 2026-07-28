@@ -56,14 +56,17 @@ class SmartUploadPage(QWidget):
     def __init__(self):
 
         super().__init__()
-
         self.files = []
-
         self.analysis_results = {}
-
         self.service = KnowledgeService()
-
+        self.selected_file = ""
         self.build_ui()
+        self.domain.setEnabled(False)
+        self.module.setEnabled(False)
+        self.knowledge_name.setEnabled(False)
+        self.version.setEnabled(False)
+        self.document_type.setEnabled(False)
+        self.upload_btn.setEnabled(False)
 
 
     # ======================================================
@@ -100,7 +103,7 @@ class SmartUploadPage(QWidget):
         # ==================================================
 
         info_group = QGroupBox(
-            "Knowledge Information"
+            "AI Suggestions Repository"
         )
 
 
@@ -129,6 +132,17 @@ class SmartUploadPage(QWidget):
         self.version = QLineEdit(
             "1.0"
         )
+
+        self.document_type = QComboBox()
+
+        self.document_type.addItems([
+            "General",
+            "SRS",
+            "CRF",
+            "Test Case",
+            "API",
+            "SOP"
+        ])
 
 
         self.knowledge_name.setPlaceholderText(
@@ -182,6 +196,18 @@ class SmartUploadPage(QWidget):
         )
 
         info_layout.addWidget(
+            QLabel("Document Type"),
+            2,
+            0
+        )
+
+        info_layout.addWidget(
+            self.document_type,
+            2,
+            1
+        )
+
+        info_layout.addWidget(
             self.version,
             1,
             3
@@ -198,7 +224,7 @@ class SmartUploadPage(QWidget):
         # ==================================================
 
         file_group = QGroupBox(
-            "Source Files"
+            "Upload Documents"
         )
 
 
@@ -209,22 +235,27 @@ class SmartUploadPage(QWidget):
 
         buttons = QHBoxLayout()
 
-
         self.file_btn = QPushButton(
             "Select Files"
         )
-
-
         self.folder_btn = QPushButton(
             "Select Folder"
         )
-
-
+        self.url_btn = QPushButton(
+            "Add URL"
+        )
+        self.api_btn = QPushButton(
+            "Add API"
+        )
+        self.sql_btn = QPushButton(
+            "Add SQL"
+        )
+        self.image_btn = QPushButton(
+            "Add Images"
+        )
         self.analyze_btn = QPushButton(
             "Analyze With AI"
         )
-
-
         self.upload_btn = QPushButton(
             "Confirm Upload"
         )
@@ -237,6 +268,22 @@ class SmartUploadPage(QWidget):
         buttons.addWidget(
             self.folder_btn
         )
+
+        buttons.addWidget(
+        self.url_btn
+        )
+
+        buttons.addWidget(
+            self.api_btn
+        )
+
+        buttons.addWidget(
+            self.sql_btn
+        )
+
+        buttons.addWidget(
+            self.image_btn
+        )  
 
 
         buttons.addStretch()
@@ -275,54 +322,23 @@ class SmartUploadPage(QWidget):
         # ==================================================
 
         result_group = QGroupBox(
-            "AI Classification Result"
+            "AI Suggestions Summary"
         )
 
+        result_layout = QVBoxLayout(result_group)
 
-        result_layout = QVBoxLayout(
-            result_group
-        )
+        self.summary = QTextEdit()
+        self.summary.setReadOnly(True)
+        self.summary.setMinimumHeight(300)
 
-
-        self.result_table = QTableWidget(
-            0,
-            2
-        )
-
-
-        self.result_table.setHorizontalHeaderLabels(
-            [
-                "Field",
-                "Value"
-            ]
-        )
-
-
-        self.result_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Stretch
-        )
-
-
-        result_layout.addWidget(
-            self.result_table
-        )
-
+        result_layout.addWidget(self.summary)
 
         self.log = QTextEdit()
+        self.log.setReadOnly(True)
 
-        self.log.setReadOnly(
-            True
-        )
+        result_layout.addWidget(self.log)
 
-
-        result_layout.addWidget(
-            self.log
-        )
-
-
-        layout.addWidget(
-            result_group
-        )
+        layout.addWidget(result_group)
 
 
         # ==================================================
@@ -333,25 +349,23 @@ class SmartUploadPage(QWidget):
             self.select_files
         )
 
-
         self.folder_btn.clicked.connect(
             self.select_folder
         )
-
 
         self.analyze_btn.clicked.connect(
             self.analyze_files
         )
 
-
         self.upload_btn.clicked.connect(
-            self.upload_files
+            self.confirm_upload
         )
-
 
         self.upload_btn.setEnabled(
             False
         )
+
+        self.confirm_btn = self.upload_btn
 
 
     # ======================================================
@@ -365,14 +379,33 @@ class SmartUploadPage(QWidget):
             "Select Knowledge Files"
         )
 
-
         if files:
 
-            self.files.extend(files)
+            self.files = files
+
+            self.selected_file = files[0]
 
             self.refresh_files()
 
+            # Reset previous AI analysis
+            self.analysis_results = {}
 
+            self.summary.clear()
+            self.log.clear()
+
+            self.domain.setEnabled(False)
+            self.module.setEnabled(False)
+            self.knowledge_name.setEnabled(False)
+            self.version.setEnabled(False)
+            self.document_type.setEnabled(False)
+
+            self.upload_btn.setEnabled(False)
+
+            self.domain.clear()
+            self.module.clear()
+            self.knowledge_name.clear()
+            self.version.setText("1.0")
+            self.document_type.setCurrentIndex(0)
 
     def select_folder(self):
 
@@ -395,6 +428,29 @@ class SmartUploadPage(QWidget):
 
 
         self.refresh_files()
+
+        if self.files:
+            self.selected_file = self.files[0]
+
+        # Reset previous AI analysis
+        self.analysis_results = {}
+
+        self.summary.clear()
+        self.log.clear()
+
+        self.domain.setEnabled(False)
+        self.module.setEnabled(False)
+        self.knowledge_name.setEnabled(False)
+        self.version.setEnabled(False)
+        self.document_type.setEnabled(False)
+
+        self.upload_btn.setEnabled(False)
+
+        self.domain.clear()
+        self.module.clear()
+        self.knowledge_name.clear()
+        self.version.setText("1.0")
+        self.document_type.setCurrentIndex(0)
 
 
 
@@ -424,30 +480,63 @@ class SmartUploadPage(QWidget):
 
             return
 
-
-        self.result_table.setRowCount(
-            0
-        )
-
-
         self.analysis_results = {}
 
+        self.summary.clear()
+        self.log.clear()
 
         for file in self.files:
 
             try:
 
                 result = self.service.smart_upload(
-                    file
+                    source_file=file
                 )
-
 
                 self.analysis_results[file] = result
 
 
-                self.show_analysis(
-                    result
+                self.domain.setEnabled(True)
+                self.module.setEnabled(True)
+                self.knowledge_name.setEnabled(True)
+                self.version.setEnabled(True)
+                self.document_type.setEnabled(True)
+
+                self.domain.clear()
+
+                domain = result.get("domain", "Unknown")
+
+                self.domain.addItem(domain)
+                self.domain.setCurrentText(domain)
+
+                self.module.clear()
+
+                module = result.get("module", "")
+
+                if not module:
+                    module = "Unknown"
+
+                self.module.addItem(module)
+
+                if not self.knowledge_name.text().strip():
+                    self.knowledge_name.setText(
+                        Path(file).stem
+                    )
+
+                self.version.setText(
+                    result.get("version", "1.0")
                 )
+
+                self.document_type.setCurrentText(
+                    result.get("document_type", "General")
+                )
+
+                summary = result.get("summary", "").strip()
+
+                if not summary:
+                    summary = "No AI summary available."
+
+                self.summary.setPlainText(summary)
 
 
                 self.log.append(
@@ -462,49 +551,14 @@ class SmartUploadPage(QWidget):
                 )
 
 
-        self.upload_btn.setEnabled(
-            True
-        )
+        if self.analysis_results:
 
+            self.upload_btn.setEnabled(True)
 
+        else:
 
-    def show_analysis(self, data):
-
-        row = self.result_table.rowCount()
-
-        self.result_table.insertRow(
-            row
-        )
-
-
-        for key, value in data.items():
-
-            row = self.result_table.rowCount()
-
-            self.result_table.insertRow(
-                row
-            )
-
-
-            self.result_table.setItem(
-                row,
-                0,
-                QTableWidgetItem(
-                    str(key)
-                )
-            )
-
-
-            self.result_table.setItem(
-                row,
-                1,
-                QTableWidgetItem(
-                    str(value)
-                )
-            )
-
-
-
+            self.upload_btn.setEnabled(False)
+    
     # ======================================================
     # Upload
     # ======================================================
@@ -516,7 +570,10 @@ class SmartUploadPage(QWidget):
             return
 
 
-        if not self.knowledge_name.text().strip():
+        if (
+            self.knowledge_name.isEnabled()
+            and not self.knowledge_name.text().strip()
+        ):
 
             QMessageBox.warning(
                 self,
@@ -572,4 +629,39 @@ class SmartUploadPage(QWidget):
 
                 str(ex)
 
+            )
+
+    def confirm_upload(self):
+
+        if not self.selected_file:
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Please analyze a document first."
+            )
+            return
+
+        result = self.service.upload(
+            domain=self.domain.currentText(),
+            module=self.module.currentText(),
+            knowledge_name=self.knowledge_name.text(),
+            version=self.version.text(),
+            document_type=self.document_type.currentText(),
+            files=[self.selected_file]
+        )
+
+        if result.get("success"):
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Knowledge saved successfully."
+            )
+
+        else:
+
+            QMessageBox.critical(
+                self,
+                "QA AI Studio",
+                "Knowledge upload failed."
             )

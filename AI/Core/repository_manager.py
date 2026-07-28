@@ -334,19 +334,13 @@ class RepositoryManager:
     # --------------------------------------------------
 
     def save_file(
-
         self,
-
         source_file,
-
         domain,
-
         module,
-
         knowledge_name,
-
-        version
-
+        version,
+        document_type=""
     ):
 
         source = Path(source_file)
@@ -394,7 +388,9 @@ class RepositoryManager:
 
             "file_size": destination.stat().st_size,
 
-            "extension": destination.suffix.lower()
+            "extension": destination.suffix.lower(),
+
+            "document_type": document_type
 
         }
 

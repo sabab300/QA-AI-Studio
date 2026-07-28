@@ -37,6 +37,7 @@ class KnowledgeService:
         module,
         knowledge_name,
         version="1.0",
+        document_type="",
         files=None,
         folders=None,
         urls=None,
@@ -70,7 +71,8 @@ class KnowledgeService:
                         domain=domain,
                         module=module,
                         knowledge_name=knowledge_name,
-                        version=version
+                        version=version,
+                        document_type=document_type
                     )
 
                 elif path.is_dir():
@@ -134,9 +136,22 @@ class KnowledgeService:
                     }
                 )
 
+        primary_result = {}
+
+        for item in results:
+
+            if item.get("success", False):
+
+                primary_result = item
+
+                break
+
         return {
 
-            "success": all(r.get("success", False) for r in results) if results else True,
+            "success": all(
+                r.get("success", False)
+                for r in results
+            ) if results else True,
 
             "domain": domain,
 
@@ -146,7 +161,10 @@ class KnowledgeService:
 
             "version": version,
 
+            "primary_result": primary_result,
+
             "results": results
+
 
         }
 
@@ -169,7 +187,81 @@ class KnowledgeService:
 
         )
 
+    # --------------------------------------------------
+    # AI Smart Upload
+    # --------------------------------------------------
 
+    def smart_upload(
+        self,
+        source_file
+    ):
+
+        path = Path(source_file)
+
+        if not path.exists():
+            raise FileNotFoundError(source_file)
+
+        text = self.pipeline.extractor.extract_text(
+            str(path)
+        )
+
+        if not text.strip():
+
+            raise Exception(
+                "No readable text found in document."
+            )
+
+        analysis = self.pipeline.analyzer.analyze(text)
+
+        return {
+
+            "domain": analysis.get(
+                "platform",
+                "Unknown"
+            ),
+
+            "module": analysis.get(
+                "business_process",
+                ""
+            ),
+
+            "knowledge_name": (
+                path.stem
+                .replace("_", " ")
+                .replace("-", " ")
+                .strip()
+            ),
+
+            "version": "1.0",
+
+            "document_type": analysis.get(
+                "document_type",
+                "General"
+            ),
+
+            "summary": analysis.get(
+                "summary",
+                ""
+            ),
+
+            "tags": analysis.get(
+                "tags",
+                []
+            ),
+
+            "confidence": analysis.get(
+                "confidence",
+                0
+            ),
+
+            "category": analysis.get(
+                    "category",
+                    "General"
+            ),
+
+            "repository_path": ""
+
+        }
 
     # --------------------------------------------------
     # List Knowledge

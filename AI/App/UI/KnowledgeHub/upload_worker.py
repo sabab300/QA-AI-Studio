@@ -41,6 +41,7 @@ class UploadWorker(QObject):
         module,
         knowledge_name,
         version,
+        document_type,
         files
     ):
 
@@ -53,6 +54,8 @@ class UploadWorker(QObject):
         self.knowledge_name = knowledge_name
 
         self.version = version
+
+        self.document_type = document_type
 
         self.files = files
 
@@ -122,6 +125,8 @@ class UploadWorker(QObject):
                 knowledge_name=self.knowledge_name,
 
                 version=self.version,
+
+                document_type=self.document_type,
 
                 files=self.files
 

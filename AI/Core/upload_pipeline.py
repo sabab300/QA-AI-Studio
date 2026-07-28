@@ -39,8 +39,9 @@ class UploadPipeline:
         domain,
         module,
         knowledge_name,
-        version="1.0"
-    ):
+        version="1.0",
+        document_type=""
+        ):
 
         source_file = Path(source_file).resolve()
 
@@ -49,7 +50,8 @@ class UploadPipeline:
             domain=domain,
             module=module,
             knowledge_name=knowledge_name,
-            version=version
+            version=version,
+            document_type=document_type
         )
 
         text = self.extractor.extract_text(
@@ -57,6 +59,13 @@ class UploadPipeline:
         )
 
         analysis = self.analyzer.analyze(text)
+
+        analysis = dict(analysis)
+
+        print("SUMMARY:", analysis.get("summary"))
+
+        if file_info.get("document_type"):
+            analysis["document_type"] = file_info["document_type"]
 
         metadata_status = self.metadata.save_knowledge_item(
             domain=domain,
@@ -114,15 +123,34 @@ class UploadPipeline:
 
         return {
             "success": True,
+
             "domain": domain,
             "module": module,
             "knowledge_name": knowledge_name,
             "version": version,
+
+            # AI Analysis
+            "platform": analysis.get("platform", ""),
+            "category": analysis.get("category", ""),
+            "business_process": analysis.get("business_process", ""),
+            "document_type": analysis.get("document_type", ""),
+            "summary": analysis.get("summary", ""),
+            "tags": analysis.get("tags", []),
+            "confidence": analysis.get("confidence", 0),
+
+            # Repository/File Information
+            "repository_path": file_info.get("repository_path", ""),
+            "file_name": file_info.get("file_name", ""),
+            "file_type": file_info.get("extension", ""),
+
+            # Upload Statistics
+            "total_chunks": len(chunks),
+            "vectors_saved": vectors_saved,
+
+            # Existing Objects (keep these for compatibility)
             "file_info": file_info,
             "analysis": analysis,
-            "metadata_status": metadata_status,
-            "total_chunks": len(chunks),
-            "vectors_saved": vectors_saved
+            "metadata_status": metadata_status
         }
 
     # --------------------------------------------------
@@ -135,7 +163,8 @@ class UploadPipeline:
         domain,
         module,
         knowledge_name,
-        version="1.0"
+        version="1.0",
+        document_type=""
     ):
 
         return self.upload_file(
@@ -143,7 +172,8 @@ class UploadPipeline:
             domain=domain,
             module=module,
             knowledge_name=knowledge_name,
-            version=version
+            version=version,
+            document_type=document_type
         )
 
     # --------------------------------------------------
