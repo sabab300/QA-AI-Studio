@@ -180,6 +180,77 @@ class VectorStore:
             return False
 
     # --------------------------------------------------
+    # Delete
+    # --------------------------------------------------
+
+    def delete(
+
+        self,
+        doc_id
+
+    ):
+
+        try:
+
+            self.collection.delete(
+                ids=[str(doc_id)]
+            )
+
+            return True
+
+        except Exception:
+
+            self.logger.exception(
+                "Vector delete failed."
+            )
+
+            return False
+
+    # --------------------------------------------------
+    # Delete by Knowledge
+    # --------------------------------------------------
+
+    def delete_by_knowledge_name(
+        self,
+        knowledge_name
+    ):
+
+        try:
+
+            data = self.collection.get()
+
+            ids = data.get("ids", [])
+            metadatas = data.get("metadatas", [])
+
+            delete_ids = []
+
+            for doc_id, metadata in zip(ids, metadatas):
+
+                if metadata.get("knowledge_name") == knowledge_name:
+
+                    delete_ids.append(doc_id)
+
+            if delete_ids:
+
+                self.collection.delete(
+                    ids=delete_ids
+                )
+
+            self.logger.info(
+                f"Deleted {len(delete_ids)} vectors for {knowledge_name}"
+            )
+
+            return True
+
+        except Exception:
+
+            self.logger.exception(
+                "Vector delete failed."
+            )
+
+            return False
+
+    # --------------------------------------------------
     # Search
     # --------------------------------------------------
 
@@ -228,33 +299,6 @@ class VectorStore:
             )
 
             return None
-
-    # --------------------------------------------------
-    # Delete
-    # --------------------------------------------------
-
-    def delete(
-
-        self,
-        doc_id
-
-    ):
-
-        try:
-
-            self.collection.delete(
-                ids=[str(doc_id)]
-            )
-
-            return True
-
-        except Exception:
-
-            self.logger.exception(
-                "Vector delete failed."
-            )
-
-            return False
 
     # --------------------------------------------------
     # Count

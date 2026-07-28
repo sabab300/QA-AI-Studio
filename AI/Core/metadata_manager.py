@@ -826,6 +826,45 @@ class MetadataManager:
         print("Modules:", modules)
 
         return modules
+    # ==================================================
+
+    # PATCH — AI/Core/metadata_manager.py
+#
+# Add this method to the MetadataManager class, right after
+# list_modules(self, domain_name) (around line 828, just before
+# "def get_module(self, module_id):").
+#
+# It gives the QA Engineering screen a proper way to list the
+# Knowledge Names that exist under a given Domain + Module, using
+# the same query already duplicated in manage_knowledge_page.py —
+# centralizing it here so both screens can share it.
+
+    # ==================================================
+
+    def get_knowledge_names(self, domain, module):
+
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT DISTINCT knowledge_name
+            FROM knowledge_items
+            WHERE domain=?
+            AND module=?
+            ORDER BY knowledge_name
+            """,
+            (
+                domain,
+                module
+            )
+        )
+
+        names = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+
+        return names    
 
     # ==================================================
 

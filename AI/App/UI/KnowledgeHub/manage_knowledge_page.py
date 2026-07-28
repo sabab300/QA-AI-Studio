@@ -36,6 +36,9 @@ from PySide6.QtWidgets import (
 )
 
 from Core.metadata_manager import MetadataManager
+from Core.repository_manager import RepositoryManager
+from Core.vector_store import VectorStore
+from Core.upload_pipeline import UploadPipeline
 
 
 class KnowledgeDetailDialog(QDialog):
@@ -100,6 +103,9 @@ class ManageKnowledgePage(QWidget):
         super().__init__()
 
         self.manager = MetadataManager()
+        self.repository = RepositoryManager()
+        self.vector_store = VectorStore()
+        self.pipeline = UploadPipeline()
 
         self.rows = []
 
@@ -533,9 +539,17 @@ class ManageKnowledgePage(QWidget):
 
             return
 
-
-
         try:
+
+            self.repository.delete_knowledge(
+                row[1],   # Domain
+                row[2],   # Module
+                row[3]    # Knowledge Name
+            )
+
+            self.vector_store.delete_by_knowledge_name(
+                row[3]
+            )
 
             self.manager.delete(
                 row[0]
@@ -1106,7 +1120,8 @@ class MetadataManager:
         conn.close()
 
         return True
-        # --------------------------------------------------
+    
+    # --------------------------------------------------
     # Get Domains
     # --------------------------------------------------
 

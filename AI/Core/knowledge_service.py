@@ -279,7 +279,19 @@ class KnowledgeService:
 
     def delete(
         self,
-        knowledge_id
+        domain,
+        module,
+        knowledge_name
     ):
 
-        return False
+        self.pipeline.delete_knowledge(
+            knowledge_name
+        )
+
+        self.repository.delete_knowledge(
+            domain,
+            module,
+            knowledge_name
+        )
+
+        return True

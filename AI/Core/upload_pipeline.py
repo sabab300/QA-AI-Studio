@@ -25,9 +25,9 @@ class UploadPipeline:
         self.extractor = TextExtractor()
         self.analyzer = KnowledgeAnalyzer()
         self.embedding = EmbeddingEngine()
-        self.vector_store = VectorStore()
         self.chunker = DocumentChunker()
         self.smart_uploader = SmartUpload()
+        self.vector_store = VectorStore()
 
     # --------------------------------------------------
     # Upload File
@@ -319,3 +319,32 @@ class UploadPipeline:
     )
 
         return analysis
+
+    # --------------------------------------------------
+    # Delete Knowledge
+    # --------------------------------------------------
+
+    def delete_knowledge(
+        self,
+        domain,
+        module,
+        knowledge_name
+    ):
+
+        data = self.vector_store.get_all()
+
+        if not data:
+            return
+
+        ids = data.get("ids", [])
+        metadatas = data.get("metadatas", [])
+
+        for doc_id, metadata in zip(ids, metadatas):
+
+            if (
+                metadata.get("domain") == domain
+                and metadata.get("module") == module
+                and metadata.get("knowledge_name") == knowledge_name
+            ):
+
+                self.vector_store.delete(doc_id)

@@ -1,3 +1,5 @@
+# Replace: App/UI/KnowledgeHub/smart_upload_page.py
+
 """
 ==========================================================
 QA AI Studio
@@ -6,28 +8,55 @@ Knowledge Hub
 
 AI Smart Upload
 
-Version : 2.0
+Version : 3.0  (Backend-Wired Fix)
 
 Production AI Smart Upload Workflow
 
 Flow:
-    Select Files
+    Select Files / Folder
         |
         v
-    AI Analyze
+    Analyze With AI  (background thread)
         |
         v
-    Review Classification
+    Review + Edit Suggested Domain / Module /
+    Knowledge Name / Version / Document Type
         |
         v
-    Upload Knowledge
+    Confirm Upload  (background thread, ALL files)
         |
         v
     Metadata + VectorStore
+
+Fix Notes (v3.0):
+    • KnowledgeService.smart_upload() now exists in the backend —
+      wired it in via a new background QThread worker
+      (SmartUploadWorker) instead of calling it directly on the
+      UI thread.
+    • Analyzing multiple files no longer overwrites itself —
+      every file's suggestion is appended to the AI Analysis
+      Summary as it completes; the first *successful* file's
+      suggestion is used to auto-fill the editable fields.
+    • Domain field is now a real editable QComboBox pre-populated
+      with the known PSW domains, so a wrong AI guess can be
+      corrected instead of being stuck.
+    • Confirm Upload now sends ALL selected files (previously it
+      silently uploaded only the first file), and runs on a
+      background thread via the existing UploadWorker so the UI
+      doesn't freeze during embedding.
+    • Folder selection now filters to file types the extractor
+      can actually read, instead of walking every file on disk.
+    • Wrapped page content in a QScrollArea to prevent the same
+      overlap issue fixed earlier in Manual Upload.
+    • Removed dead/duplicate upload_files() method and wired the
+      four placeholder connector buttons to a "coming soon" note
+      instead of doing nothing.
 ==========================================================
 """
 
 from pathlib import Path
+
+from PySide6.QtCore import QThread
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -43,12 +72,47 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QGroupBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView
+    QScrollArea,
+    QSizePolicy,
 )
 
-from Core.knowledge_service import KnowledgeService
+from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
+
+from UI.KnowledgeHub.upload_worker import UploadWorker
+
+
+# Extensions the backend TextExtractor can actually read.
+# Keeps folder scans from dragging in images/binaries that
+# would just fail analysis and clutter the log.
+SUPPORTED_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".txt",
+}
+
+KNOWN_DOMAINS = [
+    "PSW Core",
+    "WeBOC",
+    "WeBOC 2.0",
+    "PCS",
+    "ACS",
+    "Other",
+]
+
+DOCUMENT_TYPES = [
+    "General",
+    "SRS",
+    "CRF",
+    "Test Case",
+    "API",
+    "SOP",
+    "Release Notes",
+    "Technical Document",
+    "Other",
+]
 
 
 class SmartUploadPage(QWidget):
@@ -56,17 +120,22 @@ class SmartUploadPage(QWidget):
     def __init__(self):
 
         super().__init__()
+
         self.files = []
+
         self.analysis_results = {}
-        self.service = KnowledgeService()
-        self.selected_file = ""
+
+        self.analysis_thread = None
+
+        self.analysis_worker = None
+
+        self.upload_thread = None
+
+        self.upload_worker = None
+
         self.build_ui()
-        self.domain.setEnabled(False)
-        self.module.setEnabled(False)
-        self.knowledge_name.setEnabled(False)
-        self.version.setEnabled(False)
-        self.document_type.setEnabled(False)
-        self.upload_btn.setEnabled(False)
+
+        self.set_fields_enabled(False)
 
 
     # ======================================================
@@ -75,7 +144,27 @@ class SmartUploadPage(QWidget):
 
     def build_ui(self):
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+
+        scroll.setWidgetResizable(True)
+
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        outer.addWidget(scroll)
+
+        content = QWidget()
+
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+
+        layout.setContentsMargins(20, 20, 20, 20)
 
         layout.setSpacing(15)
 
@@ -99,118 +188,111 @@ class SmartUploadPage(QWidget):
 
 
         # ==================================================
-        # Knowledge Information
+        # Knowledge Information (AI-suggested, editable)
         # ==================================================
 
         info_group = QGroupBox(
-            "AI Suggestions Repository"
+            "Knowledge Information — AI Suggested"
         )
-
 
         info_layout = QGridLayout(
             info_group
         )
 
+        info_layout.setContentsMargins(15, 20, 15, 15)
+
+        info_layout.setHorizontalSpacing(12)
+
+        info_layout.setVerticalSpacing(10)
+
+        info_layout.setColumnStretch(1, 1)
+
+        info_layout.setColumnStretch(3, 1)
+
 
         self.domain = QComboBox()
 
-        self.domain.addItem(
-            "PSW Domain"
+        self.domain.setEditable(True)
+
+        self.domain.addItems(
+            KNOWN_DOMAINS
+        )
+
+        self.domain.setCurrentIndex(-1)
+
+        self.domain.lineEdit().setPlaceholderText(
+            "Select or type domain"
         )
 
 
         self.module = QComboBox()
 
-        self.module.setEditable(
-            True
+        self.module.setEditable(True)
+
+        self.module.lineEdit().setPlaceholderText(
+            "Select or type module"
         )
 
 
         self.knowledge_name = QLineEdit()
-
-
-        self.version = QLineEdit(
-            "1.0"
-        )
-
-        self.document_type = QComboBox()
-
-        self.document_type.addItems([
-            "General",
-            "SRS",
-            "CRF",
-            "Test Case",
-            "API",
-            "SOP"
-        ])
-
 
         self.knowledge_name.setPlaceholderText(
             "Knowledge Name"
         )
 
 
-        info_layout.addWidget(
-            QLabel("Domain"),
-            0,
-            0
-        )
-
-        info_layout.addWidget(
-            self.domain,
-            0,
-            1
+        self.version = QLineEdit(
+            "1.0"
         )
 
 
-        info_layout.addWidget(
-            QLabel("Module"),
-            0,
-            2
-        )
+        self.document_type = QComboBox()
 
-        info_layout.addWidget(
-            self.module,
-            0,
-            3
+        self.document_type.addItems(
+            DOCUMENT_TYPES
         )
 
 
         info_layout.addWidget(
-            QLabel("Knowledge Name"),
-            1,
-            0
+            QLabel("Domain"), 0, 0
         )
 
         info_layout.addWidget(
-            self.knowledge_name,
-            1,
-            1
+            self.domain, 0, 1
+        )
+
+        info_layout.addWidget(
+            QLabel("Module"), 0, 2
+        )
+
+        info_layout.addWidget(
+            self.module, 0, 3
         )
 
 
         info_layout.addWidget(
-            QLabel("Version"),
-            1,
-            2
+            QLabel("Knowledge Name"), 1, 0
         )
 
         info_layout.addWidget(
-            QLabel("Document Type"),
-            2,
-            0
+            self.knowledge_name, 1, 1
         )
 
         info_layout.addWidget(
-            self.document_type,
-            2,
-            1
+            QLabel("Version"), 1, 2
         )
 
         info_layout.addWidget(
-            self.version,
-            1,
-            3
+            self.version, 1, 3
+        )
+
+
+        info_layout.addWidget(
+            QLabel("Document Type"), 2, 0
+        )
+
+        info_layout.addWidget(
+            self.document_type, 2, 1
         )
 
 
@@ -227,76 +309,54 @@ class SmartUploadPage(QWidget):
             "Upload Documents"
         )
 
-
         file_layout = QVBoxLayout(
             file_group
         )
 
+        file_layout.setContentsMargins(15, 20, 15, 15)
+
+        file_layout.setSpacing(10)
+
 
         buttons = QHBoxLayout()
 
-        self.file_btn = QPushButton(
-            "Select Files"
-        )
-        self.folder_btn = QPushButton(
-            "Select Folder"
-        )
-        self.url_btn = QPushButton(
-            "Add URL"
-        )
-        self.api_btn = QPushButton(
-            "Add API"
-        )
-        self.sql_btn = QPushButton(
-            "Add SQL"
-        )
-        self.image_btn = QPushButton(
-            "Add Images"
-        )
-        self.analyze_btn = QPushButton(
-            "Analyze With AI"
-        )
-        self.upload_btn = QPushButton(
-            "Confirm Upload"
-        )
+        buttons.setSpacing(8)
 
 
-        buttons.addWidget(
-            self.file_btn
-        )
+        self.file_btn = QPushButton("Select Files")
 
-        buttons.addWidget(
-            self.folder_btn
-        )
+        self.folder_btn = QPushButton("Select Folder")
 
-        buttons.addWidget(
-        self.url_btn
-        )
+        self.url_btn = QPushButton("Add URL")
 
-        buttons.addWidget(
-            self.api_btn
-        )
+        self.api_btn = QPushButton("Add API")
 
-        buttons.addWidget(
-            self.sql_btn
-        )
+        self.sql_btn = QPushButton("Add SQL")
 
-        buttons.addWidget(
-            self.image_btn
-        )  
+        self.image_btn = QPushButton("Add Images")
 
+        self.analyze_btn = QPushButton("Analyze With AI")
+
+        self.upload_btn = QPushButton("Confirm Upload")
+
+
+        buttons.addWidget(self.file_btn)
+
+        buttons.addWidget(self.folder_btn)
+
+        buttons.addWidget(self.url_btn)
+
+        buttons.addWidget(self.api_btn)
+
+        buttons.addWidget(self.sql_btn)
+
+        buttons.addWidget(self.image_btn)
 
         buttons.addStretch()
 
+        buttons.addWidget(self.analyze_btn)
 
-        buttons.addWidget(
-            self.analyze_btn
-        )
-
-
-        buttons.addWidget(
-            self.upload_btn
-        )
+        buttons.addWidget(self.upload_btn)
 
 
         file_layout.addLayout(
@@ -306,6 +366,12 @@ class SmartUploadPage(QWidget):
 
         self.file_list = QListWidget()
 
+        self.file_list.setMinimumHeight(120)
+
+        self.file_list.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
 
         file_layout.addWidget(
             self.file_list
@@ -322,23 +388,53 @@ class SmartUploadPage(QWidget):
         # ==================================================
 
         result_group = QGroupBox(
-            "AI Suggestions Summary"
+            "AI Analysis Summary"
         )
 
-        result_layout = QVBoxLayout(result_group)
+        result_layout = QVBoxLayout(
+            result_group
+        )
+
+        result_layout.setContentsMargins(15, 20, 15, 15)
+
+        result_layout.setSpacing(10)
+
 
         self.summary = QTextEdit()
-        self.summary.setReadOnly(True)
-        self.summary.setMinimumHeight(300)
 
-        result_layout.addWidget(self.summary)
+        self.summary.setReadOnly(True)
+
+        self.summary.setMinimumHeight(220)
+
+        self.summary.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
+
+        result_layout.addWidget(
+            self.summary
+        )
+
 
         self.log = QTextEdit()
+
         self.log.setReadOnly(True)
 
-        result_layout.addWidget(self.log)
+        self.log.setMinimumHeight(100)
 
-        layout.addWidget(result_group)
+        self.log.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Fixed
+        )
+
+        result_layout.addWidget(
+            self.log
+        )
+
+
+        layout.addWidget(
+            result_group
+        )
 
 
         # ==================================================
@@ -353,6 +449,22 @@ class SmartUploadPage(QWidget):
             self.select_folder
         )
 
+        self.url_btn.clicked.connect(
+            lambda: self.connector_coming_soon("URL")
+        )
+
+        self.api_btn.clicked.connect(
+            lambda: self.connector_coming_soon("API Collection")
+        )
+
+        self.sql_btn.clicked.connect(
+            lambda: self.connector_coming_soon("SQL Script")
+        )
+
+        self.image_btn.clicked.connect(
+            lambda: self.connector_coming_soon("Images")
+        )
+
         self.analyze_btn.clicked.connect(
             self.analyze_files
         )
@@ -361,11 +473,56 @@ class SmartUploadPage(QWidget):
             self.confirm_upload
         )
 
-        self.upload_btn.setEnabled(
-            False
+        self.upload_btn.setEnabled(False)
+
+
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    def connector_coming_soon(self, source_name):
+
+        QMessageBox.information(
+            self,
+            "Connector",
+            f"{source_name} connector will be enabled in a future backend phase."
         )
 
-        self.confirm_btn = self.upload_btn
+
+    def set_fields_enabled(self, enabled):
+
+        self.domain.setEnabled(enabled)
+
+        self.module.setEnabled(enabled)
+
+        self.knowledge_name.setEnabled(enabled)
+
+        self.version.setEnabled(enabled)
+
+        self.document_type.setEnabled(enabled)
+
+
+    def reset_analysis_state(self):
+
+        self.analysis_results = {}
+
+        self.summary.clear()
+
+        self.log.clear()
+
+        self.set_fields_enabled(False)
+
+        self.upload_btn.setEnabled(False)
+
+        self.domain.setCurrentIndex(-1)
+
+        self.module.clear()
+
+        self.knowledge_name.clear()
+
+        self.version.setText("1.0")
+
+        self.document_type.setCurrentIndex(0)
 
 
     # ======================================================
@@ -379,33 +536,20 @@ class SmartUploadPage(QWidget):
             "Select Knowledge Files"
         )
 
-        if files:
+        if not files:
 
-            self.files = files
+            return
 
-            self.selected_file = files[0]
+        for file in files:
 
-            self.refresh_files()
+            if file not in self.files:
 
-            # Reset previous AI analysis
-            self.analysis_results = {}
+                self.files.append(file)
 
-            self.summary.clear()
-            self.log.clear()
+        self.refresh_files()
 
-            self.domain.setEnabled(False)
-            self.module.setEnabled(False)
-            self.knowledge_name.setEnabled(False)
-            self.version.setEnabled(False)
-            self.document_type.setEnabled(False)
+        self.reset_analysis_state()
 
-            self.upload_btn.setEnabled(False)
-
-            self.domain.clear()
-            self.module.clear()
-            self.knowledge_name.clear()
-            self.version.setText("1.0")
-            self.document_type.setCurrentIndex(0)
 
     def select_folder(self):
 
@@ -414,44 +558,38 @@ class SmartUploadPage(QWidget):
             "Select Folder"
         )
 
-
         if not folder:
 
             return
 
+        added = 0
 
         for file in Path(folder).rglob("*.*"):
 
-            self.files.append(
-                str(file)
-            )
+            if file.suffix.lower() not in SUPPORTED_EXTENSIONS:
 
+                continue
+
+            path_str = str(file)
+
+            if path_str not in self.files:
+
+                self.files.append(path_str)
+
+                added += 1
 
         self.refresh_files()
 
-        if self.files:
-            self.selected_file = self.files[0]
+        self.reset_analysis_state()
 
-        # Reset previous AI analysis
-        self.analysis_results = {}
+        if added == 0:
 
-        self.summary.clear()
-        self.log.clear()
-
-        self.domain.setEnabled(False)
-        self.module.setEnabled(False)
-        self.knowledge_name.setEnabled(False)
-        self.version.setEnabled(False)
-        self.document_type.setEnabled(False)
-
-        self.upload_btn.setEnabled(False)
-
-        self.domain.clear()
-        self.module.clear()
-        self.knowledge_name.clear()
-        self.version.setText("1.0")
-        self.document_type.setCurrentIndex(0)
-
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "No supported documents (PDF, Word, Excel, Text) "
+                "were found in that folder."
+            )
 
 
     def refresh_files(self):
@@ -463,9 +601,8 @@ class SmartUploadPage(QWidget):
         )
 
 
-
     # ======================================================
-    # AI Analyze
+    # AI Analyze (background thread)
     # ======================================================
 
     def analyze_files(self):
@@ -480,188 +617,400 @@ class SmartUploadPage(QWidget):
 
             return
 
-        self.analysis_results = {}
+        if self.analysis_thread is not None:
 
-        self.summary.clear()
-        self.log.clear()
+            # Already running — ignore double-click.
+            return
 
-        for file in self.files:
+        if self.upload_thread is not None:
 
-            try:
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Please wait for the current upload to finish."
+            )
 
-                result = self.service.smart_upload(
-                    source_file=file
-                )
+            return
 
-                self.analysis_results[file] = result
+        self.reset_analysis_state()
 
+        self.analyze_btn.setEnabled(False)
 
-                self.domain.setEnabled(True)
-                self.module.setEnabled(True)
-                self.knowledge_name.setEnabled(True)
-                self.version.setEnabled(True)
-                self.document_type.setEnabled(True)
+        self.log.append(
+            "Starting AI analysis..."
+        )
 
-                self.domain.clear()
+        self.analysis_thread = QThread()
 
-                domain = result.get("domain", "Unknown")
+        self.analysis_worker = SmartUploadWorker(
+            list(self.files)
+        )
 
-                self.domain.addItem(domain)
-                self.domain.setCurrentText(domain)
+        self.analysis_worker.moveToThread(
+            self.analysis_thread
+        )
 
-                self.module.clear()
+        self.analysis_thread.started.connect(
+            self.analysis_worker.run
+        )
 
-                module = result.get("module", "")
+        self.analysis_worker.progress.connect(
+            self.log.append
+        )
 
-                if not module:
-                    module = "Unknown"
+        self.analysis_worker.file_analyzed.connect(
+            self.handle_file_analyzed
+        )
 
-                self.module.addItem(module)
+        self.analysis_worker.file_failed.connect(
+            self.handle_file_failed
+        )
 
-                if not self.knowledge_name.text().strip():
-                    self.knowledge_name.setText(
-                        Path(file).stem
-                    )
+        self.analysis_worker.finished.connect(
+            self.analysis_finished
+        )
 
-                self.version.setText(
-                    result.get("version", "1.0")
-                )
+        self.analysis_worker.error.connect(
+            self.analysis_error
+        )
 
-                self.document_type.setCurrentText(
-                    result.get("document_type", "General")
-                )
+        self.analysis_worker.finished.connect(
+            self.analysis_thread.quit
+        )
 
-                summary = result.get("summary", "").strip()
+        self.analysis_worker.error.connect(
+            self.analysis_thread.quit
+        )
 
-                if not summary:
-                    summary = "No AI summary available."
+        self.analysis_thread.finished.connect(
+            self.cleanup_analysis_thread
+        )
 
-                self.summary.setPlainText(summary)
-
-
-                self.log.append(
-                    f"Analyzed: {Path(file).name}"
-                )
-
-
-            except Exception as ex:
-
-                self.log.append(
-                    str(ex)
-                )
+        self.analysis_thread.start()
 
 
-        if self.analysis_results:
+    def handle_file_analyzed(self, file_path, result):
+
+        self.analysis_results[file_path] = result
+
+        name = Path(file_path).name
+
+        domain = result.get("domain", "Unknown")
+
+        module = result.get("module", "") or "Unknown"
+
+        document_type = result.get("document_type", "General")
+
+        confidence = result.get("confidence", 0)
+
+        tags = result.get("tags", [])
+
+        summary_text = result.get("summary", "").strip() or "No summary available."
+
+
+        block = (
+            f"File: {name}\n"
+            f"Suggested Domain: {domain}\n"
+            f"Suggested Module: {module}\n"
+            f"Document Type: {document_type}\n"
+            f"Confidence: {confidence}\n"
+            f"Tags: {', '.join(tags) if tags else '—'}\n"
+            f"Summary: {summary_text}\n"
+            + ("-" * 50)
+        )
+
+        self.summary.append(block)
+
+
+    def handle_file_failed(self, file_path, message):
+
+        name = Path(file_path).name
+
+        self.summary.append(
+            f"File: {name}\nAnalysis failed: {message}\n"
+            + ("-" * 50)
+        )
+
+
+    def analysis_finished(self, results):
+
+        self.analyze_btn.setEnabled(True)
+
+        if not results:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "AI analysis did not succeed for any of the selected files. "
+                "You can still fill in the details manually and upload."
+            )
+
+            self.set_fields_enabled(True)
 
             self.upload_btn.setEnabled(True)
 
-        else:
-
-            self.upload_btn.setEnabled(False)
-    
-    # ======================================================
-    # Upload
-    # ======================================================
-
-    def upload_files(self):
-
-        if not self.files:
-
             return
 
+        # Use the first successfully analyzed file, in the order the
+        # user picked them, as the primary suggestion for the batch.
+        primary_result = None
 
-        if (
-            self.knowledge_name.isEnabled()
-            and not self.knowledge_name.text().strip()
-        ):
+        for file_path in self.files:
 
-            QMessageBox.warning(
-                self,
-                "Validation",
-                "Knowledge Name required."
+            if file_path in results:
+
+                primary_result = results[file_path]
+
+                break
+
+        if primary_result:
+
+            domain = primary_result.get("domain", "")
+
+            if domain and self.domain.findText(domain) == -1:
+
+                self.domain.addItem(domain)
+
+            self.domain.setCurrentText(domain)
+
+
+            module = primary_result.get("module", "")
+
+            if module:
+
+                if self.module.findText(module) == -1:
+
+                    self.module.addItem(module)
+
+                self.module.setCurrentText(module)
+
+
+            if not self.knowledge_name.text().strip():
+
+                first_file = next(iter(results.keys()))
+
+                self.knowledge_name.setText(
+                    Path(first_file).stem.replace("_", " ").replace("-", " ").strip()
+                )
+
+
+            self.version.setText(
+                primary_result.get("version", "1.0")
             )
 
-            return
+
+            doc_type = primary_result.get("document_type", "General")
+
+            index = self.document_type.findText(doc_type)
+
+            if index == -1:
+
+                index = 0
+
+            self.document_type.setCurrentIndex(index)
 
 
-        try:
+        self.set_fields_enabled(True)
 
-            result = self.service.upload(
+        self.upload_btn.setEnabled(True)
 
-                domain=self.domain.currentText(),
-
-                module=self.module.currentText(),
-
-                knowledge_name=self.knowledge_name.text(),
-
-                version=self.version.text(),
-
-                files=self.files
-
-            )
+        self.log.append(
+            f"Analysis complete: {len(results)}/{len(self.files)} file(s) succeeded."
+        )
 
 
-            QMessageBox.information(
+    def analysis_error(self, message):
 
-                self,
+        self.analyze_btn.setEnabled(True)
 
-                "QA AI Studio",
+        self.log.append(
+            f"Analysis error: {message}"
+        )
 
-                f"Upload Completed\n\n"
-                f"Files processed: {len(result.get('results', []))}"
-
-            )
-
-
-            self.log.append(
-                "Knowledge uploaded successfully."
-            )
+        QMessageBox.critical(
+            self,
+            "AI Analysis Failed",
+            message
+        )
 
 
-        except Exception as ex:
+    def cleanup_analysis_thread(self):
+
+        if self.analysis_thread:
+
+            self.analysis_thread.deleteLater()
+
+        self.analysis_thread = None
+
+        self.analysis_worker = None
 
 
-            QMessageBox.critical(
-
-                self,
-
-                "Upload Failed",
-
-                str(ex)
-
-            )
+    # ======================================================
+    # Confirm Upload (background thread, ALL files)
+    # ======================================================
 
     def confirm_upload(self):
 
-        if not self.selected_file:
+        if not self.files:
+
             QMessageBox.warning(
                 self,
                 "QA AI Studio",
-                "Please analyze a document first."
+                "Select files first."
             )
+
             return
 
-        result = self.service.upload(
-            domain=self.domain.currentText(),
-            module=self.module.currentText(),
-            knowledge_name=self.knowledge_name.text(),
-            version=self.version.text(),
-            document_type=self.document_type.currentText(),
-            files=[self.selected_file]
+        if not self.analysis_results:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Please analyze the selected files with AI first."
+            )
+
+            return
+
+        if self.upload_thread is not None:
+
+            # Already running — ignore double-click.
+            return
+
+        domain = self.domain.currentText().strip()
+
+        module = self.module.currentText().strip()
+
+        knowledge_name = self.knowledge_name.text().strip()
+
+        version = self.version.text().strip() or "1.0"
+
+        document_type = self.document_type.currentText()
+
+
+        if not domain:
+
+            QMessageBox.warning(
+                self, "Validation", "Domain is required."
+            )
+
+            return
+
+        if not module:
+
+            QMessageBox.warning(
+                self, "Validation", "Module is required."
+            )
+
+            return
+
+        if not knowledge_name:
+
+            QMessageBox.warning(
+                self, "Validation", "Knowledge Name is required."
+            )
+
+            return
+
+
+        self.upload_btn.setEnabled(False)
+
+        self.analyze_btn.setEnabled(False)
+
+        self.log.append(
+            f"Uploading {len(self.files)} file(s)..."
         )
 
-        if result.get("success"):
+        self.upload_thread = QThread()
 
-            QMessageBox.information(
-                self,
-                "QA AI Studio",
-                "Knowledge saved successfully."
-            )
+        self.upload_worker = UploadWorker(
+            domain,
+            module,
+            knowledge_name,
+            version,
+            document_type,
+            list(self.files)
+        )
 
-        else:
+        self.upload_worker.moveToThread(
+            self.upload_thread
+        )
 
-            QMessageBox.critical(
-                self,
-                "QA AI Studio",
-                "Knowledge upload failed."
-            )
+        self.upload_thread.started.connect(
+            self.upload_worker.run
+        )
+
+        self.upload_worker.progress.connect(
+            self.log.append
+        )
+
+        self.upload_worker.finished.connect(
+            self.upload_finished
+        )
+
+        self.upload_worker.error.connect(
+            self.upload_error
+        )
+
+        self.upload_worker.finished.connect(
+            self.upload_thread.quit
+        )
+
+        self.upload_worker.error.connect(
+            self.upload_thread.quit
+        )
+
+        self.upload_thread.finished.connect(
+            self.cleanup_upload_thread
+        )
+
+        self.upload_thread.start()
+
+
+    def upload_finished(self, result):
+
+        self.log.append(
+            "Knowledge uploaded successfully."
+        )
+
+        QMessageBox.information(
+            self,
+            "QA AI Studio",
+            f"Upload completed.\n\nFiles processed: {len(self.files)}"
+        )
+
+        # Ready for the next batch.
+        self.files = []
+
+        self.file_list.clear()
+
+        self.reset_analysis_state()
+
+        self.analyze_btn.setEnabled(True)
+
+
+    def upload_error(self, message):
+
+        self.upload_btn.setEnabled(True)
+
+        self.analyze_btn.setEnabled(True)
+
+        self.log.append(
+            f"Upload failed: {message}"
+        )
+
+        QMessageBox.critical(
+            self,
+            "Upload Failed",
+            message
+        )
+
+
+    def cleanup_upload_thread(self):
+
+        if self.upload_thread:
+
+            self.upload_thread.deleteLater()
+
+        self.upload_thread = None
+
+        self.upload_worker = None

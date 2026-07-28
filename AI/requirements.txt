@@ -9,3 +9,5 @@ openpyxl
 requests
 pandas
 numpy
+reportlab
+echo

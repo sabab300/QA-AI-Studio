@@ -6,6 +6,10 @@ Version: 3.0
 """
 
 from pathlib import Path
+from UI.QAEngineering.test_case_generation_page import TestCaseGenerationPage
+from UI.QAAutomation.test_execution_page import TestExecutionPage
+
+
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -185,10 +189,8 @@ class MainWindow(QMainWindow):
         # QA Engineering
         # ------------------------------------------------
 
-        self.qa_page = self._placeholder(
-            "QA Engineering"
-        )
-
+        self.qa_page = TestCaseGenerationPage()
+ 
         self.pages.addWidget(
             self.qa_page
         )
@@ -197,10 +199,8 @@ class MainWindow(QMainWindow):
         # QA Automation
         # ------------------------------------------------
 
-        self.automation_page = self._placeholder(
-            "QA Automation"
-        )
-
+        self.automation_page = TestExecutionPage()
+ 
         self.pages.addWidget(
             self.automation_page
         )
