@@ -36,6 +36,10 @@ class MetadataManager:
         analysis=None
     ):
 
+        self.get_or_create_domain(domain)
+ 
+        self.get_or_create_module(domain, module)
+
         conn = self.db.get_connection()
 
         cursor = conn.cursor()
@@ -492,48 +496,38 @@ class MetadataManager:
     ):
 
         conn = self.db.get_connection()
-
         cursor = conn.cursor()
 
+        cursor.execute(
+            "DELETE FROM embedding_queue WHERE knowledge_id=?",
+            (knowledge_id,)
+        )
+        queue_deleted = cursor.rowcount
 
         cursor.execute(
-            """
-            DELETE FROM embedding_queue
-            WHERE knowledge_id=?
-            """,
-            (
-                knowledge_id,
-            )
+            "DELETE FROM knowledge_versions WHERE knowledge_item_id=?",
+            (knowledge_id,)
         )
-
+        versions_deleted = cursor.rowcount
 
         cursor.execute(
-            """
-            DELETE FROM knowledge_versions
-            WHERE knowledge_item_id=?
-            """,
-            (
-                knowledge_id,
-            )
+            "DELETE FROM knowledge_items WHERE id=?",
+            (knowledge_id,)
         )
-
-
-        cursor.execute(
-            """
-            DELETE FROM knowledge_items
-            WHERE id=?
-            """,
-            (
-                knowledge_id,
-            )
-        )
-
+        knowledge_deleted = cursor.rowcount
 
         conn.commit()
-
         conn.close()
 
-        return True
+        return {
+
+            "knowledge": knowledge_deleted,
+
+            "versions": versions_deleted,
+
+            "queue": queue_deleted
+
+        }
 
    
     # ==================================================
@@ -797,6 +791,73 @@ class MetadataManager:
         conn.close()
 
         return module_id
+
+    
+    def get_or_create_domain(self, name):
+ 
+        name = (name or "").strip()
+ 
+        if not name:
+ 
+            return None
+ 
+        conn = self.db.get_connection()
+ 
+        cursor = conn.cursor()
+ 
+        cursor.execute(
+            "SELECT id FROM domains WHERE name=?",
+            (name,)
+        )
+ 
+        row = cursor.fetchone()
+ 
+        conn.close()
+ 
+        if row:
+ 
+            return row[0]
+ 
+        return self.create_domain(name)
+ 
+ 
+    def get_or_create_module(self, domain_name, module_name):
+ 
+        domain_name = (domain_name or "").strip()
+ 
+        module_name = (module_name or "").strip()
+ 
+        if not domain_name or not module_name:
+ 
+            return None
+ 
+        # Ensure the domain exists first — create_module() requires
+        # it and raises otherwise.
+        self.get_or_create_domain(domain_name)
+ 
+        conn = self.db.get_connection()
+ 
+        cursor = conn.cursor()
+ 
+        cursor.execute(
+            """
+            SELECT modules.id
+            FROM modules
+            JOIN domains ON domains.id = modules.domain_id
+            WHERE domains.name=? AND modules.name=?
+            """,
+            (domain_name, module_name)
+        )
+ 
+        row = cursor.fetchone()
+ 
+        conn.close()
+ 
+        if row:
+ 
+            return row[0]
+ 
+        return self.create_module(domain_name, module_name)
 
 
     # ==================================================

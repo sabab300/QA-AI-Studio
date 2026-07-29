@@ -8,6 +8,8 @@ Version: 3.0
 from pathlib import Path
 from UI.QAEngineering.test_case_generation_page import TestCaseGenerationPage
 from UI.QAAutomation.test_execution_page import TestExecutionPage
+from UI.QAAutomation.test_execution_page import TestExecutionPage
+from UI.QAAutomation.qa_automation_hub_page import QAAutomationHubPage
 
 
 
@@ -199,7 +201,7 @@ class MainWindow(QMainWindow):
         # QA Automation
         # ------------------------------------------------
 
-        self.automation_page = TestExecutionPage()
+        self.automation_page = QAAutomationHubPage()
  
         self.pages.addWidget(
             self.automation_page

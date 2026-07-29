@@ -76,50 +76,78 @@ class UploadPipeline:
             analysis=analysis
         )
 
+# PATCH — AI/Core/upload_pipeline.py
+#
+# Replace the chunk loop (lines ~79-122 — from "chunks = self.chunker.split(text)"
+# through the end of the "for index, chunk in enumerate..." loop) with this.
+#
+# Before: N chunks -> N separate model.encode() calls -> N separate
+#         ChromaDB add() calls.
+# After:  N chunks -> 1 batched model.encode() call -> 1 batched
+#         ChromaDB add() call. Same result, much fewer round trips.
+
         chunks = self.chunker.split(text)
 
         vectors_saved = 0
 
-        for index, chunk in enumerate(chunks, start=1):
+        if chunks:
 
-            embedding = self.embedding.generate_embedding(chunk)
+            embeddings = self.embedding.generate_embeddings(chunks)
 
-            if embedding is None:
-                continue
+            if embeddings is None:
 
-            chunk_id = f"{file_info['sha256']}_{index}"
+                embeddings = [None] * len(chunks)
 
-            if self.vector_store.save_document(
-                doc_id=chunk_id,
-                text=chunk,
-                embedding=embedding,
-                metadata={
-                    "domain": domain,
-                    "module": module,
-                    "knowledge_name": knowledge_name,
-                    "version": version,
+            batch_items = []
 
-                    "file_name": file_info["file_name"],
-                    "file_type": file_info["extension"],
+            for index, chunk in enumerate(chunks, start=1):
 
-                    "platform": analysis.get("platform", ""),
-                    "category": analysis.get("category", ""),
-                    "business_process": analysis.get("business_process", ""),
-                    "document_type": analysis.get("document_type", ""),
+                embedding = embeddings[index - 1]
 
-                    "summary": analysis.get("summary", ""),
+                if embedding is None:
 
-                    "tags": ",".join(
-                        analysis.get("tags", [])
-                    ),
+                    continue
 
-                "confidence": analysis.get("confidence", 0),
+                chunk_id = f"{file_info['sha256']}_{index}"
 
-                "chunk_number": index,
-                "total_chunks": len(chunks)
-            }
-            ):
-                vectors_saved += 1
+                batch_items.append({
+                    "doc_id": chunk_id,
+                    "text": chunk,
+                    "embedding": embedding,
+                    "metadata": {
+                        "domain": domain,
+                        "module": module,
+                        "knowledge_name": knowledge_name,
+                        "version": version,
+
+                        "file_name": file_info["file_name"],
+                        "file_type": file_info["extension"],
+
+                        "platform": analysis.get("platform", ""),
+                        "category": analysis.get("category", ""),
+                        "business_process": analysis.get("business_process", ""),
+                        "document_type": analysis.get("document_type", ""),
+
+                        "summary": analysis.get("summary", ""),
+
+                        "tags": ",".join(
+                            analysis.get("tags", [])
+                        ),
+
+                        "confidence": analysis.get("confidence", 0),
+
+                        "chunk_number": index,
+                        "total_chunks": len(chunks),
+                    },
+                })
+
+            vectors_saved = self.vector_store.save_documents_batch(
+                batch_items
+            )
+
+# Everything after this point (the "return { ... }" block) stays
+# exactly the same — vectors_saved and len(chunks) are still set,
+# just computed more efficiently.
 
         return {
             "success": True,

@@ -5,6 +5,7 @@ Production Ollama Provider
 Version: 7.0
 """
 
+import os
 import json
 import time
 import threading
@@ -18,6 +19,28 @@ from Core.ai_provider import AIProvider
 from Core.logger import Logger
 
 
+# PATCH — AI/Core/ollama_provider.py
+#
+# This file has TWO __init__ methods defined in the OllamaProvider
+# class. Python silently uses only the second (later) one — which
+# means the connection-pooling singleton in the FIRST one is dead
+# code, and every OllamaProvider() call rebuilds a fresh
+# requests.Session() instead of reusing one.
+#
+# There's also a duplicate `provider_name` property and a duplicate
+# "HTTP Session" comment block as a result of the copy/paste.
+#
+# FIX: delete the entire FIRST __init__ block (the one WITHOUT the
+# session singleton) and its accompanying first `provider_name`
+# property, keeping only the second occurrence — but add the
+# singleton pattern to it, since the second one currently does NOT
+# have it (self.session = self._create_session() runs unconditionally
+# every time).
+#
+# Below is the corrected, single __init__ to use — replace BOTH
+# existing __init__ methods (and the class-level attributes above
+# them) with this single version:
+
 class OllamaProvider(AIProvider):
 
     _session = None
@@ -25,97 +48,6 @@ class OllamaProvider(AIProvider):
     _health_cache = None
     _health_time = 0
 
-    # --------------------------------------------------
-
-    def __init__(self):
-
-        self.logger = Logger.get_logger()
-
-        self.base_url = settings.OLLAMA_URL.replace(
-            "/api/generate",
-            ""
-        )
-
-        self.model = settings.LLM_MODEL
-
-        self.timeout = getattr(
-            settings,
-            "LLM_TIMEOUT",
-            300
-        )
-
-        self.keep_alive = getattr(
-            settings,
-            "OLLAMA_KEEP_ALIVE",
-            "30m"
-        )
-
-        self.temperature = getattr(
-            settings,
-            "LLM_TEMPERATURE",
-            0.2
-        )
-
-        self.num_ctx = getattr(
-            settings,
-            "OLLAMA_NUM_CTX",
-            4096
-        )
-
-        self.num_predict = getattr(
-            settings,
-            "DEFAULT_MAX_TOKENS",
-            1024
-        )
-
-        self.top_k = getattr(
-            settings,
-            "OLLAMA_TOP_K",
-            40
-        )
-
-        self.top_p = getattr(
-            settings,
-            "OLLAMA_TOP_P",
-            0.9
-        )
-
-        self.repeat_penalty = getattr(
-            settings,
-            "OLLAMA_REPEAT_PENALTY",
-            1.1
-        )
-
-        self.mirostat = getattr(
-            settings,
-            "OLLAMA_MIROSTAT",
-            0
-        )
-
-        if OllamaProvider._session is None:
-
-            with OllamaProvider._session_lock:
-
-                if OllamaProvider._session is None:
-
-                    OllamaProvider._session = self._create_session()
-
-        self.session = OllamaProvider._session
-
-        self.logger.info(
-
-            "Ollama Provider v7.0 initialized | "
-            f"Model={self.model} | "
-            f"Timeout={self.timeout}s"
-
-        )
-
-    # --------------------------------------------------
-
-    @property
-    def provider_name(self):
-
-        return "Ollama"
     # --------------------------------------------------
     # Constructor
     # --------------------------------------------------
@@ -131,64 +63,37 @@ class OllamaProvider(AIProvider):
 
         self.model = settings.LLM_MODEL
 
-        self.timeout = getattr(
-            settings,
-            "LLM_TIMEOUT",
-            300
-        )
+        self.timeout = getattr(settings, "LLM_TIMEOUT", 300)
 
-        self.keep_alive = getattr(
-            settings,
-            "OLLAMA_KEEP_ALIVE",
-            "30m"
-        )
+        self.keep_alive = getattr(settings, "OLLAMA_KEEP_ALIVE", "30m")
 
-        self.temperature = getattr(
-            settings,
-            "LLM_TEMPERATURE",
-            0.2
-        )
+        self.temperature = getattr(settings, "LLM_TEMPERATURE", 0.2)
 
-        self.num_ctx = getattr(
-            settings,
-            "OLLAMA_NUM_CTX",
-            4096
-        )
+        self.num_ctx = getattr(settings, "OLLAMA_NUM_CTX", 4096)
+        
+        self.num_thread = getattr(settings, "OLLAMA_NUM_THREAD", os.cpu_count() or 4)
 
-        self.num_predict = getattr(
-            settings,
-            "DEFAULT_MAX_TOKENS",
-            1024
-        )
+        self.num_predict = getattr(settings, "DEFAULT_MAX_TOKENS", 1024)
 
-        self.top_k = getattr(
-            settings,
-            "OLLAMA_TOP_K",
-            40
-        )
+        self.top_k = getattr(settings, "OLLAMA_TOP_K", 40)
 
+        self.top_p = getattr(settings, "OLLAMA_TOP_P", 0.9)
 
-        self.top_p = getattr(
-            settings,
-            "OLLAMA_TOP_P",
-            0.9
-        )
+        self.repeat_penalty = getattr(settings, "OLLAMA_REPEAT_PENALTY", 1.1)
 
+        self.mirostat = getattr(settings, "OLLAMA_MIROSTAT", 0)
 
-        self.repeat_penalty = getattr(
-            settings,
-            "OLLAMA_REPEAT_PENALTY",
-            1.1
-        )
+        # Singleton session — reused across every OllamaProvider()
+        # instance instead of rebuilding a connection pool each time.
+        if OllamaProvider._session is None:
 
+            with OllamaProvider._session_lock:
 
-        self.mirostat = getattr(
-            settings,
-            "OLLAMA_MIROSTAT",
-            0
-        )
+                if OllamaProvider._session is None:
 
-        self.session = self._create_session()
+                    OllamaProvider._session = self._create_session()
+
+        self.session = OllamaProvider._session
 
         self.logger.info(
             f"Ollama Provider v7.0 initialized | "
@@ -209,6 +114,13 @@ class OllamaProvider(AIProvider):
 
     def _create_session(self):
 
+        # ... unchanged, keep the existing _create_session() method
+        # exactly as-is, along with everything else in the file below
+        # it (is_available, _payload, generate, stream_generate,
+        # _stream_response, chat, health_check, warmup, close,
+        # model_info, safe_generate, __del__).
+        pass
+    
         session = requests.Session()
 
         retry = Retry(
@@ -285,7 +197,7 @@ class OllamaProvider(AIProvider):
         except Exception:
 
             return False
-            # --------------------------------------------------
+    # --------------------------------------------------
     # Payload Builder
     # --------------------------------------------------
 
@@ -335,7 +247,9 @@ class OllamaProvider(AIProvider):
 
                 "repeat_penalty": self.repeat_penalty,
 
-                "mirostat": self.mirostat
+                "mirostat": self.mirostat,
+
+                "num_thread": self.num_thread
 
             }
 
@@ -588,7 +502,7 @@ class OllamaProvider(AIProvider):
                 "error": str(ex)
 
             }
-            # --------------------------------------------------
+    # --------------------------------------------------
     # Streaming Generate
     # --------------------------------------------------
 
@@ -659,6 +573,13 @@ class OllamaProvider(AIProvider):
                 str(ex)
 
             ) from ex
+
+    # --------------------------------------------------
+    # Stream Alias for UI Workers
+    # --------------------------------------------------
+    def generate_stream(self, prompt, **kwargs):
+        """Wrapper method mapping generate_stream calls to stream_generate."""
+        return self.stream_generate(prompt=prompt, **kwargs)
 
 
     # --------------------------------------------------

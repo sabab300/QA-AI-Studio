@@ -179,6 +179,91 @@ class VectorStore:
 
             return False
 
+# PATCH — AI/Core/vector_store.py
+#
+# Add this method to the VectorStore class, right after
+# save_document() (around line 174, after its "return False").
+#
+# It does the exact same delete-then-add safety as save_document(),
+# but as ONE batched ChromaDB call instead of N individual ones.
+
+    # --------------------------------------------------
+    # Save Documents (Batch)
+    # --------------------------------------------------
+
+    def save_documents_batch(self, items):
+        """
+        items: list of dicts, each with keys:
+            doc_id, text, embedding, metadata
+        Returns the number of documents successfully saved.
+        """
+
+        if not items:
+
+            return 0
+
+        try:
+
+            ids = []
+            documents = []
+            embeddings = []
+            metadatas = []
+
+            for item in items:
+
+                embedding = item["embedding"]
+
+                if embedding is None:
+
+                    continue
+
+                if hasattr(embedding, "tolist"):
+
+                    embedding = embedding.tolist()
+
+                ids.append(str(item["doc_id"]))
+
+                documents.append(str(item["text"]))
+
+                embeddings.append(embedding)
+
+                metadatas.append(
+                    self._prepare_metadata(item.get("metadata"))
+                )
+
+            if not ids:
+
+                return 0
+
+            try:
+
+                self.collection.delete(ids=ids)
+
+            except Exception:
+
+                pass
+
+            self.collection.add(
+                ids=ids,
+                documents=documents,
+                embeddings=embeddings,
+                metadatas=metadatas,
+            )
+
+            self.logger.info(
+                f"Vector batch saved: {len(ids)} chunk(s)."
+            )
+
+            return len(ids)
+
+        except Exception:
+
+            self.logger.exception(
+                "Vector batch save failed."
+            )
+
+            return 0
+
     # --------------------------------------------------
     # Delete
     # --------------------------------------------------
@@ -236,11 +321,7 @@ class VectorStore:
                     ids=delete_ids
                 )
 
-            self.logger.info(
-                f"Deleted {len(delete_ids)} vectors for {knowledge_name}"
-            )
-
-            return True
+            return len(delete_ids)
 
         except Exception:
 
@@ -248,7 +329,7 @@ class VectorStore:
                 "Vector delete failed."
             )
 
-            return False
+            return 0
 
     # --------------------------------------------------
     # Search

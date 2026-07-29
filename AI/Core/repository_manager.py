@@ -545,36 +545,47 @@ class RepositoryManager:
     # --------------------------------------------------
 
     def delete_knowledge(
-
         self,
-
         domain,
-
         module,
-
         knowledge_name
-
     ):
 
         folder = (
-
             self.repository_root
-
             / domain
-
             / module
-
             / knowledge_name
-
         )
 
-        if folder.exists():
+        if not folder.exists():
+
+            return (
+                True,
+                0
+            )
+
+        try:
+
+            file_count = sum(
+                1
+                for item in folder.rglob("*")
+                if item.is_file()
+            )
 
             shutil.rmtree(folder)
 
-            return True
+            return (
+                True,
+                file_count
+            )
 
-        return False
+        except Exception as ex:
+
+            return (
+                False,
+                str(ex)
+            )
 
     # --------------------------------------------------
     # List Files
