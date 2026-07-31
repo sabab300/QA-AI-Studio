@@ -659,19 +659,21 @@ class UploadManualPage(QWidget):
 
     def load_domains(self):
 
+        current = self.domain.currentText()
+
         self.domain.blockSignals(True)
 
         self.domain.clear()
 
-        domains = self.metadata.list_domains()
+        self.domain.addItems(
+            self.metadata.list_domains()
+        )
 
-        for domain in domains:
-            self.domain.addItem(domain)
+        self.domain.setCurrentText(current)
 
         self.domain.blockSignals(False)
 
         self.load_modules()
-
 
     # ======================================================
     # Load Modules
@@ -679,20 +681,17 @@ class UploadManualPage(QWidget):
 
     def load_modules(self):
 
-        self.module.blockSignals(True)
+        current = self.module.currentText()
 
         self.module.clear()
 
-        domain = self.domain.currentText()
+        modules = self.metadata.list_modules(
+            self.domain.currentText()
+        )
 
-        if domain:
+        self.module.addItems(modules)
 
-            modules = self.metadata.list_modules(domain)
-
-            for module in modules:
-                self.module.addItem(module)
-
-        self.module.blockSignals(False)
+        self.module.setCurrentText(current)
 
     # ======================================================
     # Source Handling

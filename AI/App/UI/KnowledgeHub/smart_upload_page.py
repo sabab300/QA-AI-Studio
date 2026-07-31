@@ -214,21 +214,13 @@ class SmartUploadPage(QWidget):
 
         info_layout.setColumnStretch(3, 1)
 
-
         self.domain = QComboBox()
 
         self.domain.setEditable(True)
 
-        self.domain.addItems(
-            KNOWN_DOMAINS
-        )
-
-        self.domain.setCurrentIndex(-1)
-
         self.domain.lineEdit().setPlaceholderText(
             "Select or type domain"
         )
-
 
         self.module = QComboBox()
 
@@ -236,6 +228,12 @@ class SmartUploadPage(QWidget):
 
         self.module.lineEdit().setPlaceholderText(
             "Select or type module"
+        )
+        
+        self.load_domains()
+
+        self.domain.currentTextChanged.connect(
+            self.load_modules
         )
 
         self.add_module_btn = QPushButton("+")
@@ -315,7 +313,6 @@ class SmartUploadPage(QWidget):
         info_layout.addWidget(
             self.document_type, 2, 1
         )
-
 
         layout.addWidget(
             info_group
@@ -518,6 +515,41 @@ class SmartUploadPage(QWidget):
         )
 
         self.upload_btn.setEnabled(False)
+
+    def load_domains(self):
+
+        current = self.domain.currentText()
+
+        self.domain.blockSignals(True)
+
+        self.domain.clear()
+
+        self.domain.addItems(
+            self.metadata.list_domains()
+        )
+
+        self.domain.setCurrentText(current)
+
+        self.domain.blockSignals(False)
+
+        self.load_modules()
+
+
+    def load_modules(self):
+
+        current = self.module.currentText()
+
+        self.module.clear()
+
+        domain = self.domain.currentText().strip()
+
+        if domain:
+
+            self.module.addItems(
+                self.metadata.list_modules(domain)
+            )
+
+        self.module.setCurrentText(current)
 
 
     # ======================================================

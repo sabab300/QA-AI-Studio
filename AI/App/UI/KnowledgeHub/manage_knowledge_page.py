@@ -56,6 +56,7 @@ from Core.metadata_manager import MetadataManager
 from Core.repository_manager import RepositoryManager
 from Core.vector_store import VectorStore
 from Core.upload_pipeline import UploadPipeline
+from PySide6.QtCore import Signal
 
 
 ROW_ID_ROLE = Qt.UserRole
@@ -350,6 +351,8 @@ class EditKnowledgeDialog(QDialog):
 # ==========================================================
 
 class ManageKnowledgePage(QWidget):
+
+    knowledge_changed = Signal()
 
     def __init__(self):
 
@@ -712,6 +715,8 @@ class ManageKnowledgePage(QWidget):
 
             self.load_data()
 
+            self.knowledge_changed.emit()
+
     # ======================================================
     # Versions
     # ======================================================
@@ -785,6 +790,8 @@ class ManageKnowledgePage(QWidget):
             )
 
             self.load_data()
+
+            self.knowledge_changed.emit()
 
         except Exception as ex:
 

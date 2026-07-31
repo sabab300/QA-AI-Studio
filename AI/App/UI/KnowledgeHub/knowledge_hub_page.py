@@ -151,6 +151,17 @@ class KnowledgeHubPage(QWidget):
             self.manage_page
         )
 
+        self.manage_page.knowledge_changed.connect(
+            self.upload_page.load_domains
+        )
+
+        self.manage_page.knowledge_changed.connect(
+            self.smart_page.load_domains
+        )
+
+        
+
+
         # ==================================================
         # Events
         # ==================================================
