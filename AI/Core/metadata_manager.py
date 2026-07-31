@@ -1087,3 +1087,100 @@ class MetadataManager:
         conn.close()
 
         return rows
+
+    # --------------------------------------------------
+    # Update Knowledge
+    # --------------------------------------------------
+
+    def update_knowledge(
+
+        self,
+
+        knowledge_id,
+
+        domain,
+
+        module,
+
+        knowledge_name,
+
+        version,
+
+        document_type,
+
+        upload_source
+
+    ):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE knowledge_items
+            SET
+                domain=?,
+                module=?,
+                knowledge_name=?,
+                version=?,
+                document_type=?,
+                repository_path=?,
+                modified_date=datetime('now')
+            WHERE id=?
+            """,
+            (
+                domain,
+                module,
+                knowledge_name,
+                version,
+                document_type,
+                upload_source,
+                knowledge_id
+            )
+        )
+
+        conn.commit()
+
+        conn.close()
+
+
+    # --------------------------------------------------
+    # Move Knowledge
+    # --------------------------------------------------
+
+    def move_knowledge(
+
+        self,
+
+        knowledge_id,
+
+        domain,
+
+        module
+
+    ):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE knowledge_items
+            SET
+                domain=?,
+                module=?,
+                modified_date=datetime('now')
+            WHERE id=?
+            """,
+            (
+                domain,
+                module,
+                knowledge_id
+            )
+        )
+
+        conn.commit()
+
+        conn.close()

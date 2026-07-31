@@ -201,6 +201,28 @@ class GitAutomationPage(QWidget):
         upload_layout.setSpacing(8)
 
 
+        add_row = QHBoxLayout()
+
+        self.add_files_btn = QPushButton("Add Files...")
+
+        self.add_folder_btn = QPushButton("Add Folder...")
+
+        add_row.addWidget(self.add_files_btn)
+
+        add_row.addWidget(self.add_folder_btn)
+
+        upload_layout.addLayout(add_row)
+
+        add_hint = QLabel(
+            "Use these to copy test case documents from anywhere "
+            "on your PC into this repository, ready to commit below."
+        )
+
+        add_hint.setWordWrap(True)
+
+        upload_layout.addWidget(add_hint)
+
+
         self.refresh_status_btn = QPushButton("Refresh Changed Files")
 
         upload_layout.addWidget(self.refresh_status_btn)
@@ -404,6 +426,10 @@ class GitAutomationPage(QWidget):
 
         self.browse_btn.clicked.connect(self.browse_repo_path)
 
+        self.add_files_btn.clicked.connect(self.add_files_to_repo)
+
+        self.add_folder_btn.clicked.connect(self.add_folder_to_repo)
+
         self.save_config_btn.clicked.connect(self.save_config)
 
         self.refresh_status_btn.clicked.connect(self.refresh_status)
@@ -466,6 +492,107 @@ class GitAutomationPage(QWidget):
         if folder:
 
             self.repo_path.setText(folder)
+
+
+    def add_files_to_repo(self):
+
+        repo_path = self.repo_path.text().strip()
+
+        if not repo_path:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Set and save your Local Folder first."
+            )
+
+            return
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Test Case Documents to Add"
+        )
+
+        if not files:
+
+            return
+
+        import shutil
+
+        copied = 0
+
+        for file in files:
+
+            try:
+
+                dest = Path(repo_path) / Path(file).name
+
+                shutil.copy2(file, dest)
+
+                copied += 1
+
+            except Exception as ex:
+
+                self.log.append(
+                    f"Could not copy {file}: {ex}"
+                )
+
+        self.log.append(
+            f"Copied {copied} file(s) into the repository."
+        )
+
+        self.refresh_status()
+
+
+    def add_folder_to_repo(self):
+
+        repo_path = self.repo_path.text().strip()
+
+        if not repo_path:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Set and save your Local Folder first."
+            )
+
+            return
+
+        source_folder = QFileDialog.getExistingDirectory(
+            self, "Select Folder of Test Case Documents to Add"
+        )
+
+        if not source_folder:
+
+            return
+
+        import shutil
+
+        dest_folder = Path(repo_path) / Path(source_folder).name
+
+        try:
+
+            shutil.copytree(
+                source_folder,
+                dest_folder,
+                dirs_exist_ok=True
+            )
+
+            self.log.append(
+                f"Copied folder '{Path(source_folder).name}' into "
+                f"the repository."
+            )
+
+        except Exception as ex:
+
+            QMessageBox.critical(
+                self,
+                "QA AI Studio",
+                f"Could not copy the folder.\n\n{ex}"
+            )
+
+            return
+
+        self.refresh_status()
 
 
     def save_config(self):

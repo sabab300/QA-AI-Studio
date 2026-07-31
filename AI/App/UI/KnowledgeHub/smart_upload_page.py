@@ -74,7 +74,10 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QScrollArea,
     QSizePolicy,
+    QInputDialog,
 )
+
+from Core.metadata_manager import MetadataManager
 
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
 
@@ -132,6 +135,8 @@ class SmartUploadPage(QWidget):
         self.upload_thread = None
 
         self.upload_worker = None
+
+        self.metadata = MetadataManager()
 
         self.build_ui()
 
@@ -233,6 +238,22 @@ class SmartUploadPage(QWidget):
             "Select or type module"
         )
 
+        self.add_module_btn = QPushButton("+")
+
+        self.add_module_btn.setFixedWidth(30)
+
+        self.add_module_btn.setToolTip(
+            "Add a new module under the selected domain"
+        )
+
+        module_row = QHBoxLayout()
+
+        module_row.setContentsMargins(0, 0, 0, 0)
+
+        module_row.addWidget(self.module)
+
+        module_row.addWidget(self.add_module_btn)
+
 
         self.knowledge_name = QLineEdit()
 
@@ -265,8 +286,8 @@ class SmartUploadPage(QWidget):
             QLabel("Module"), 0, 2
         )
 
-        info_layout.addWidget(
-            self.module, 0, 3
+        info_layout.addLayout(
+            module_row, 0, 3
         )
 
 
@@ -338,7 +359,18 @@ class SmartUploadPage(QWidget):
         self.analyze_btn = QPushButton("Analyze With AI")
 
         self.upload_btn = QPushButton("Confirm Upload")
+        
+        self.remove_btn = QPushButton("Remove Selected")
 
+        self.clear_btn = QPushButton("Clear All")
+
+        self.remove_btn.clicked.connect(
+            self.remove_selected
+        )
+
+        self.clear_btn.clicked.connect(
+            self.clear_files
+        )
 
         buttons.addWidget(self.file_btn)
 
@@ -351,7 +383,11 @@ class SmartUploadPage(QWidget):
         buttons.addWidget(self.sql_btn)
 
         buttons.addWidget(self.image_btn)
+    
+        buttons.addWidget(self.remove_btn)
 
+        buttons.addWidget(self.clear_btn)
+        
         buttons.addStretch()
 
         buttons.addWidget(self.analyze_btn)
@@ -473,7 +509,114 @@ class SmartUploadPage(QWidget):
             self.confirm_upload
         )
 
+        self.domain.currentTextChanged.connect(
+            self.on_domain_changed
+        )
+
+        self.add_module_btn.clicked.connect(
+            self.add_module
+        )
+
         self.upload_btn.setEnabled(False)
+
+
+    # ======================================================
+    # Domain -> Module cascade
+    # ======================================================
+
+    def on_domain_changed(self, domain_name):
+
+        self.module.clear()
+
+        domain_name = (domain_name or "").strip()
+
+        if not domain_name:
+
+            return
+
+        try:
+
+            existing_modules = self.metadata.list_modules(
+                domain_name
+            )
+
+            self.module.addItems(existing_modules)
+
+            self.module.setCurrentIndex(-1)
+
+        except Exception:
+
+            # Domain isn't registered yet (e.g. brand new AI
+            # suggestion) — that's fine, just start with an empty,
+            # freely-typed module field.
+            pass
+
+
+    def add_module(self):
+
+        domain_name = self.domain.currentText().strip()
+
+        if not domain_name:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select or type a Domain first."
+            )
+
+            return
+
+        value, ok = QInputDialog.getText(
+            self, "Add Module", "Module Name"
+        )
+
+        if not (ok and value.strip()):
+
+            return
+
+        module_name = value.strip()
+
+        try:
+
+            existing_modules = self.metadata.list_modules(
+                domain_name
+            )
+
+        except Exception:
+
+            existing_modules = []
+
+        if module_name in existing_modules:
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                f"'{module_name}' already exists under "
+                f"'{domain_name}'. Selecting it instead."
+            )
+
+            self.module.setCurrentText(module_name)
+
+            return
+
+        try:
+
+            if self.module.findText(module_name) == -1:
+                self.module.addItem(module_name)
+
+            self.module.setCurrentText(module_name)
+
+        except Exception as ex:
+
+            QMessageBox.critical(
+                self, "QA AI Studio", str(ex)
+            )
+
+            return
+
+        self.module.addItem(module_name)
+
+        self.module.setCurrentText(module_name)
 
 
     # ======================================================
@@ -599,6 +742,41 @@ class SmartUploadPage(QWidget):
         self.file_list.addItems(
             self.files
         )
+
+    def remove_selected(self):
+
+        item = self.file_list.currentItem()
+
+        if item is None:
+            return
+
+        path = item.text()
+
+        if path in self.files:
+            self.files.remove(path)
+
+        self.refresh_files()
+
+        self.reset_analysis_state()
+
+    def load_modules(self):
+
+        domain = self.domain.currentText().strip()
+
+        self.module.clear()
+
+        if not domain:
+            return
+
+        try:
+
+            modules = self.manager.get_modules(domain)
+
+            self.module.addItems(modules)
+
+        except Exception:
+
+            pass
 
 
     # ======================================================
@@ -766,6 +944,7 @@ class SmartUploadPage(QWidget):
         if primary_result:
 
             domain = primary_result.get("domain", "")
+            module = primary_result.get("module", "")
 
             if domain and self.domain.findText(domain) == -1:
 
@@ -773,8 +952,7 @@ class SmartUploadPage(QWidget):
 
             self.domain.setCurrentText(domain)
 
-
-            module = primary_result.get("module", "")
+            self.load_modules()
 
             if module:
 
@@ -1014,3 +1192,12 @@ class SmartUploadPage(QWidget):
         self.upload_thread = None
 
         self.upload_worker = None
+
+
+    def clear_files(self):
+
+        self.files.clear()
+
+        self.refresh_files()
+
+        self.reset_analysis_state()

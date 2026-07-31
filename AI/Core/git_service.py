@@ -31,17 +31,26 @@ from Core.llm_engine import LLMEngine
 
 class GitService:
 
-    def __init__(self, repo_path, remote_url="", username="", token=""):
+    def __init__(
+        self,
+        repo_path,
+        remote_url="",
+        branch="main",
+        username="",
+        token=""
+    ):
 
         self.logger = Logger.get_logger()
 
         self.repo_path = str(Path(repo_path).resolve())
 
-        self.remote_url = remote_url
+        self.remote_url = remote_url.strip()
 
-        self.username = username
+        self.branch = branch.strip() if branch else "main"
 
-        self.token = token
+        self.username = username.strip()
+
+        self.token = token.strip()
 
         self.llm = LLMEngine()
 
@@ -52,7 +61,17 @@ class GitService:
     def open_or_clone(self):
         """
         If repo_path already has a .git folder, open it.
-        Otherwise, if a remote_url is configured, clone it there.
+
+        If the folder already has files but isn't a Git repo yet
+        (e.g. an OneDrive-synced folder, or one you made by hand),
+        git clone would refuse ("destination path already exists
+        and is not an empty directory") — so we git init IN PLACE
+        instead, attach the remote, and fetch its history. No
+        existing files are touched or deleted.
+
+        If the folder is empty and a remote is configured, do a
+        normal git clone.
+
         Otherwise, initialize a brand new empty repo at repo_path.
         """
 
@@ -61,6 +80,21 @@ class GitService:
         try:
 
             repo = Repo(self.repo_path)
+
+            if self.remote_url:
+
+                try:
+
+                    if "origin" not in [r.name for r in repo.remotes]:
+
+                        repo.create_remote(
+                            "origin",
+                            self.remote_url
+                        )
+
+                except Exception:
+
+                    pass
 
             self.logger.info(
                 f"Opened existing repo at {self.repo_path}"
@@ -72,9 +106,68 @@ class GitService:
 
             pass
 
-        if self.remote_url:
+        path.mkdir(parents=True, exist_ok=True)
 
-            path.mkdir(parents=True, exist_ok=True)
+        folder_has_content = any(path.iterdir())
+
+        if folder_has_content:
+
+            self.logger.info(
+                f"{self.repo_path} already has files — "
+                f"initializing Git in place instead of cloning."
+            )
+
+            repo = Repo.init(self.repo_path)
+
+            if not self.remote_url:
+
+                return repo
+
+            if "origin" in [r.name for r in repo.remotes]:
+
+                origin = repo.remotes.origin
+
+            else:
+
+                origin = repo.create_remote("origin", self.remote_url)
+
+            auth_url = self._authenticated_url(self.remote_url)
+
+            try:
+
+                origin.set_url(auth_url)
+
+                origin.fetch()
+
+                remote_branches = [
+                    ref.name.split("/")[-1] for ref in origin.refs
+                ]
+
+                if self.branch and self.branch in remote_branches:
+
+                    repo.git.checkout(
+                        "-B", self.branch, f"origin/{self.branch}"
+                    )
+
+            except GitCommandError as ex:
+
+                raise GitCommandError(
+                    f"Git was set up in {self.repo_path}, but could "
+                    f"not reach the remote to download its history. "
+                    f"Your local files are safe and untouched. "
+                    f"Check the Remote URL and your network/VPN "
+                    f"connection, then click Save Configuration "
+                    f"again.\n\n{ex}",
+                    ex.status,
+                )
+
+            finally:
+
+                origin.set_url(self.remote_url)
+
+            return repo
+
+        if self.remote_url:
 
             auth_url = self._authenticated_url(self.remote_url)
 
@@ -82,14 +175,12 @@ class GitService:
                 f"Cloning {self.remote_url} into {self.repo_path}"
             )
 
-            repo = Repo.clone_from(auth_url, self.repo_path)
+            repo = Repo.clone_from(auth_url,self.repo_path,branch=self.branch)
 
             # Don't leave the token sitting in .git/config on disk.
             repo.remotes.origin.set_url(self.remote_url)
 
             return repo
-
-        path.mkdir(parents=True, exist_ok=True)
 
         self.logger.info(
             f"No existing repo and no remote configured — "
@@ -100,6 +191,8 @@ class GitService:
 
 
     def get_repo(self):
+
+        self.open_or_clone()
 
         return Repo(self.repo_path)
 

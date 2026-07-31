@@ -558,6 +558,10 @@ class RepositoryManager:
             / knowledge_name
         )
 
+        print("Repository Root :", self.repository_root)
+        print("Delete Folder :", repr(str(folder)))
+        print("Folder Exists :", folder.exists())
+
         if not folder.exists():
 
             return (
@@ -574,6 +578,8 @@ class RepositoryManager:
             )
 
             shutil.rmtree(folder)
+
+            print("Folder Exists After Delete :", folder.exists())
 
             return (
                 True,

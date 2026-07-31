@@ -6,61 +6,47 @@ Knowledge Hub
 
 Manage Knowledge
 
-Production Version 3.0
+Version : 5.0
+
+Enterprise Knowledge Manager
+
+Features
+--------
+• Tree Based Knowledge Manager
+• Domain → Module → Knowledge hierarchy
+• Search
+• CRUD Toolbar
+• Editable Properties
+• Repository Integration
+• Metadata Integration
 ==========================================================
 """
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
 
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QSplitter,
     QLabel,
     QPushButton,
     QLineEdit,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QGroupBox,
+    QFormLayout,
+    QComboBox,
     QMessageBox,
-    QTextEdit,
-    QDialog,
-    QDialogButtonBox
+    QInputDialog,
+    QFrame
 )
 
 from Core.metadata_manager import MetadataManager
 from Core.repository_manager import RepositoryManager
 from Core.vector_store import VectorStore
-
-
-class KnowledgeDetailDialog(QDialog):
-
-    def __init__(self, data, parent=None):
-
-        super().__init__(parent)
-
-        self.setWindowTitle("Knowledge Details")
-        self.resize(750, 600)
-
-        layout = QVBoxLayout(self)
-
-        viewer = QTextEdit()
-        viewer.setReadOnly(True)
-
-        for key, value in data.items():
-            viewer.append(f"{key}:")
-            viewer.append(str(value))
-            viewer.append("")
-
-        layout.addWidget(viewer)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok
-        )
-
-        buttons.accepted.connect(
-            self.accept
-        )
-
-        layout.addWidget(buttons)
 
 
 class ManageKnowledgePage(QWidget):
@@ -73,353 +59,693 @@ class ManageKnowledgePage(QWidget):
         self.repository = RepositoryManager()
         self.vector_store = VectorStore()
 
-        self.rows = []
+        self.current_record = None
 
         self.build_ui()
 
-        self.load_data()
+        self.load_tree()
 
-    # ==================================================
+    # ======================================================
     # UI
-    # ==================================================
+    # ======================================================
 
     def build_ui(self):
 
-        main_layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
 
-        title = QLabel("Manage Knowledge")
+        title = QLabel("Enterprise Knowledge Manager")
+        title.setObjectName("SectionTitle")
 
-        title.setObjectName(
-            "SectionTitle"
-        )
+        root.addWidget(title)
 
-        main_layout.addWidget(title)
+        # --------------------------------------------------
+        # Search
+        # --------------------------------------------------
 
-        toolbar = QHBoxLayout()
+        search_layout = QHBoxLayout()
 
         self.search = QLineEdit()
 
         self.search.setPlaceholderText(
-            "Search..."
+            "Search Domain, Module or Knowledge..."
         )
 
-        self.search.setMaximumWidth(350)
+        self.refresh_btn = QPushButton("Refresh")
 
-        toolbar.addWidget(
-            self.search
-        )
+        search_layout.addWidget(self.search)
+
+        search_layout.addWidget(self.refresh_btn)
+
+        root.addLayout(search_layout)
+
+        # --------------------------------------------------
+        # Toolbar
+        # --------------------------------------------------
+
+        toolbar = QHBoxLayout()
+
+        self.add_domain_btn = QPushButton("New Domain")
+
+        self.add_module_btn = QPushButton("New Module")
+
+        self.add_knowledge_btn = QPushButton("New Knowledge")
+
+        self.rename_btn = QPushButton("Rename")
+
+        self.move_btn = QPushButton("Move")
+
+        self.delete_btn = QPushButton("Delete")
+
+        toolbar.addWidget(self.add_domain_btn)
+
+        toolbar.addWidget(self.add_module_btn)
+
+        toolbar.addWidget(self.add_knowledge_btn)
+
+        toolbar.addSpacing(15)
+
+        toolbar.addWidget(self.rename_btn)
+
+        toolbar.addWidget(self.move_btn)
+
+        toolbar.addWidget(self.delete_btn)
 
         toolbar.addStretch()
 
-        self.refresh_btn = QPushButton("Refresh")
-        self.view_btn = QPushButton("Details")
-        self.version_btn = QPushButton("Versions")
-        self.delete_btn = QPushButton("Delete")
+        root.addLayout(toolbar)
 
-        buttons = [
-            self.refresh_btn,
-            self.view_btn,
-            self.version_btn,
-            self.delete_btn
-        ]
+        # --------------------------------------------------
+        # Splitter
+        # --------------------------------------------------
 
-        for button in buttons:
+        splitter = QSplitter(Qt.Horizontal)
 
-            button.setMinimumWidth(95)
-            button.setMaximumWidth(95)
-            button.setFixedHeight(30)
+        root.addWidget(splitter)
 
-            toolbar.addWidget(button)
+        # ==================================================
+        # LEFT
+        # ==================================================
 
-        main_layout.addLayout(toolbar)
+        left = QWidget()
 
-        self.table = QTableWidget()
+        left_layout = QVBoxLayout(left)
 
-        headers = [
+        self.tree = QTreeWidget()
 
-            "ID",
-            "Domain",
-            "Module",
-            "Knowledge",
-            "Version",
-            "Platform",
-            "Category",
-            "Document",
-            "Confidence",
-            "Status"
-
-        ]
-
-        self.table.setColumnCount(len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-
-        self.table.setSelectionBehavior(
-            QTableWidget.SelectRows
+        self.tree.setHeaderLabel(
+            "Knowledge Repository"
         )
 
-        self.table.setSelectionMode(
-            QTableWidget.SingleSelection
+        self.tree.setAlternatingRowColors(True)
+
+        self.tree.setAnimated(True)
+
+        left_layout.addWidget(self.tree)
+
+        splitter.addWidget(left)
+
+        # ==================================================
+        # RIGHT
+        # ==================================================
+
+        right = QWidget()
+
+        right_layout = QVBoxLayout(right)
+
+        info_group = QGroupBox(
+            "Knowledge Information"
         )
 
-        self.table.setEditTriggers(
-            QTableWidget.NoEditTriggers
-        )
+        form = QFormLayout(info_group)
 
-        self.table.setAlternatingRowColors(True)
+        self.domain = QLineEdit()
 
-        self.table.verticalHeader().setVisible(False)
+        self.module = QLineEdit()
 
-        header = self.table.horizontalHeader()
+        self.knowledge = QLineEdit()
 
-        header.setStretchLastSection(False)
+        self.version = QLineEdit()
 
-        widths = [
-            60,
-            120,
-            120,
-            220,
-            80,
-            120,
-            120,
-            120,
-            90,
-            100
-        ]
+        self.document_type = QComboBox()
 
-        for column, width in enumerate(widths):
-            header.setSectionResizeMode(
-                column,
-                QHeaderView.Interactive
-            )
-            self.table.setColumnWidth(
-                column,
-                width
-            )
+        self.document_type.addItems([
+            "SRS",
+            "CRF",
+            "API",
+            "Test Case",
+            "SQL",
+            "Automation",
+            "SOP",
+            "Release Notes",
+            "Other"
+        ])
 
-        header.setSectionResizeMode(
-            3,
-            QHeaderView.Stretch
-        )
+        self.upload_source = QLineEdit()
 
-        main_layout.addWidget(self.table)
+        form.addRow("Domain", self.domain)
+
+        form.addRow("Module", self.module)
+
+        form.addRow("Knowledge Name", self.knowledge)
+
+        form.addRow("Version", self.version)
+
+        form.addRow("Document Type", self.document_type)
+
+        form.addRow("Upload Source", self.upload_source)
+
+        right_layout.addWidget(info_group)
+
+        button_bar = QHBoxLayout()
+
+        self.save_btn = QPushButton("Save")
+
+        self.cancel_btn = QPushButton("Cancel")
+
+        button_bar.addStretch()
+
+        button_bar.addWidget(self.save_btn)
+
+        button_bar.addWidget(self.cancel_btn)
+
+        right_layout.addLayout(button_bar)
+
+        right_layout.addStretch()
+
+        splitter.addWidget(right)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+
+        # --------------------------------------------------
+        # Events
+        # --------------------------------------------------
 
         self.refresh_btn.clicked.connect(
-            self.load_data
+            self.load_tree
         )
 
         self.search.textChanged.connect(
-            self.search_data
+            self.filter_tree
         )
 
-        self.view_btn.clicked.connect(
-            self.view_details
+        self.tree.itemClicked.connect(
+            self.on_tree_selected
         )
 
-        self.version_btn.clicked.connect(
-            self.show_versions
+        self.add_domain_btn.clicked.connect(
+            self.add_domain
+        )
+
+        self.add_module_btn.clicked.connect(
+            self.add_module
+        )
+
+        self.add_knowledge_btn.clicked.connect(
+            self.add_knowledge
+        )
+
+        self.rename_btn.clicked.connect(
+            self.rename_item
+        )
+
+        self.move_btn.clicked.connect(
+            self.move_item
         )
 
         self.delete_btn.clicked.connect(
-            self.delete_selected
+            self.delete_item
         )
 
-        # ======================================================
-    # Load Data
+        self.save_btn.clicked.connect(
+            self.save_changes
+        )
+
+        self.cancel_btn.clicked.connect(
+            self.load_selected
+        )
+
+    # ======================================================
+    # Load Tree
     # ======================================================
 
-    def load_data(self):
+    def load_tree(self):
+
+        self.tree.clear()
 
         try:
 
-            keyword = self.search.text().strip()
+            tree = self.manager.get_tree()
 
-            if keyword:
+        except Exception as ex:
 
-                self.rows = self.manager.search(keyword)
+            QMessageBox.critical(
+                self,
+                "QA AI Studio",
+                str(ex)
+            )
 
-            else:
+            return
 
-                self.rows = self.manager.list_all()
+        for domain_name in sorted(tree.keys()):
 
-        except Exception:
+            domain_item = QTreeWidgetItem(
+                [domain_name]
+            )
 
-            self.rows = []
+            domain_item.setData(
+                0,
+                Qt.UserRole,
+                {
+                    "type": "domain",
+                    "domain": domain_name
+                }
+            )
 
-        self.populate_table()
+            self.tree.addTopLevelItem(
+                domain_item
+            )
+
+            modules = tree[domain_name]
+
+            for module_name in sorted(modules.keys()):
+
+                module_item = QTreeWidgetItem(
+                    [module_name]
+                )
+
+                module_item.setData(
+                    0,
+                    Qt.UserRole,
+                    {
+                        "type": "module",
+                        "domain": domain_name,
+                        "module": module_name
+                    }
+                )
+
+                domain_item.addChild(
+                    module_item
+                )
+
+                knowledges = modules[module_name]
+
+                for knowledge_name in sorted(
+                    knowledges.keys()
+                ):
+
+                    knowledge_item = QTreeWidgetItem(
+                        [knowledge_name]
+                    )
+
+                    knowledge_item.setData(
+                        0,
+                        Qt.UserRole,
+                        {
+                            "type": "knowledge",
+                            "domain": domain_name,
+                            "module": module_name,
+                            "knowledge": knowledge_name
+                        }
+                    )
+
+                    module_item.addChild(
+                        knowledge_item
+                    )
+
+        self.tree.expandAll()
 
 
     # ======================================================
     # Search
     # ======================================================
 
-    def search_data(self):
+    def filter_tree(self, text):
 
-        self.load_data()
+        text = text.lower().strip()
+
+        for i in range(self.tree.topLevelItemCount()):
+
+            domain_item = self.tree.topLevelItem(i)
+
+            domain_visible = False
+
+            for j in range(domain_item.childCount()):
+
+                module_item = domain_item.child(j)
+
+                module_visible = False
+
+                for k in range(module_item.childCount()):
+
+                    knowledge_item = module_item.child(k)
+
+                    visible = (
+                        text == ""
+                        or text in knowledge_item.text(0).lower()
+                        or text in module_item.text(0).lower()
+                        or text in domain_item.text(0).lower()
+                    )
+
+                    knowledge_item.setHidden(
+                        not visible
+                    )
+
+                    if visible:
+
+                        module_visible = True
+
+                        domain_visible = True
+
+                module_item.setHidden(
+                    not module_visible
+                )
+
+            domain_item.setHidden(
+                not domain_visible
+            )
 
 
     # ======================================================
-    # Populate Table
+    # Selection
     # ======================================================
 
-    def populate_table(self):
+    def on_tree_selected(self, item):
 
-        self.table.setSortingEnabled(False)
+        data = item.data(
+            0,
+            Qt.UserRole
+        )
 
-        self.table.clearContents()
-
-        self.table.setRowCount(0)
-
-        if not self.rows:
+        if not data:
 
             return
 
-        for row in self.rows:
+        if data["type"] != "knowledge":
 
-            r = self.table.rowCount()
+            self.current_record = None
 
-            self.table.insertRow(r)
+            self.clear_editor()
 
-            values = [
+            return
 
-                row[0],     # ID
-                row[1],     # Domain
-                row[2],     # Module
-                row[3],     # Knowledge
-                row[4],     # Version
-                row[16],    # Platform
-                row[17],    # Category
-                row[19],    # Document Type
-                row[15],    # Confidence
-                row[20],    # Status
+        record = self.manager.get_knowledge_item(
 
-            ]
+            data["domain"],
 
-            for c, value in enumerate(values):
+            data["module"],
 
-                item = QTableWidgetItem("" if value is None else str(value))
+            data["knowledge"]
 
-                self.table.setItem(r, c, item)
+        )
 
-        self.table.resizeRowsToContents()
+        if not record:
 
-        self.table.setSortingEnabled(True)
+            return
+
+        self.current_record = record
+
+        self.load_selected()
 
 
     # ======================================================
-    # Selected Item
+    # Load Selected
     # ======================================================
 
-    def selected_item(self):
+    def load_selected(self):
 
-        row_index = self.table.currentRow()
+        if not self.current_record:
 
-        if row_index < 0:
+            self.clear_editor()
 
-            QMessageBox.information(
+            return
 
-                self,
+        row = self.current_record
 
-                "QA AI Studio",
+        self.domain.setText(
+            row[1]
+        )
 
-                "Please select a knowledge record."
+        self.module.setText(
+            row[2]
+        )
 
+        self.knowledge.setText(
+            row[3]
+        )
+
+        self.version.setText(
+            row[4]
+        )
+
+        index = self.document_type.findText(
+            row[19] if len(row) > 19 else ""
+        )
+
+        if index >= 0:
+
+            self.document_type.setCurrentIndex(
+                index
             )
 
-            return None
+        else:
 
-        if row_index >= len(self.rows):
+            self.document_type.setCurrentIndex(0)
 
-            return None
+        upload_source = ""
 
-        return self.rows[row_index]
+        if len(row) > 7:
+
+            upload_source = row[7]
+
+        self.upload_source.setText(
+            str(upload_source)
+        )
+
+
+    # ======================================================
+    # Clear Editor
+    # ======================================================
+
+    def clear_editor(self):
+
+        self.domain.clear()
+
+        self.module.clear()
+
+        self.knowledge.clear()
+
+        self.version.clear()
+
+        self.upload_source.clear()
+
+        self.document_type.setCurrentIndex(0)
 
         # ======================================================
-    # Details
+    # New Domain
     # ======================================================
 
-    def view_details(self):
+    def add_domain(self):
 
-        row = self.selected_item()
-
-        if row is None:
-
-            return
-
-        data = {
-
-            "ID": row[0],
-            "Domain": row[1],
-            "Module": row[2],
-            "Knowledge": row[3],
-            "Version": row[4],
-            "Summary": row[13],
-            "Tags": row[14],
-            "Confidence": row[15],
-            "Platform": row[16],
-            "Category": row[17],
-            "Business Process": row[18],
-            "Document Type": row[19],
-            "Status": row[20]
-
-        }
-
-        dialog = KnowledgeDetailDialog(
-            data,
-            self
+        name, ok = QInputDialog.getText(
+            self,
+            "New Domain",
+            "Domain Name"
         )
 
-        dialog.exec()
-
-
-    # ======================================================
-    # Versions
-    # ======================================================
-
-    def show_versions(self):
-
-        row = self.selected_item()
-
-        if row is None:
-
+        if not ok or not name.strip():
             return
 
-        versions = self.manager.get_versions(
-            row[0]
-        )
+        name = name.strip()
 
-        if not versions:
+        try:
 
-            QMessageBox.information(
+            item = QTreeWidgetItem([name])
 
+            item.setData(
+                0,
+                Qt.UserRole,
+                {
+                    "type": "domain",
+                    "domain": name
+                }
+            )
+
+            self.tree.addTopLevelItem(item)
+
+            self.tree.setCurrentItem(item)
+
+        except Exception as ex:
+
+            QMessageBox.critical(
                 self,
+                "QA AI Studio",
+                str(ex)
+            )
 
-                "Version History",
 
-                "No version history found."
+    # ======================================================
+    # New Module
+    # ======================================================
 
+    def add_module(self):
+
+        item = self.tree.currentItem()
+
+        if item is None:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Domain first."
             )
 
             return
 
-        text = ""
+        data = item.data(0, Qt.UserRole)
 
-        for version in versions:
+        if data["type"] == "module":
 
-            text += (
-                f"Version : {version[0]}\n"
-                f"SHA256  : {version[1]}\n"
-                f"Path    : {version[2]}\n"
-                f"Created : {version[3]}\n\n"
+            item = item.parent()
+
+            data = item.data(0, Qt.UserRole)
+
+        if data["type"] != "domain":
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Domain first."
             )
 
-        QMessageBox.information(
+            return
+
+        module_name, ok = QInputDialog.getText(
+            self,
+            "New Module",
+            "Module Name"
+        )
+
+        if not ok or not module_name.strip():
+            return
+
+        module_name = module_name.strip()
+
+        module_item = QTreeWidgetItem([module_name])
+
+        module_item.setData(
+            0,
+            Qt.UserRole,
+            {
+                "type": "module",
+                "domain": data["domain"],
+                "module": module_name
+            }
+        )
+
+        item.addChild(module_item)
+
+        item.setExpanded(True)
+
+        self.tree.setCurrentItem(module_item)
+
+
+    # ======================================================
+    # New Knowledge
+    # ======================================================
+
+    def add_knowledge(self):
+
+        item = self.tree.currentItem()
+
+        if item is None:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Module first."
+            )
+
+            return
+
+        data = item.data(0, Qt.UserRole)
+
+        if data["type"] == "knowledge":
+
+            item = item.parent()
+
+            data = item.data(0, Qt.UserRole)
+
+        if data["type"] != "module":
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Module first."
+            )
+
+            return
+
+        name, ok = QInputDialog.getText(
+            self,
+            "New Knowledge",
+            "Knowledge Name"
+        )
+
+        if not ok or not name.strip():
+            return
+
+        name = name.strip()
+
+        child = QTreeWidgetItem([name])
+
+        child.setData(
+            0,
+            Qt.UserRole,
+            {
+                "type": "knowledge",
+                "domain": data["domain"],
+                "module": data["module"],
+                "knowledge": name
+            }
+        )
+
+        item.addChild(child)
+
+        item.setExpanded(True)
+
+        self.tree.setCurrentItem(child)
+
+
+    # ======================================================
+    # Rename
+    # ======================================================
+
+    def rename_item(self):
+
+        item = self.tree.currentItem()
+
+        if item is None:
+            return
+
+        value, ok = QInputDialog.getText(
 
             self,
 
-            "Version History",
+            "Rename",
 
-            text
+            "New Name",
 
+            text=item.text(0)
+
+        )
+
+        if not ok or not value.strip():
+            return
+
+        item.setText(
+            0,
+            value.strip()
         )
 
 
@@ -427,58 +753,115 @@ class ManageKnowledgePage(QWidget):
     # Delete
     # ======================================================
 
-    def delete_selected(self):
+    def delete_item(self):
 
-        row = self.selected_item()
+        item = self.tree.currentItem()
 
-        if row is None:
-
+        if item is None:
             return
-
-        knowledge_id = row[0]
-        domain = row[1]
-        module = row[2]
-        knowledge_name = row[3]
 
         answer = QMessageBox.question(
 
             self,
 
-            "Delete Knowledge",
+            "Delete",
 
-            (
-                f"Delete '{knowledge_name}'?\n\n"
-                "This will permanently remove:\n"
-                "- Repository files\n"
-                "- Database records\n"
-                "- ChromaDB vectors"
-            ),
-
-            QMessageBox.Yes | QMessageBox.No,
-
-            QMessageBox.No
+            f"Delete '{item.text(0)}' ?"
 
         )
 
         if answer != QMessageBox.Yes:
+            return
 
+        parent = item.parent()
+
+        if parent:
+
+            parent.removeChild(item)
+
+        else:
+
+            index = self.tree.indexOfTopLevelItem(item)
+
+            self.tree.takeTopLevelItem(index)
+
+        self.clear_editor()
+
+
+    # ======================================================
+    # Move Knowledge
+    # ======================================================
+
+    def move_item(self):
+
+        if not self.current_record:
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Select a Knowledge item first."
+            )
+            return
+
+        domains = self.manager.get_domains()
+
+        if not domains:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "No domains available."
+            )
+            return
+
+        domain, ok = QInputDialog.getItem(
+            self,
+            "Move Knowledge",
+            "Target Domain",
+            domains,
+            0,
+            False
+        )
+
+        if not ok:
+            return
+
+        modules = self.manager.get_modules(domain)
+
+        if not modules:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Selected domain has no modules."
+            )
+            return
+
+        module, ok = QInputDialog.getItem(
+            self,
+            "Move Knowledge",
+            "Target Module",
+            modules,
+            0,
+            False
+        )
+
+        if not ok:
             return
 
         try:
 
-            _, files_deleted = self.repository.delete_knowledge(
+            self.manager.move_knowledge(
+
+                self.current_record[0],
+
                 domain,
-                module,
-                knowledge_name
+
+                module
+
             )
 
-            vectors_deleted = self.vector_store.delete_by_knowledge_name(
-                knowledge_name
-            )
-
-            db_result = self.manager.delete(
-                knowledge_id
-            )
+            self.load_tree()
 
             QMessageBox.information(
 
@@ -486,21 +869,9 @@ class ManageKnowledgePage(QWidget):
 
                 "QA AI Studio",
 
-                f"""Knowledge deleted successfully.
+                "Knowledge moved successfully."
 
-            Repository Files : {files_deleted}
-
-            Vector Chunks : {vectors_deleted}
-
-            Knowledge Records : {db_result['knowledge']}
-
-            Versions Removed : {db_result['versions']}
-
-            Embedding Queue : {db_result['queue']}
-            """
             )
-
-            self.load_data()
 
         except Exception as ex:
 
@@ -508,42 +879,74 @@ class ManageKnowledgePage(QWidget):
 
                 self,
 
-                "Delete Failed",
+                "QA AI Studio",
 
                 str(ex)
 
             )
 
-        # ======================================================
-    # Refresh
-    # ======================================================
-
-    def refresh(self):
-
-        self.load_data()
-
 
     # ======================================================
-    # Public API
+    # Save Changes
     # ======================================================
 
-    def reload(self):
+    def save_changes(self):
 
-        self.load_data()
+        if not self.current_record:
 
+            QMessageBox.information(
 
-    # ======================================================
-    # Cleanup
-    # ======================================================
+                self,
 
-    def closeEvent(self, event):
+                "QA AI Studio",
+
+                "Select a Knowledge item."
+
+            )
+
+            return
 
         try:
 
-            self.table.clearSelection()
+            self.manager.update_knowledge(
 
-        except Exception:
+                knowledge_id=self.current_record[0],
 
-            pass
+                domain=self.domain.text().strip(),
 
-        super().closeEvent(event)
+                module=self.module.text().strip(),
+
+                knowledge_name=self.knowledge.text().strip(),
+
+                version=self.version.text().strip(),
+
+                document_type=self.document_type.currentText(),
+
+                upload_source=self.upload_source.text().strip()
+
+            )
+
+            self.load_tree()
+
+            QMessageBox.information(
+
+                self,
+
+                "QA AI Studio",
+
+                "Knowledge updated successfully."
+
+            )
+
+        except Exception as ex:
+
+            QMessageBox.critical(
+
+                self,
+
+                "QA AI Studio",
+
+                str(ex)
+
+            )
+    
