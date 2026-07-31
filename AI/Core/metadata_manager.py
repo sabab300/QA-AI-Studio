@@ -11,6 +11,7 @@ Enhancement:
 
 from datetime import datetime
 import json
+import sqlite3
 
 from Database.db_manager_v3 import DatabaseManager
 
@@ -292,6 +293,8 @@ class MetadataManager:
         
         conn = self.db.get_connection()
 
+        conn.row_factory = sqlite3.Row
+
         cursor = conn.cursor()
 
 
@@ -380,6 +383,8 @@ class MetadataManager:
 
         conn = self.db.get_connection()
 
+        conn.row_factory = sqlite3.Row
+
         cursor = conn.cursor()
 
 
@@ -411,6 +416,8 @@ class MetadataManager:
     ):
 
         conn = self.db.get_connection()
+
+        conn.row_factory = sqlite3.Row
 
         cursor = conn.cursor()
 
@@ -1184,3 +1191,80 @@ class MetadataManager:
         conn.commit()
 
         conn.close()
+
+    # --------------------------------------------------
+    # Update Knowledge Item
+    # --------------------------------------------------
+ 
+    def update_knowledge_item(self, knowledge_id, **fields):
+        """
+        Updates any subset of editable columns on a knowledge_items
+        row. Call it like:
+ 
+            manager.update_knowledge_item(
+                5,
+                domain="PSW Core",
+                module="SD Export",
+                knowledge_name="CESS Waiver SRS",
+                version="1.1",
+                document_type="SRS",
+                summary="Updated summary text",
+                tags="cess,export,waiver",
+            )
+ 
+        Only the fields you pass in get changed; everything else on
+        the row stays as-is.
+        """
+ 
+        allowed_fields = {
+            "domain",
+            "module",
+            "knowledge_name",
+            "version",
+            "document_type",
+            "summary",
+            "tags",
+            "platform",
+            "category",
+            "business_process",
+            "status",
+        }
+ 
+        updates = {
+            key: value
+            for key, value in fields.items()
+            if key in allowed_fields
+        }
+ 
+        if not updates:
+ 
+            return False
+ 
+        conn = self.db.get_connection()
+ 
+        cursor = conn.cursor()
+ 
+        set_clause = ", ".join(
+            f"{key}=?" for key in updates.keys()
+        )
+ 
+        values = list(updates.values())
+ 
+        values.append(datetime.now().isoformat())
+ 
+        values.append(knowledge_id)
+ 
+        cursor.execute(
+            f"""
+            UPDATE knowledge_items
+            SET {set_clause}, modified_date=?
+            WHERE id=?
+            """,
+            values,
+        )
+ 
+        conn.commit()
+ 
+        conn.close()
+ 
+        return True
