@@ -61,7 +61,10 @@ from Core.metadata_manager import MetadataManager
 
 from Core.test_execution_manager import TestExecutionManager
 
-from UI.QAAutomation.test_execution_worker import AutomationGenerationWorker
+from UI.QAAutomation.test_execution_worker import (
+    AutomationGenerationWorker,
+    AutomationSuggestionWorker,
+)
 
 
 AUTOMATION_TYPES = [
@@ -122,6 +125,82 @@ class RecordResultDialog(QDialog):
     def selected_result(self):
 
         return self.result_combo.currentText()
+
+
+# ==========================================================
+# Small dialog: AI-suggested automation type, editable before
+# generating the actual script
+# ==========================================================
+
+class AutomationSuggestionDialog(QDialog):
+
+    def __init__(self, tc_number, test_case_text, suggestion, parent=None):
+
+        super().__init__(parent)
+
+        self.setWindowTitle(
+            f"Automate — {tc_number}"
+        )
+
+        self.resize(480, 320)
+
+        layout = QVBoxLayout(self)
+
+        case_label = QLabel(test_case_text[:300])
+
+        case_label.setWordWrap(True)
+
+        layout.addWidget(case_label)
+
+
+        layout.addWidget(QLabel("AI Suggestion"))
+
+        suggestion_label = QLabel(
+            f"{suggestion['suggested_type']} — "
+            f"{suggestion['reason']}"
+        )
+
+        suggestion_label.setWordWrap(True)
+
+        suggestion_label.setStyleSheet(
+            "color:#005B96; font-weight:bold;"
+        )
+
+        layout.addWidget(suggestion_label)
+
+
+        layout.addWidget(QLabel("Automation Type (edit if needed)"))
+
+        self.type_combo = QComboBox()
+
+        self.type_combo.addItems(
+            ["Playwright", "Selenium", "API", "SQL"]
+        )
+
+        self.type_combo.setCurrentText(
+            suggestion["suggested_type"]
+        )
+
+        layout.addWidget(self.type_combo)
+
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Cancel
+        )
+
+        self.generate_btn = buttons.addButton(
+            "Generate Automation", QDialogButtonBox.AcceptRole
+        )
+
+        buttons.accepted.connect(self.accept)
+
+        buttons.rejected.connect(self.reject)
+
+        layout.addWidget(buttons)
+
+    def selected_type(self):
+
+        return self.type_combo.currentText()
 
 
 # ==========================================================
@@ -188,6 +267,10 @@ class TestExecutionPage(QWidget):
         self.generation_thread = None
 
         self.generation_worker = None
+
+        self.suggestion_thread = None
+
+        self.suggestion_worker = None
 
         self.build_ui()
 
@@ -304,7 +387,7 @@ class TestExecutionPage(QWidget):
         table_layout.addLayout(selection_row)
 
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
 
         self.table.setHorizontalHeaderLabels([
             "",
@@ -314,6 +397,7 @@ class TestExecutionPage(QWidget):
             "Automation Type",
             "Last Result",
             "Script",
+            "Automate",
         ])
 
         self.table.horizontalHeader().setSectionResizeMode(
@@ -630,6 +714,22 @@ class TestExecutionPage(QWidget):
         self.table.setCellWidget(row, 6, script_btn)
 
 
+        automate_btn = QPushButton("Automate")
+
+        automate_btn.setToolTip(
+            "AI suggests an automation type, you confirm, "
+            "then it generates the script."
+        )
+
+        automate_btn.clicked.connect(
+            lambda _, tc_id=test_case["id"]: self.open_automation_suggestion(
+                tc_id
+            )
+        )
+
+        self.table.setCellWidget(row, 7, automate_btn)
+
+
     # ======================================================
     # Selection helpers
     # ======================================================
@@ -748,6 +848,27 @@ class TestExecutionPage(QWidget):
 
             return
 
+        self.start_automation_generation(items)
+
+
+    def start_automation_generation(self, items):
+        """
+        items: list of (test_case_id, automation_type) tuples.
+        Shared by the bulk 'Add Automation'/'Update Automation'
+        buttons and the single-item 'Automate' popup flow.
+        """
+
+        if self.generation_thread is not None:
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Please wait for the current automation generation "
+                "to finish."
+            )
+
+            return
+
         domain = self.domain.currentText().strip()
 
         module = self.module.currentText().strip()
@@ -809,6 +930,134 @@ class TestExecutionPage(QWidget):
         )
 
         self.generation_thread.start()
+
+
+    # ======================================================
+    # Automate button: AI suggests a type, you confirm, then
+    # generate (background thread for the suggestion step too —
+    # it's an LLM call)
+    # ======================================================
+
+    def open_automation_suggestion(self, test_case_id):
+
+        if self.suggestion_thread is not None:
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Please wait — already analyzing a test case."
+            )
+
+            return
+
+        if self.generation_thread is not None:
+
+            QMessageBox.information(
+                self,
+                "QA AI Studio",
+                "Please wait for the current automation generation "
+                "to finish."
+            )
+
+            return
+
+        self.log.append(
+            f"Analyzing test case #{test_case_id} with AI..."
+        )
+
+        self.suggestion_thread = QThread()
+
+        self.suggestion_worker = AutomationSuggestionWorker(
+            test_case_id
+        )
+
+        self.suggestion_worker.moveToThread(self.suggestion_thread)
+
+        self.suggestion_thread.started.connect(
+            self.suggestion_worker.run
+        )
+
+        self.suggestion_worker.progress.connect(self.log.append)
+
+        self.suggestion_worker.finished.connect(
+            lambda suggestion: self.on_suggestion_ready(
+                test_case_id, suggestion
+            )
+        )
+
+        self.suggestion_worker.error.connect(
+            self.on_suggestion_error
+        )
+
+        self.suggestion_worker.finished.connect(
+            self.suggestion_thread.quit
+        )
+
+        self.suggestion_worker.error.connect(
+            self.suggestion_thread.quit
+        )
+
+        self.suggestion_thread.finished.connect(
+            self.cleanup_suggestion_thread
+        )
+
+        self.suggestion_thread.start()
+
+
+    def on_suggestion_ready(self, test_case_id, suggestion):
+
+        self.log.append(
+            f"AI suggests: {suggestion['suggested_type']} — "
+            f"{suggestion['reason']}"
+        )
+
+        tc_number = ""
+
+        test_case_text = ""
+
+        for row in range(self.table.rowCount()):
+
+            if self.row_tc_id(row) == test_case_id:
+
+                tc_number = self.row_tc_number(row)
+
+                test_case_text = self.table.item(row, 2).text()
+
+                break
+
+        dialog = AutomationSuggestionDialog(
+            tc_number, test_case_text, suggestion, self
+        )
+
+        if dialog.exec() == QDialog.Accepted:
+
+            chosen_type = dialog.selected_type()
+
+            self.start_automation_generation(
+                [(test_case_id, chosen_type)]
+            )
+
+
+    def on_suggestion_error(self, message):
+
+        self.log.append(
+            f"AI suggestion failed: {message}"
+        )
+
+        QMessageBox.critical(
+            self, "Automation Suggestion Failed", message
+        )
+
+
+    def cleanup_suggestion_thread(self):
+
+        if self.suggestion_thread:
+
+            self.suggestion_thread.deleteLater()
+
+        self.suggestion_thread = None
+
+        self.suggestion_worker = None
 
 
     def on_automation_case_done(self, test_case_id, script):

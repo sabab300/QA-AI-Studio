@@ -108,3 +108,47 @@ class AutomationGenerationWorker(QObject):
         except Exception as ex:
 
             self.error.emit(str(ex))
+
+
+class AutomationSuggestionWorker(QObject):
+    """
+    Runs the AI automation-type suggestion (LLM call) off the UI
+    thread for a single test case, for the "Automate" popup.
+    """
+
+    started = Signal()
+
+    progress = Signal(str)
+
+    # emitted with {"suggested_type": ..., "reason": ...}
+    finished = Signal(dict)
+
+    error = Signal(str)
+
+    def __init__(self, test_case_id):
+
+        super().__init__()
+
+        self.test_case_id = test_case_id
+
+        self.manager = TestExecutionManager()
+
+    def run(self):
+
+        try:
+
+            self.started.emit()
+
+            self.progress.emit(
+                "Analyzing test case with AI..."
+            )
+
+            suggestion = self.manager.suggest_automation_type(
+                self.test_case_id
+            )
+
+            self.finished.emit(suggestion)
+
+        except Exception as ex:
+
+            self.error.emit(str(ex))

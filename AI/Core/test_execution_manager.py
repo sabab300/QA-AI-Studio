@@ -22,7 +22,10 @@ result recorded directly.
 
 from Core.test_case_repository import TestCaseRepository
 from Core.automation_generator import AutomationGenerator
+from Core.llm_engine import LLMEngine
 from Core.logger import Logger
+import json
+import re
 
 
 class TestExecutionManager:
@@ -34,6 +37,8 @@ class TestExecutionManager:
         self.repository = TestCaseRepository()
 
         self.automation_generator = AutomationGenerator()
+
+        self.llm = LLMEngine()
 
     # --------------------------------------------------
     # Listing
@@ -141,6 +146,113 @@ class TestExecutionManager:
         )
 
         return script
+
+    # --------------------------------------------------
+    # AI Suggestion: which automation type fits this test case?
+    # (called from a background thread — this is an LLM call)
+    # --------------------------------------------------
+
+    VALID_TYPES = ("Playwright", "Selenium", "API", "SQL")
+
+    def suggest_automation_type(self, test_case_id):
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(
+                f"Test case {test_case_id} not found."
+            )
+
+        prompt = (
+            "You are a QA automation architect. Look at this test "
+            "case and decide which ONE automation approach fits it "
+            "best:\n\n"
+            "- Playwright: browser/UI automation (clicking, forms, "
+            "navigating web pages)\n"
+            "- Selenium: older browser/UI automation, same use case "
+            "as Playwright\n"
+            "- API: testing a REST/SOAP API request and response "
+            "directly, no browser\n"
+            "- SQL: verifying data directly in a database, no UI or "
+            "API involved\n\n"
+            f"Test Case: {test_case.get('test_case', '')}\n"
+            f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
+            f"Steps: {test_case.get('steps', '')}\n"
+            f"Expected Result: {test_case.get('expected_result', '')}\n\n"
+            "Respond with ONLY this JSON, nothing else:\n"
+            '{"suggested_type": "Playwright|Selenium|API|SQL", '
+            '"reason": "one short sentence"}'
+        )
+
+        result = self.llm.generate(
+            prompt=prompt,
+            temperature=0.1,
+            max_tokens=150,
+        )
+
+        if not result.get("success"):
+
+            raise RuntimeError(
+                result.get("error", "AI suggestion failed.")
+            )
+
+        return self._parse_suggestion(
+            result.get("response", "")
+        )
+
+
+    def _parse_suggestion(self, raw_text):
+
+        # Strip markdown code fences if the model added them anyway.
+        cleaned = re.sub(
+            r"```(?:json)?|```", "", raw_text
+        ).strip()
+
+        try:
+
+            data = json.loads(cleaned)
+
+            suggested_type = data.get("suggested_type", "")
+
+            reason = data.get("reason", "")
+
+            if suggested_type in self.VALID_TYPES:
+
+                return {
+                    "suggested_type": suggested_type,
+                    "reason": reason or "No reason given.",
+                }
+
+        except (json.JSONDecodeError, AttributeError):
+
+            pass
+
+        # Fallback: the model didn't return clean JSON — just look
+        # for one of the valid type names anywhere in the text so a
+        # slightly messy response still works instead of failing.
+        for candidate in self.VALID_TYPES:
+
+            if candidate.lower() in raw_text.lower():
+
+                return {
+                    "suggested_type": candidate,
+                    "reason": (
+                        "AI response wasn't in the expected format, "
+                        "but mentioned this type."
+                    ),
+                }
+
+        # Total fallback — default to API since it's the safest,
+        # most broadly-applicable guess when we truly can't tell.
+        return {
+            "suggested_type": "API",
+            "reason": (
+                "Could not determine a confident suggestion — "
+                "defaulted to API. Please review and change if needed."
+            ),
+        }
+
 
     # --------------------------------------------------
     # Execution
