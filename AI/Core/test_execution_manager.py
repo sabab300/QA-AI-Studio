@@ -11,18 +11,22 @@ Service layer used by the QA Automation UI. Wraps:
     • AutomationGenerator — turns a test case into an automation
       script for a chosen framework (Playwright / Selenium / API / SQL)
 
-Deliberately does NOT execute generated automation scripts
-automatically. Running unreviewed, LLM-generated code via exec() or
-a shell is a real security risk — that requires a properly sandboxed
-runner, which is a separate, later phase. For now, "Automated" test
-cases store their generated script for the QA engineer to review and
-run themselves; "Manual" test cases get a real Pass/Fail/Blocked
-result recorded directly.
+Playwright scripts now actually EXECUTE (Core/playwright_runner.py),
+in an isolated subprocess with a timeout — a hung or bad script can't
+freeze the app. Selenium/API/SQL still only generate + store a
+script for manual review; they haven't gotten a runner yet.
+
+Since this runs AI-generated code in a real browser against
+whatever URL is inside the script, the UI shows a one-time
+confirmation before each run, and strongly encourages reviewing the
+script first — especially before pointing it at a real/production
+PSW environment rather than a test/UAT one.
 """
 
 from Core.test_case_repository import TestCaseRepository
 from Core.automation_generator import AutomationGenerator
 from Core.llm_engine import LLMEngine
+from Core.playwright_runner import PlaywrightRunner
 from Core.logger import Logger
 import json
 import re
@@ -39,6 +43,8 @@ class TestExecutionManager:
         self.automation_generator = AutomationGenerator()
 
         self.llm = LLMEngine()
+
+        self.playwright_runner = PlaywrightRunner()
 
     # --------------------------------------------------
     # Listing
@@ -112,16 +118,50 @@ class TestExecutionManager:
                 f"Test case {test_case_id} not found."
             )
 
-        requirement = (
-            f"Generate a {automation_type} automation script for the "
-            f"following test case.\n\n"
-            f"Test Case: {test_case.get('test_case', '')}\n"
-            f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
-            f"Steps: {test_case.get('steps', '')}\n"
-            f"Expected Result: {test_case.get('expected_result', '')}\n\n"
-            f"Return only the {automation_type} script, ready to run, "
-            f"with brief comments explaining each step."
-        )
+        if automation_type == "Playwright":
+
+            requirement = (
+                f"Generate a complete, standalone Python Playwright "
+                f"script for the following test case. It MUST be "
+                f"directly runnable with 'python script.py' — no "
+                f"pytest, no fixtures, no external test framework.\n\n"
+                f"Required structure:\n"
+                f"from playwright.sync_api import sync_playwright\n\n"
+                f"def run(playwright):\n"
+                f"    browser = playwright.chromium.launch(headless=False)\n"
+                f"    page = browser.new_page()\n"
+                f"    # steps go here, using page.goto/click/fill/etc.\n"
+                f"    # use assert statements to check expected results\n"
+                f"    browser.close()\n\n"
+                f"if __name__ == '__main__':\n"
+                f"    with sync_playwright() as playwright:\n"
+                f"        run(playwright)\n"
+                f"    print('TEST PASSED')\n\n"
+                f"If a URL is not clear from the test case, use a "
+                f"clearly marked placeholder like "
+                f"'https://REPLACE_WITH_ACTUAL_URL' near the top so "
+                f"it's obvious it needs to be filled in before running "
+                f"against a real environment.\n\n"
+                f"Test Case: {test_case.get('test_case', '')}\n"
+                f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
+                f"Steps: {test_case.get('steps', '')}\n"
+                f"Expected Result: {test_case.get('expected_result', '')}\n\n"
+                f"Return ONLY the Python code, no explanation before "
+                f"or after, no markdown code fences."
+            )
+
+        else:
+
+            requirement = (
+                f"Generate a {automation_type} automation script for the "
+                f"following test case.\n\n"
+                f"Test Case: {test_case.get('test_case', '')}\n"
+                f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
+                f"Steps: {test_case.get('steps', '')}\n"
+                f"Expected Result: {test_case.get('expected_result', '')}\n\n"
+                f"Return only the {automation_type} script, ready to run, "
+                f"with brief comments explaining each step."
+            )
 
         result = self.automation_generator.generate(
             requirement=requirement,
@@ -139,6 +179,8 @@ class TestExecutionManager:
 
         script = result.get("automation_code", "")
 
+        script = self._strip_code_fences(script)
+
         self.repository.update_automation(
             test_case_id,
             automation_type,
@@ -146,6 +188,47 @@ class TestExecutionManager:
         )
 
         return script
+
+    def _strip_code_fences(self, text):
+        """
+        Local LLMs frequently wrap code in markdown fences
+        (```python ... ```) even when explicitly told not to.
+        Writing that straight to a .py file causes a SyntaxError on
+        line 1 — this pulls just the code out, with or without
+        surrounding explanation text, and copes with a truncated
+        response that's missing its closing fence.
+        """
+
+        if not text:
+
+            return text
+
+        text = text.strip()
+
+        match = re.search(
+            r"```(?:[a-zA-Z0-9]*)?\n(.*?)```",
+            text,
+            re.DOTALL,
+        )
+
+        if match:
+
+            return match.group(1).strip()
+
+        # No closing fence (truncated response) — just drop a
+        # leading opening-fence line if there is one.
+        lines = text.split("\n")
+
+        if lines and lines[0].strip().startswith("```"):
+
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+
+            lines = lines[:-1]
+
+        return "\n".join(lines).strip()
+
 
     # --------------------------------------------------
     # AI Suggestion: which automation type fits this test case?
@@ -268,6 +351,57 @@ class TestExecutionManager:
 
     def can_auto_execute(self, test_case):
 
-        # Reserved for a future phase once a sandboxed runner exists.
-        # Always False today, on purpose.
-        return False
+        # Real execution exists for Playwright now. Selenium/API/SQL
+        # still require manual review via View Script — same
+        # reasoning as before, they just haven't gotten a runner yet.
+        return (
+            test_case.get("automation_type") == "Playwright"
+            and bool(test_case.get("automation_script"))
+        )
+
+
+    def execute_playwright(self, test_case_id, timeout_seconds=None):
+        """
+        Actually runs the generated Playwright script in a real
+        browser (subprocess-isolated, timeout-protected — see
+        Core/playwright_runner.py). Records the Pass/Fail result
+        against the test case afterward.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(
+                f"Test case {test_case_id} not found."
+            )
+
+        script = test_case.get("automation_script")
+
+        if not script:
+
+            raise ValueError(
+                "No automation script generated yet for this test "
+                "case — use Add Automation first."
+            )
+
+        result = self.playwright_runner.run_script(
+            script,
+            tc_number=test_case.get("tc_number", "script"),
+            timeout_seconds=timeout_seconds,
+        )
+
+        if "error" in result and not result.get("stdout"):
+
+            # Didn't even run (e.g. Playwright not installed) —
+            # don't record a Pass/Fail result for this, since the
+            # test itself never actually executed.
+            return result
+
+        outcome = "Pass" if result.get("success") else "Fail"
+
+        self.repository.update_result(test_case_id, outcome)
+
+        result["outcome"] = outcome
+
+        return result

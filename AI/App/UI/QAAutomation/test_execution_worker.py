@@ -120,8 +120,8 @@ class AutomationSuggestionWorker(QObject):
 
     progress = Signal(str)
 
-    # emitted with {"suggested_type": ..., "reason": ...}
-    finished = Signal(dict)
+    # emitted with (test_case_id, {"suggested_type": ..., "reason": ...})
+    finished = Signal(int, dict)
 
     error = Signal(str)
 
@@ -147,7 +147,55 @@ class AutomationSuggestionWorker(QObject):
                 self.test_case_id
             )
 
-            self.finished.emit(suggestion)
+            self.finished.emit(self.test_case_id, suggestion)
+
+        except Exception as ex:
+
+            self.error.emit(str(ex))
+
+
+class PlaywrightExecutionWorker(QObject):
+    """
+    Actually runs a generated Playwright script in a real browser,
+    off the UI thread — a script launching a browser and waiting on
+    page elements can easily take 10-60+ seconds.
+    """
+
+    started = Signal()
+
+    progress = Signal(str)
+
+    # emitted with (test_case_id, result_dict)
+    finished = Signal(int, dict)
+
+    error = Signal(str)
+
+    def __init__(self, test_case_id, timeout_seconds=None):
+
+        super().__init__()
+
+        self.test_case_id = test_case_id
+
+        self.timeout_seconds = timeout_seconds
+
+        self.manager = TestExecutionManager()
+
+    def run(self):
+
+        try:
+
+            self.started.emit()
+
+            self.progress.emit(
+                "Launching browser and running the script..."
+            )
+
+            result = self.manager.execute_playwright(
+                self.test_case_id,
+                timeout_seconds=self.timeout_seconds,
+            )
+
+            self.finished.emit(self.test_case_id, result)
 
         except Exception as ex:
 

@@ -64,6 +64,7 @@ from Core.test_execution_manager import TestExecutionManager
 from UI.QAAutomation.test_execution_worker import (
     AutomationGenerationWorker,
     AutomationSuggestionWorker,
+    PlaywrightExecutionWorker,
 )
 
 
@@ -271,6 +272,12 @@ class TestExecutionPage(QWidget):
         self.suggestion_thread = None
 
         self.suggestion_worker = None
+
+        self.execution_thread = None
+
+        self.execution_worker = None
+
+        self.execution_queue = []
 
         self.build_ui()
 
@@ -980,9 +987,7 @@ class TestExecutionPage(QWidget):
         self.suggestion_worker.progress.connect(self.log.append)
 
         self.suggestion_worker.finished.connect(
-            lambda suggestion: self.on_suggestion_ready(
-                test_case_id, suggestion
-            )
+            self.on_suggestion_ready
         )
 
         self.suggestion_worker.error.connect(
@@ -1236,19 +1241,27 @@ class TestExecutionPage(QWidget):
 
         without_script = []
 
-        with_script = []
+        playwright_ready = []
+
+        other_with_script = []
 
         for row in rows:
 
             has_script = self.table.cellWidget(row, 6).isEnabled()
 
-            if has_script:
+            automation_type = self.table.cellWidget(row, 4).currentText()
 
-                with_script.append(row)
+            if not has_script:
+
+                without_script.append(row)
+
+            elif automation_type == "Playwright":
+
+                playwright_ready.append(row)
 
             else:
 
-                without_script.append(row)
+                other_with_script.append(row)
 
         if without_script:
 
@@ -1261,20 +1274,205 @@ class TestExecutionPage(QWidget):
                 f"Use 'Add Automation' first."
             )
 
-        if with_script:
+        if other_with_script:
 
             numbers = ", ".join(
-                self.row_tc_number(r) for r in with_script
+                self.row_tc_number(r) for r in other_with_script
             )
 
             QMessageBox.information(
                 self,
                 "Manual Review Required",
-                f"{len(with_script)} automated test case(s) have a "
-                f"generated script but are not auto-executed for "
-                f"safety (AI-generated code is not run without "
-                f"review).\n\nTest cases: {numbers}\n\n"
-                f"Use 'View Script' on each row to review and run it "
-                f"in your own test environment. A sandboxed automatic "
-                f"runner is planned for a later phase."
+                f"{len(other_with_script)} automated test case(s) "
+                f"use Selenium/API/SQL, which don't have an "
+                f"automatic runner yet.\n\nTest cases: {numbers}\n\n"
+                f"Use 'View Script' on each row to review and run "
+                f"it in your own test environment."
             )
+
+        if playwright_ready:
+
+            self.confirm_and_run_playwright(playwright_ready)
+
+
+    def confirm_and_run_playwright(self, rows):
+
+        numbers = ", ".join(
+            self.row_tc_number(r) for r in rows
+        )
+
+        confirm = QMessageBox.question(
+            self,
+            "Run Playwright Tests",
+            f"This will open a real browser and run {len(rows)} "
+            f"AI-generated Playwright script(s):\n\n{numbers}\n\n"
+            f"Make sure you've reviewed them with 'View Script' "
+            f"first, especially the target URL — this runs against "
+            f"whatever environment the script points to.\n\n"
+            f"Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if confirm != QMessageBox.Yes:
+
+            self.log.append(
+                "Playwright execution cancelled."
+            )
+
+            return
+
+        test_case_ids = [
+            self.row_tc_id(row) for row in rows
+        ]
+
+        self.execution_queue = test_case_ids
+
+        self.execute_selected_btn.setEnabled(False)
+
+        self.execute_all_btn.setEnabled(False)
+
+        self.run_next_execution()
+
+
+    def run_next_execution(self):
+
+        if not self.execution_queue:
+
+            self.execute_selected_btn.setEnabled(True)
+
+            self.execute_all_btn.setEnabled(True)
+
+            self.log.append(
+                "Playwright execution queue complete."
+            )
+
+            return
+
+        if self.execution_thread is not None:
+
+            return
+
+        test_case_id = self.execution_queue.pop(0)
+
+        tc_number = self.tc_number_for_id(test_case_id)
+
+        self.log.append(
+            f"Running {tc_number} in a real browser..."
+        )
+
+        self.execution_thread = QThread()
+
+        self.execution_worker = PlaywrightExecutionWorker(
+            test_case_id
+        )
+
+        self.execution_worker.moveToThread(self.execution_thread)
+
+        self.execution_thread.started.connect(
+            self.execution_worker.run
+        )
+
+        self.execution_worker.progress.connect(self.log.append)
+
+        self.execution_worker.finished.connect(
+            self.on_execution_finished
+        )
+
+        self.execution_worker.error.connect(
+            self.on_execution_error
+        )
+
+        self.execution_worker.finished.connect(
+            self.execution_thread.quit
+        )
+
+        self.execution_worker.error.connect(
+            self.execution_thread.quit
+        )
+
+        self.execution_thread.finished.connect(
+            self.cleanup_execution_thread
+        )
+
+        self.execution_thread.start()
+
+
+    def on_execution_finished(self, test_case_id, result):
+
+        tc_number = self.tc_number_for_id(test_case_id)
+
+        if "outcome" in result:
+
+            outcome = result["outcome"]
+
+            duration = result.get("duration", 0)
+
+            self.set_row_last_result(test_case_id, outcome)
+
+            self.log.append(
+                f"{tc_number}: {outcome} ({duration:.1f}s)"
+            )
+
+            if not result["success"] and result.get("stderr"):
+
+                self.log.append(
+                    f"{tc_number} error output:\n{result['stderr'][:500]}"
+                )
+
+        else:
+
+            # Didn't actually run — e.g. Playwright not installed.
+            self.log.append(
+                f"{tc_number}: could not run — "
+                f"{result.get('error', 'unknown error')}"
+            )
+
+            QMessageBox.warning(
+                self, "QA AI Studio", result.get("error", "")
+            )
+
+
+    def on_execution_error(self, message):
+
+        self.log.append(
+            f"Execution error: {message}"
+        )
+
+        QMessageBox.critical(
+            self, "Playwright Execution Failed", message
+        )
+
+
+    def cleanup_execution_thread(self):
+
+        if self.execution_thread:
+
+            self.execution_thread.deleteLater()
+
+        self.execution_thread = None
+
+        self.execution_worker = None
+
+        self.run_next_execution()
+
+
+    def tc_number_for_id(self, test_case_id):
+
+        for row in range(self.table.rowCount()):
+
+            if self.row_tc_id(row) == test_case_id:
+
+                return self.row_tc_number(row)
+
+        return f"#{test_case_id}"
+
+
+    def set_row_last_result(self, test_case_id, text):
+
+        for row in range(self.table.rowCount()):
+
+            if self.row_tc_id(row) == test_case_id:
+
+                self.table.item(row, 5).setText(text)
+
+                return
