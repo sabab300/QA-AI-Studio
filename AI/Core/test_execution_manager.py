@@ -27,9 +27,11 @@ from Core.test_case_repository import TestCaseRepository
 from Core.automation_generator import AutomationGenerator
 from Core.llm_engine import LLMEngine
 from Core.playwright_runner import PlaywrightRunner
+from Core.test_environment_config import TestEnvironmentConfig
 from Core.logger import Logger
 import json
 import re
+import ast
 
 
 class TestExecutionManager:
@@ -45,6 +47,8 @@ class TestExecutionManager:
         self.llm = LLMEngine()
 
         self.playwright_runner = PlaywrightRunner()
+
+        self.environment_config = TestEnvironmentConfig()
 
     # --------------------------------------------------
     # Listing
@@ -120,34 +124,47 @@ class TestExecutionManager:
 
         if automation_type == "Playwright":
 
+            environment_block = self.environment_config.as_prompt_block()
+
             requirement = (
-                f"Generate a complete, standalone Python Playwright "
-                f"script for the following test case. It MUST be "
-                f"directly runnable with 'python script.py' — no "
-                f"pytest, no fixtures, no external test framework.\n\n"
-                f"Required structure:\n"
-                f"from playwright.sync_api import sync_playwright\n\n"
-                f"def run(playwright):\n"
-                f"    browser = playwright.chromium.launch(headless=False)\n"
-                f"    page = browser.new_page()\n"
-                f"    # steps go here, using page.goto/click/fill/etc.\n"
-                f"    # use assert statements to check expected results\n"
-                f"    browser.close()\n\n"
-                f"if __name__ == '__main__':\n"
-                f"    with sync_playwright() as playwright:\n"
-                f"        run(playwright)\n"
-                f"    print('TEST PASSED')\n\n"
-                f"If a URL is not clear from the test case, use a "
-                f"clearly marked placeholder like "
-                f"'https://REPLACE_WITH_ACTUAL_URL' near the top so "
-                f"it's obvious it needs to be filled in before running "
-                f"against a real environment.\n\n"
+                f"Generate ONLY the body steps for a Playwright test "
+                f"as a FLAT list of simple Python statements — one "
+                f"action per line.\n\n"
+                f"STRICT RULES:\n"
+                f"- Do NOT write 'def', 'if', 'for', 'while', 'try', "
+                f"'with', or any other block/indented statement.\n"
+                f"- Do NOT include imports, browser launch, or "
+                f"browser.close() — those are already handled.\n"
+                f"- A variable named 'page' (a Playwright Page, "
+                f"already created) is available to use directly.\n"
+                f"- Use assert statements to verify the Expected "
+                f"Result.\n"
+                f"- Every line must be independently valid at zero "
+                f"indentation.\n"
+                f"- Playwright does NOT have a 'By' class — that is "
+                f"Selenium, a different library. NEVER write "
+                f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
+                f"are plain strings passed directly as the first "
+                f"argument.\n\n"
+                f"WRONG (Selenium-style, will not work):\n"
+                f"page.fill(By.ID, \"username\", \"myuser\")\n\n"
+                f"CORRECT (Playwright-style):\n"
+                f"page.fill(\"#username\", \"myuser\")\n\n"
+                f"{environment_block}"
+                f"If the exact URL for a step isn't clear from the "
+                f"test case, use 'https://REPLACE_WITH_ACTUAL_URL'.\n\n"
                 f"Test Case: {test_case.get('test_case', '')}\n"
                 f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
                 f"Steps: {test_case.get('steps', '')}\n"
                 f"Expected Result: {test_case.get('expected_result', '')}\n\n"
-                f"Return ONLY the Python code, no explanation before "
-                f"or after, no markdown code fences."
+                f"Example of the exact format expected:\n"
+                f"page.goto('https://example.com/login')\n"
+                f"page.fill('#username', 'myuser')\n"
+                f"page.click('#login-button')\n"
+                f"assert page.locator('#welcome').is_visible()\n\n"
+                f"Return ONLY the flat list of statements, one per "
+                f"line, no explanation, no markdown fences, no "
+                f"indentation, no function or block wrapper."
             )
 
         else:
@@ -163,6 +180,8 @@ class TestExecutionManager:
                 f"with brief comments explaining each step."
             )
 
+        max_repair_attempts = 2 if automation_type == "Playwright" else 0
+
         result = self.automation_generator.generate(
             requirement=requirement,
             domain=domain,
@@ -177,9 +196,57 @@ class TestExecutionManager:
                 result.get("error", "Automation generation failed.")
             )
 
-        script = result.get("automation_code", "")
+        raw_output = result.get("automation_code", "")
 
-        script = self._strip_code_fences(script)
+        if automation_type == "Playwright":
+
+            environment = self.environment_config.load()
+
+            base_url = environment.get("base_url") or (
+                "https://REPLACE_WITH_ACTUAL_URL"
+            )
+
+            script = self._build_playwright_script(
+                raw_output, base_url
+            )
+
+            valid, error = self._validate_python_syntax(script)
+
+            attempt = 0
+
+            while not valid and attempt < max_repair_attempts:
+
+                attempt += 1
+
+                self.logger.warning(
+                    f"Assembled script has invalid syntax "
+                    f"(repair attempt {attempt}/{max_repair_attempts}): "
+                    f"{error}"
+                )
+
+                # Only the BODY needs repairing — the wrapper
+                # structure around it is ours and is always correct.
+                raw_output = self._repair_script(raw_output, error)
+
+                script = self._build_playwright_script(
+                    raw_output, base_url
+                )
+
+                valid, error = self._validate_python_syntax(script)
+
+            if not valid:
+
+                raise RuntimeError(
+                    f"The AI's test steps could not be assembled "
+                    f"into valid Python after {max_repair_attempts} "
+                    f"repair attempts. Last error: {error}\n\n"
+                    f"Use View Script to fix it by hand and Save, "
+                    f"or try 'Update Automation' again."
+                )
+
+        else:
+
+            script = self._strip_code_fences(raw_output)
 
         self.repository.update_automation(
             test_case_id,
@@ -188,6 +255,166 @@ class TestExecutionManager:
         )
 
         return script
+
+
+    def _build_playwright_script(self, raw_steps_text, base_url):
+        """
+        Takes the AI's flat, unindented list of Playwright statements
+        and wraps it in a guaranteed-correct script structure — WE
+        control the indentation here, not the model, which is what
+        actually fixes the recurring IndentationError.
+        """
+
+        raw_steps_text = self._strip_code_fences(raw_steps_text)
+
+        # Lines the model might redundantly include despite
+        # instructions not to — drop them so we don't get duplicate
+        # browser setup/teardown or a broken nested structure.
+        boilerplate_markers = (
+            "import ", "def run", "def main", "if __name__",
+            "with sync_playwright", "playwright.chromium.launch",
+            "browser.close()", "browser = ", "print('test passed')",
+            "print(\"test passed\")", "page = browser.new_page",
+        )
+
+        body_lines = []
+
+        for raw_line in raw_steps_text.split("\n"):
+
+            line = raw_line.strip()
+
+            if not line:
+
+                continue
+
+            if any(
+                line.lower().startswith(marker)
+                for marker in boilerplate_markers
+            ):
+
+                continue
+
+            body_lines.append(line)
+
+        if not body_lines:
+
+            body_lines = [
+                "# AI did not return any usable steps — "
+                "edit this script manually."
+            ]
+
+        indented_body = "\n".join(
+            f"    {line}" for line in body_lines
+        )
+
+        return (
+            "from playwright.sync_api import sync_playwright\n\n"
+            "def run(playwright):\n"
+            "    browser = playwright.chromium.launch(headless=False)\n"
+            "    page = browser.new_page()\n"
+            f"    page.goto('{base_url}')\n"
+            f"{indented_body}\n"
+            "    browser.close()\n\n"
+            "if __name__ == '__main__':\n"
+            "    with sync_playwright() as playwright:\n"
+            "        run(playwright)\n"
+            "    print('TEST PASSED')\n"
+        )
+
+
+    def update_script(self, test_case_id, automation_type, script_text):
+        """
+        Saves a manually-edited script, without calling the AI.
+        """
+
+        self.repository.update_automation(
+            test_case_id,
+            automation_type,
+            script_text,
+        )
+
+
+    def check_script_syntax(self, script_text):
+        """
+        Returns None if valid, or an error description if not —
+        used by the Edit Script dialog to warn (not block) on save.
+        """
+
+        valid, error = self._validate_python_syntax(script_text)
+
+        return None if valid else error
+
+
+    def _repair_script(self, broken_script, error_description):
+        """
+        Shows the model the exact code it produced and the exact
+        syntax error, and asks it to fix ONLY that — this works far
+        better than blind resampling, since at low temperature the
+        model tends to reproduce the same mistake from the same
+        original prompt.
+        """
+
+        prompt = (
+            f"This Playwright test code has a problem: "
+            f"{error_description}\n\n"
+            f"{broken_script}\n\n"
+            f"Fix ONLY that specific problem. Keep every other line, "
+            f"selector, and value exactly the same. Return ONLY the "
+            f"corrected code, no explanation, no markdown code fences."
+        )
+
+        result = self.llm.generate(
+            prompt=prompt,
+            temperature=0.2,
+            max_tokens=1500,
+        )
+
+        if not result.get("success"):
+
+            # Couldn't even call the model for the repair — just
+            # return the broken script unchanged, the outer loop
+            # will report it as still-invalid.
+            return broken_script
+
+        return self._strip_code_fences(
+            result.get("response", "")
+        )
+
+
+    def _validate_python_syntax(self, script_text):
+
+        try:
+
+            ast.parse(script_text)
+
+        except SyntaxError as ex:
+
+            return False, f"Line {ex.lineno}: {ex.msg}"
+
+        # Syntactically valid Python can still be wrong in ways
+        # ast.parse() can't catch — this is a known, specific
+        # mistake the model makes: writing Selenium's By.ID/By.XPATH
+        # locators inside Playwright code, where 'By' doesn't exist
+        # and causes a NameError at runtime, not at file-write time.
+        selenium_leak = re.search(
+            r"\bBy\.(ID|XPATH|NAME|CLASS_NAME|CSS_SELECTOR|"
+            r"LINK_TEXT|TAG_NAME)\b",
+            script_text,
+        )
+
+        if selenium_leak:
+
+            return False, (
+                f"Uses Selenium's '{selenium_leak.group(0)}' locator, "
+                f"which doesn't exist in Playwright and causes "
+                f"NameError: name 'By' is not defined at runtime. "
+                f"Playwright selectors are plain strings, e.g. "
+                f"page.fill('#username', 'value') instead of "
+                f"page.fill(By.ID, 'username', 'value')."
+            )
+
+        return True, None
+
 
     def _strip_code_fences(self, text):
         """
