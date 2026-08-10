@@ -13,7 +13,7 @@ from datetime import datetime
 import json
 import sqlite3
 
-from Database.db_manager_v3 import DatabaseManager
+from Database.db_manager import DatabaseManager
 
 
 class MetadataManager:
@@ -37,9 +37,9 @@ class MetadataManager:
         analysis=None
     ):
 
-        self.get_or_create_domain(domain)
- 
-        self.get_or_create_module(domain, module)
+        domain_id = self.get_or_create_domain(domain)
+
+        module_id = self.get_or_create_module(domain, module)
 
         conn = self.db.get_connection()
 
@@ -114,13 +114,15 @@ class MetadataManager:
                 status,
                 created_date,
                 modified_date,
-                last_embedded
+                last_embedded,
+                domain_id,
+                module_id
             )
             VALUES
             (
                 ?,?,?,?,?,?,?,?,?,?,
                 ?,?,?,?,?,?,?,?,?,?,
-                ?,?,?,?
+                ?,?,?,?,?,?
             )
             """,
             (
@@ -166,7 +168,11 @@ class MetadataManager:
 
                 now,
 
-                None
+                None,
+
+                domain_id,
+
+                module_id
             )
         )
 
@@ -890,22 +896,7 @@ class MetadataManager:
 
         conn.close()
 
-        print("Domain:", domain_name)
-        print("Modules:", modules)
-
         return modules
-    # ==================================================
-
-    # PATCH — AI/Core/metadata_manager.py
-#
-# Add this method to the MetadataManager class, right after
-# list_modules(self, domain_name) (around line 828, just before
-# "def get_module(self, module_id):").
-#
-# It gives the QA Engineering screen a proper way to list the
-# Knowledge Names that exist under a given Domain + Module, using
-# the same query already duplicated in manage_knowledge_page.py —
-# centralizing it here so both screens can share it.
 
     # ==================================================
 
@@ -1196,6 +1187,42 @@ class MetadataManager:
     # Update Knowledge Item
     # --------------------------------------------------
  
+    def _get_current_domain(self, knowledge_id):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT domain FROM knowledge_items WHERE id=?",
+            (knowledge_id,)
+        )
+
+        row = cursor.fetchone()
+
+        conn.close()
+
+        return row[0] if row else ""
+
+
+    def _get_current_module(self, knowledge_id):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT module FROM knowledge_items WHERE id=?",
+            (knowledge_id,)
+        )
+
+        row = cursor.fetchone()
+
+        conn.close()
+
+        return row[0] if row else ""
+
+
     def update_knowledge_item(self, knowledge_id, **fields):
         """
         Updates any subset of editable columns on a knowledge_items
@@ -1235,11 +1262,32 @@ class MetadataManager:
             for key, value in fields.items()
             if key in allowed_fields
         }
- 
+
         if not updates:
- 
+
             return False
- 
+
+        # Keep domain_id/module_id in sync if the editable text
+        # fields changed - every write path re-resolves them, so
+        # they never silently drift from the domain/module text.
+        if "domain" in updates or "module" in updates:
+
+            resolved_domain = updates.get(
+                "domain", self._get_current_domain(knowledge_id)
+            )
+
+            resolved_module = updates.get(
+                "module", self._get_current_module(knowledge_id)
+            )
+
+            updates["domain_id"] = self.get_or_create_domain(
+                resolved_domain
+            )
+
+            updates["module_id"] = self.get_or_create_module(
+                resolved_domain, resolved_module
+            )
+
         conn = self.db.get_connection()
  
         cursor = conn.cursor()

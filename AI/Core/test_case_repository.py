@@ -24,7 +24,7 @@ schema files.
 
 from datetime import datetime
 
-from Database.db_manager_v3 import DatabaseManager
+from Database.db_manager import DatabaseManager
 from Core.logger import Logger
 
 
@@ -37,6 +37,28 @@ class TestCaseRepository:
         self.logger = Logger.get_logger()
 
         self.ensure_schema()
+
+    # --------------------------------------------------
+    # Domain/Module ID resolution
+    # --------------------------------------------------
+
+    def _resolve_ids(self, domain, module):
+        """
+        Lazy import to avoid any import-order issues between this
+        module and metadata_manager.py — both are Core modules and
+        neither currently imports the other, but this keeps it safe
+        regardless of future changes.
+        """
+
+        from Core.metadata_manager import MetadataManager
+
+        metadata = MetadataManager()
+
+        domain_id = metadata.get_or_create_domain(domain)
+
+        module_id = metadata.get_or_create_module(domain, module)
+
+        return domain_id, module_id
 
     # --------------------------------------------------
     # Schema
@@ -60,6 +82,9 @@ class TestCaseRepository:
                 module TEXT NOT NULL,
                 knowledge_name TEXT NOT NULL,
                 version TEXT,
+
+                domain_id INTEGER,
+                module_id INTEGER,
 
                 scenario TEXT,
                 importance TEXT,
@@ -92,6 +117,22 @@ class TestCaseRepository:
             """
         )
 
+        # For a test_cases table that already existed before these
+        # columns were added — CREATE TABLE IF NOT EXISTS above is
+        # a no-op on an existing table, so this catches it.
+        for migration in (
+            "ALTER TABLE test_cases ADD COLUMN domain_id INTEGER",
+            "ALTER TABLE test_cases ADD COLUMN module_id INTEGER",
+        ):
+
+            try:
+
+                cursor.execute(migration)
+
+            except Exception:
+
+                pass
+
         conn.commit()
 
         conn.close()
@@ -120,6 +161,8 @@ class TestCaseRepository:
 
             return []
 
+        domain_id, module_id = self._resolve_ids(domain, module)
+
         conn = self.db.get_connection()
 
         cursor = conn.cursor()
@@ -146,13 +189,14 @@ class TestCaseRepository:
                     INSERT INTO test_cases
                     (
                         tc_number, domain, module, knowledge_name, version,
+                        domain_id, module_id,
                         scenario, importance, test_type, test_case,
                         pre_conditions, steps, expected_result,
                         status, automation_type, last_result,
                         created_date, modified_date
                     )
                     VALUES
-                    (?,?,?,?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?)
+                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?)
                     """,
                     (
                         tc_number,
@@ -160,6 +204,8 @@ class TestCaseRepository:
                         module,
                         knowledge_name,
                         version or "",
+                        domain_id,
+                        module_id,
                         row.get("scenario", ""),
                         row.get("importance", ""),
                         row.get("test_type", ""),

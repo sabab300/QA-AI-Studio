@@ -1,13 +1,23 @@
+# Replace: AI/Database/db_manager.py
+
+"""
+QA AI Studio
+Database Manager
+
+Version: 3.0  (Unified — Phase 1 Consistency)
+
+This is now the ONLY DatabaseManager. db_manager_v3.py is deleted —
+having two DatabaseManager classes pointed at the same physical
+file, each creating a different subset of tables, was the root of
+several bugs already fixed this project (wrong-column data, Smart
+Upload domain/module never registering). Everything now imports
+from here.
+"""
+
 import sqlite3
 from pathlib import Path
 
-from Database.schema import (
-    KNOWLEDGE_ITEMS_TABLE,
-    KNOWLEDGE_TAGS_TABLE,
-    EMBEDDING_QUEUE_TABLE,
-    KNOWLEDGE_VERSIONS_TABLE,
-    KNOWLEDGE_ITEMS_MIGRATION
-)
+from Database.schema import ALL_TABLES, KNOWLEDGE_ITEMS_MIGRATION
 
 
 class DatabaseManager:
@@ -16,41 +26,57 @@ class DatabaseManager:
 
         db_folder = Path("Database")
         db_folder.mkdir(exist_ok=True)
-        
+
         self.db_path = db_folder / "metadata.db"
 
-        
     def get_connection(self):
 
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        return conn
 
     def initialize_database(self):
+        """
+        Creates every table the app needs, if it doesn't already
+        exist, and applies any column migrations. Safe to call on
+        every single app startup — this IS meant to run every time,
+        not once.
+        """
 
         conn = self.get_connection()
 
         cursor = conn.cursor()
 
-        cursor.execute(KNOWLEDGE_ITEMS_TABLE)
+        try:
 
-        for migration in KNOWLEDGE_ITEMS_MIGRATION:
+            for statement in ALL_TABLES:
 
-            try:
-                cursor.execute(migration)
+                cursor.execute(statement)
 
-            except sqlite3.OperationalError:
+            for migration in KNOWLEDGE_ITEMS_MIGRATION:
 
-                pass
+                try:
 
-        cursor.execute(KNOWLEDGE_VERSIONS_TABLE)
+                    cursor.execute(migration)
 
-        cursor.execute(KNOWLEDGE_TAGS_TABLE)
+                except sqlite3.OperationalError:
 
-        cursor.execute(EMBEDDING_QUEUE_TABLE)
+                    # Column already exists — expected on every
+                    # run after the first.
+                    pass
 
-        conn.commit()
+            conn.commit()
 
-        conn.close()
+        except Exception:
+
+            conn.rollback()
+
+            raise
+
+        finally:
+
+            conn.close()
 
         print("Metadata database initialized successfully.")
-
-        

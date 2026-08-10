@@ -29,6 +29,7 @@ if str(APP_DIR) not in sys.path:
 # --------------------------------------------------
 
 from UI.Main.main_window import MainWindow
+from Database.db_manager import DatabaseManager
 
 
 def load_stylesheet(app):
@@ -55,6 +56,15 @@ def main():
     app.setApplicationName("QA AI Studio")
     app.setOrganizationName("Pakistan Single Window")
     app.setApplicationVersion("1.0")
+
+    # Critical fix (Phase 1 consistency pass): this was never being
+    # called anywhere before. The app only worked because
+    # Database/metadata.db already had tables in it from an older,
+    # since-removed code path — a fresh install or a deleted DB file
+    # would have crashed immediately. This makes schema creation
+    # part of every actual app startup, and is safe to run every
+    # time (only creates what's missing).
+    DatabaseManager().initialize_database()
 
     load_stylesheet(app)
 
