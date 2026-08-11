@@ -91,6 +91,7 @@ from Core.metadata_manager import MetadataManager
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
 from UI.KnowledgeHub.upload_worker import UploadWorker
 from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
+from UI.KnowledgeHub.url_discovery_worker import URLDiscoveryWorker
 
 
 # Extensions the backend TextExtractor can actually read.
@@ -154,6 +155,10 @@ class SmartUploadPage(QWidget):
         self.url_authentication_thread = None
         self.url_authentication_worker = None
         self.url_authenticated_session = None
+
+        self.url_discovery_thread = None
+        self.url_discovery_worker = None
+        self.url_discovery_result = None
 
 
     # ======================================================
@@ -1610,68 +1615,68 @@ class SmartUploadPage(QWidget):
         self.url_authentication_thread.start()
 
     def on_url_authentication_finished(self, result):
+        """
+        Development #2D
 
-        if not isinstance(result, dict):
+        Start real Playwright URL discovery after
+        authentication succeeds.
+        """
 
-            self.on_url_authentication_error(
-                "Invalid authentication response."
-            )
+        try:
 
-            return
+            if not isinstance(result, dict):
 
-        if not result.get("success"):
-
-            message = result.get(
-                "error",
-                "Authentication failed.",
-            )
-
-            if result.get(
-                "authentication_pending"
-            ):
-
-                message += (
-                    "\n\nThe application may require "
-                    "MFA, CAPTCHA, OTP, or another "
-                    "interactive authentication step."
+                self.log.append(
+                    "Invalid authentication result."
                 )
 
+                return
+
+            if not result.get("success", False):
+
+                error = result.get(
+                    "error",
+                    "Authentication failed."
+                )
+
+                self.log.append(
+                    f"Authentication failed: {error}"
+                )
+
+                QMessageBox.critical(
+                    self,
+                    "Authentication Failed",
+                    error
+                )
+
+                self._restore_url_controls()
+
+                return
+
             self.log.append(
-                f"Authenticated Playwright access failed: {message}"
+                "Authenticated Playwright session "
+                "created successfully."
             )
 
-            QMessageBox.warning(
+            self.log.append(
+                "Starting authenticated URL discovery..."
+            )
+
+            self.start_authenticated_url_discovery(
+                result
+            )
+
+        except Exception as ex:
+
+            self.log.append(
+                f"Authenticated discovery start failed: {ex}"
+            )
+
+            QMessageBox.critical(
                 self,
-                "Authentication Required",
-                message,
+                "URL Discovery Error",
+                str(ex)
             )
-
-            self._restore_url_controls()
-
-            return
-
-        self.url_authenticated_session = result
-
-        # Never log credentials or storage-state contents.
-
-        self.log.append(
-            "Authenticated Playwright session created successfully."
-        )
-
-        self.summary.append(
-            "Authentication successful.\n"
-            "Authenticated Playwright session is ready "
-            "for URL discovery."
-        )
-
-        self.log.append(
-            "Ready for authenticated Playwright discovery."
-        )
-
-        self._start_authenticated_url_discovery(
-            result
-        )
-
 
     def on_url_authentication_error(self, message):
 
@@ -1781,4 +1786,254 @@ class SmartUploadPage(QWidget):
 
         self.url_access_thread = None
         self.url_access_worker = None
-    
+
+    def start_authenticated_url_discovery(
+        self,
+        authentication_result,
+    ):
+        """
+        Start real authenticated Playwright discovery.
+
+        Credentials remain memory-only.
+        """
+
+        if self.url_discovery_thread is not None:
+
+            self.log.append(
+                "URL discovery is already running."
+            )
+
+            return
+
+        url = (
+            authentication_result.get(
+                "requested_url"
+            )
+            or authentication_result.get(
+                "url"
+            )
+            or self.selected_url
+            or ""
+        )
+
+        authentication_type = (
+            authentication_result.get(
+                "authentication_type"
+            )
+            or authentication_result.get(
+                "authentication"
+            )
+            or "NONE"
+        )
+
+        credentials = (
+            authentication_result.get(
+                "credentials"
+            )
+            or getattr(
+                self,
+                "url_credentials",
+                {}
+            )
+            or {}
+        )
+
+        if not url:
+
+            QMessageBox.warning(
+                self,
+                "URL Discovery",
+                "No URL is available for discovery."
+            )
+
+            return
+
+        self.log.append(
+            f"Starting authenticated Playwright discovery: {url}"
+        )
+
+        self.url_discovery_thread = QThread()
+
+        self.url_discovery_worker = URLDiscoveryWorker(
+            url=url,
+            credentials=credentials,
+            authentication_type=authentication_type,
+            headless=True,
+        )
+
+        self.url_discovery_worker.moveToThread(
+            self.url_discovery_thread
+        )
+
+        self.url_discovery_thread.started.connect(
+            self.url_discovery_worker.run
+        )
+
+        self.url_discovery_worker.finished.connect(
+            self.on_url_discovery_finished
+        )
+
+        self.url_discovery_worker.error.connect(
+            self.on_url_discovery_error
+        )
+
+        self.url_discovery_worker.finished.connect(
+            self.url_discovery_thread.quit
+        )
+
+        self.url_discovery_worker.error.connect(
+            self.url_discovery_thread.quit
+        )
+
+        self.url_discovery_thread.finished.connect(
+            self.cleanup_url_discovery_thread
+        )
+
+        self.url_discovery_thread.start()
+
+    def on_url_discovery_finished(
+        self,
+        result,
+    ):
+        """
+        Handle real Playwright discovery result.
+        """
+
+        try:
+
+            self.url_discovery_result = result
+
+            if not result.get(
+                "success",
+                False
+            ):
+
+                error = result.get(
+                    "error",
+                    "URL discovery failed."
+                )
+
+                self.log.append(
+                    f"URL discovery failed: {error}"
+                )
+
+                QMessageBox.critical(
+                    self,
+                    "URL Discovery Failed",
+                    error
+                )
+
+                self._restore_url_controls()
+
+                return
+
+            pages = result.get(
+                "pages",
+                []
+            )
+
+            fields = result.get(
+                "fields",
+                []
+            )
+
+            buttons = result.get(
+                "buttons",
+                []
+            )
+
+            links = result.get(
+                "links",
+                []
+            )
+
+            forms = result.get(
+                "forms",
+                []
+            )
+
+            tabs = result.get(
+                "tabs",
+                []
+            )
+
+            navigation = result.get(
+                "navigation",
+                []
+            )
+
+            self.log.append(
+                "Authenticated Playwright discovery completed."
+            )
+
+            self.log.append(
+                f"Pages discovered: {len(pages)}"
+            )
+
+            self.log.append(
+                f"Forms discovered: {len(forms)}"
+            )
+
+            self.log.append(
+                f"Fields discovered: {len(fields)}"
+            )
+
+            self.log.append(
+                f"Buttons discovered: {len(buttons)}"
+            )
+
+            self.log.append(
+                f"Links discovered: {len(links)}"
+            )
+
+            self.log.append(
+                f"Tabs discovered: {len(tabs)}"
+            )
+
+            self.log.append(
+                f"Navigation targets: {len(navigation)}"
+            )
+
+            self.summary.append(
+                "Authenticated Playwright discovery completed.\n"
+                f"Pages: {len(pages)}\n"
+                f"Forms: {len(forms)}\n"
+                f"Fields: {len(fields)}\n"
+                f"Buttons: {len(buttons)}\n"
+                f"Links: {len(links)}\n"
+                f"Tabs: {len(tabs)}"
+            )
+
+            self.log.append(
+                "Discovered UI knowledge is ready "
+                "for Knowledge Hub processing."
+            )
+
+            self._restore_url_controls()
+
+        except Exception as ex:
+
+            self.log.append(
+                f"Discovery result processing failed: {ex}"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Discovery Error",
+                str(ex)
+            )
+
+            self._restore_url_controls()
+
+    def cleanup_url_discovery_thread(self):
+
+        if self.url_discovery_worker is not None:
+
+            self.url_discovery_worker.deleteLater()
+
+        if self.url_discovery_thread is not None:
+
+            self.url_discovery_thread.deleteLater()
+
+        self.url_discovery_worker = None
+        self.url_discovery_thread = None
