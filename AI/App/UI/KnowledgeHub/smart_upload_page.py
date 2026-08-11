@@ -83,6 +83,10 @@ from UI.KnowledgeHub.url_access_dialogs import (
     CredentialsDialog,
 )
 
+from UI.KnowledgeHub.url_authentication_worker import (
+    URLAuthenticationWorker,
+)
+
 from Core.metadata_manager import MetadataManager
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
 from UI.KnowledgeHub.upload_worker import UploadWorker
@@ -146,6 +150,10 @@ class SmartUploadPage(QWidget):
         self.url_analysis = None
         self.url_credentials = None
         self.selected_url = ""
+
+        self.url_authentication_thread = None
+        self.url_authentication_worker = None
+        self.url_authenticated_session = None
 
 
     # ======================================================
@@ -1522,23 +1530,172 @@ class SmartUploadPage(QWidget):
     def authenticate_url_with_credentials(
         self,
         result,
-        credentials
+        credentials,
     ):
         """
-        Authentication entry point.
-
-        Step 4-D will connect this method to the Playwright
-        authentication worker and persistent browser context.
+        Start real authenticated Playwright authentication.
+        Credentials remain memory-only.
         """
 
-        self.url_analysis_result = result
+        if self.url_authentication_thread is not None:
 
+            return
+
+        self.url_analysis_result = result
         self.url_credentials = credentials
 
-        self.log.append(
-            "Authenticated Playwright session is ready to be "
-            "connected to the authentication worker."
+        url = (
+            result.get("requested_url")
+            or result.get("final_url")
+            or self.selected_url
         )
+
+        if not url:
+
+            QMessageBox.critical(
+                self,
+                "Authentication",
+                "No URL is available for authentication.",
+            )
+
+            return
+
+        self.log.append(
+            "Starting authenticated Playwright access..."
+        )
+
+        self.url_authentication_thread = QThread()
+
+        self.url_authentication_worker = (
+            URLAuthenticationWorker(
+                url=url,
+                analysis=result,
+                credentials=credentials,
+                headless=False,
+            )
+        )
+
+        self.url_authentication_worker.moveToThread(
+            self.url_authentication_thread
+        )
+
+        self.url_authentication_thread.started.connect(
+            self.url_authentication_worker.run
+        )
+
+        self.url_authentication_worker.progress.connect(
+            self.log.append
+        )
+
+        self.url_authentication_worker.finished.connect(
+            self.on_url_authentication_finished
+        )
+
+        self.url_authentication_worker.error.connect(
+            self.on_url_authentication_error
+        )
+
+        self.url_authentication_worker.finished.connect(
+            self.url_authentication_thread.quit
+        )
+
+        self.url_authentication_worker.error.connect(
+            self.url_authentication_thread.quit
+        )
+
+        self.url_authentication_thread.finished.connect(
+            self.cleanup_url_authentication_thread
+        )
+
+        self.url_authentication_thread.start()
+
+    def on_url_authentication_finished(self, result):
+
+        if not isinstance(result, dict):
+
+            self.on_url_authentication_error(
+                "Invalid authentication response."
+            )
+
+            return
+
+        if not result.get("success"):
+
+            message = result.get(
+                "error",
+                "Authentication failed.",
+            )
+
+            if result.get(
+                "authentication_pending"
+            ):
+
+                message += (
+                    "\n\nThe application may require "
+                    "MFA, CAPTCHA, OTP, or another "
+                    "interactive authentication step."
+                )
+
+            self.log.append(
+                f"Authenticated Playwright access failed: {message}"
+            )
+
+            QMessageBox.warning(
+                self,
+                "Authentication Required",
+                message,
+            )
+
+            self._restore_url_controls()
+
+            return
+
+        self.url_authenticated_session = result
+
+        # Never log credentials or storage-state contents.
+
+        self.log.append(
+            "Authenticated Playwright session created successfully."
+        )
+
+        self.summary.append(
+            "Authentication successful.\n"
+            "Authenticated Playwright session is ready "
+            "for URL discovery."
+        )
+
+        self.log.append(
+            "Ready for authenticated Playwright discovery."
+        )
+
+        self._start_authenticated_url_discovery(
+            result
+        )
+
+
+    def on_url_authentication_error(self, message):
+
+        self.log.append(
+            f"Authenticated Playwright error: {message}"
+        )
+
+        QMessageBox.critical(
+            self,
+            "Authenticated Playwright Failed",
+            message,
+        )
+
+        self._restore_url_controls()
+
+
+    def cleanup_url_authentication_thread(self):
+
+        if self.url_authentication_thread:
+
+            self.url_authentication_thread.deleteLater()
+
+        self.url_authentication_thread = None
+        self.url_authentication_worker = None
 
     def request_url_credentials(self, result):
         """Ask for credentials detected by the analyzer."""
