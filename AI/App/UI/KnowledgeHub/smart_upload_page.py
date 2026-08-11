@@ -2025,6 +2025,21 @@ class SmartUploadPage(QWidget):
 
             self._restore_url_controls()
 
+    def on_url_discovery_error(self, message):
+        """Handle authenticated URL discovery worker errors."""
+
+        self.log.append(
+            f"Authenticated discovery failed: {message}"
+        )
+
+        QMessageBox.critical(
+            self,
+            "URL Discovery Error",
+            str(message),
+        )
+
+        self.cleanup_url_discovery_thread()
+
     def cleanup_url_discovery_thread(self):
 
         if self.url_discovery_worker is not None:
