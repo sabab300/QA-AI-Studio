@@ -642,16 +642,13 @@ class URLAccessAnalyzer:
         html: str,
         fields: List[DetectedField],
     ):
-
         evidence: List[str] = []
 
-        requested_host = urlparse(
-            requested_url
-        ).netloc.lower()
+        requested = urlparse(requested_url)
+        final = urlparse(final_url)
 
-        final_host = urlparse(
-            final_url
-        ).netloc.lower()
+        requested_host = requested.netloc.lower()
+        final_host = final.netloc.lower()
 
         text = " ".join(
             [
@@ -698,17 +695,25 @@ class URLAccessAnalyzer:
         )
 
         redirected_to_other_host = (
-            requested_host
-            and final_host
+            bool(requested_host)
+            and bool(final_host)
             and requested_host != final_host
         )
+
+        # ---------------------------------------------------------
+        # Redirect evidence
+        # ---------------------------------------------------------
 
         if redirected_to_other_host:
 
             evidence.append(
-                f"Navigation redirected from {requested_host} "
-                f"to {final_host}."
+                f"Navigation redirected from "
+                f"{requested_host} to {final_host}."
             )
+
+        # ---------------------------------------------------------
+        # Field evidence
+        # ---------------------------------------------------------
 
         if has_password:
             evidence.append(
@@ -730,30 +735,85 @@ class URLAccessAnalyzer:
                 "Token/API-key authentication evidence detected."
             )
 
-        if sso_detected or redirected_to_other_host:
+        # ---------------------------------------------------------
+        # SSO evidence
+        # ---------------------------------------------------------
+
+        if sso_detected:
             evidence.append(
-                "Possible SSO authentication detected."
+                "SSO authentication indicators detected."
             )
+
+        # ---------------------------------------------------------
+        # Strong login form
+        # ---------------------------------------------------------
 
         if has_password and (
             has_login_id or has_login_submit
         ):
+
             return "LOGIN_FORM", evidence
 
-        if sso_detected and (
-            login_words_detected
+        # ---------------------------------------------------------
+        # Strong SSO detection
+        # ---------------------------------------------------------
+
+        sso_url_indicators = (
+            "sso",
+            "login",
+            "signin",
+            "sign-in",
+            "auth",
+            "oauth",
+            "authorize",
+            "openid",
+            "saml",
+            "adfs",
+            "identity",
+            "account",
+        )
+
+        final_url_has_auth_indicator = any(
+            indicator in final_url.lower()
+            for indicator in sso_url_indicators
+        )
+
+        if (
+            sso_detected
             or redirected_to_other_host
+            or final_url_has_auth_indicator
         ):
+
+            evidence.append(
+                "Authentication/SSO flow detected "
+                "from navigation or page indicators."
+            )
+
             return "SSO", evidence
 
+        # ---------------------------------------------------------
+        # Token
+        # ---------------------------------------------------------
+
         if has_token or token_words_detected:
+
             return "TOKEN", evidence
+
+        # ---------------------------------------------------------
+        # Login language without visible fields
+        # ---------------------------------------------------------
 
         if login_words_detected and (
             has_login_submit
-            or "login" in final_url.lower()
+            or final_url_has_auth_indicator
         ):
-            return "UNKNOWN", evidence
+
+            evidence.append(
+                "Login indicators detected but "
+                "credentials fields were not directly visible."
+            )
+
+            return "SSO", evidence
 
         return "NONE", evidence
 
@@ -779,7 +839,6 @@ class URLAccessAnalyzer:
             return "PUBLIC"
 
         return "ACCESS_FAILED"
-
 
 # Backwards-friendly alias for future service wiring.
 AccessAnalyzer = URLAccessAnalyzer
