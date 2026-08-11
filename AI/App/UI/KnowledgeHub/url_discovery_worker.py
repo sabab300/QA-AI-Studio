@@ -44,3 +44,48 @@ class URLDiscoveryWorker(QObject):
 
         except Exception as ex:
             self.error.emit(str(ex))
+
+    def _dismiss_blocking_modals(self, page):
+        """Dismiss known blocking modal/overlay dialogs before discovery."""
+
+        selectors = [
+            "button:has-text('Close')",
+            "button:has-text('OK')",
+            "button:has-text('Got it')",
+            "[aria-label='Close']",
+            "[aria-label='close']",
+            ".modal button.close",
+            ".modal .btn-close",
+            ".SecurityAwarenessModal button",
+            ".SecurityAwarenessModal_close",
+        ]
+
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+
+                count = locator.count()
+
+                if count == 0:
+                    continue
+
+                for index in range(count):
+                    button = locator.nth(index)
+
+                    if button.is_visible(timeout=1000):
+                        button.click(
+                            timeout=3000,
+                            force=True,
+                        )
+
+                        page.wait_for_timeout(500)
+
+            except Exception:
+                continue
+
+        # Generic visible modal/backdrop cleanup
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
