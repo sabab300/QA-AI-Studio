@@ -55,7 +55,9 @@ Fix Notes (v3.0):
 """
 
 from pathlib import Path
+
 from PySide6.QtCore import QThread
+
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -73,20 +75,13 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QInputDialog,
-    QDialog,
-    QDialogButtonBox,
-)
-
-from UI.KnowledgeHub.url_access_worker import URLAccessAnalyzerWorker
-from UI.KnowledgeHub.url_access_dialogs import (
-    URLInputDialog,
-    CredentialsDialog,
 )
 
 from Core.metadata_manager import MetadataManager
+
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
+
 from UI.KnowledgeHub.upload_worker import UploadWorker
-from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
 
 
 # Extensions the backend TextExtractor can actually read.
@@ -134,18 +129,18 @@ class SmartUploadPage(QWidget):
         self.analysis_results = {}
 
         self.analysis_thread = None
-        self.analysis_worker = None
-        self.upload_thread = None
-        self.upload_worker = None
-        self.metadata = MetadataManager()
-        self.build_ui()
-        self.set_fields_enabled(False)
 
-        self.url_access_thread = None
-        self.url_access_worker = None
-        self.url_analysis = None
-        self.url_credentials = None
-        self.selected_url = ""
+        self.analysis_worker = None
+
+        self.upload_thread = None
+
+        self.upload_worker = None
+
+        self.metadata = MetadataManager()
+
+        self.build_ui()
+
+        self.set_fields_enabled(False)
 
 
     # ======================================================
@@ -487,7 +482,9 @@ class SmartUploadPage(QWidget):
             self.select_folder
         )
 
-        self.url_btn.clicked.connect(self.start_url_access_flow)
+        self.url_btn.clicked.connect(
+            lambda: self.connector_coming_soon("URL")
+        )
 
         self.api_btn.clicked.connect(
             lambda: self.connector_coming_soon("API Collection")
@@ -1236,392 +1233,3 @@ class SmartUploadPage(QWidget):
         self.refresh_files()
 
         self.reset_analysis_state()
-
-    # 5) Add these methods inside SmartUploadPage:
-
-    def start_url_access_flow(self):
-        """Open URL-only popup, then analyze access in a worker thread."""
-
-        if self.url_access_thread is not None:
-            QMessageBox.information(
-                self,
-                "QA AI Studio",
-                "URL analysis is already running."
-            )
-            return
-
-        dialog = URLInputDialog(self)
-
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        url = dialog.url()
-
-        self.selected_url = url
-
-        # Freeze metadata fields while URL access analysis is running.
-        self.set_fields_enabled(False)
-
-        self.url_btn.setEnabled(False)
-        self.file_btn.setEnabled(False)
-        self.folder_btn.setEnabled(False)
-        self.api_btn.setEnabled(False)
-        self.sql_btn.setEnabled(False)
-        self.image_btn.setEnabled(False)
-        self.analyze_btn.setEnabled(False)
-        self.upload_btn.setEnabled(False)
-
-        self.file_list.clear()
-        self.file_list.addItem(f"URL: {url}")
-
-        self.log.append(
-            f"Starting URL access analysis: {url}"
-        )
-
-        self.url_access_thread = QThread()
-
-        self.url_access_worker = URLAccessAnalyzerWorker(
-            url=url,
-            headless=True,
-        )
-
-        self.url_access_worker.moveToThread(
-            self.url_access_thread
-        )
-
-        self.url_access_thread.started.connect(
-            self.url_access_worker.run
-        )
-
-        self.url_access_worker.finished.connect(
-            self.on_url_analysis_finished
-        )
-
-        self.url_access_worker.error.connect(
-            self.on_url_access_analysis_error
-        )
-
-        self.url_access_worker.finished.connect(
-            self.url_access_thread.quit
-        )
-
-        self.url_access_worker.error.connect(
-            self.url_access_thread.quit
-        )
-
-        self.url_access_thread.finished.connect(
-            self.cleanup_url_access_thread
-        )
-
-        self.url_access_thread.start()
-
-
-    def on_url_analysis_finished(self, result):
-        """Handle normalized URL access-analysis result."""
-
-        try:
-            if not isinstance(result, dict):
-                raise ValueError(
-                    "Invalid response received from URL Access Analyzer."
-                )
-
-            status = str(
-                result.get("access_status", "")
-            ).strip().upper()
-
-            authentication = str(
-                result.get("authentication_type", "")
-            ).strip().upper()
-
-            authentication_required = bool(
-                result.get("authentication_required", False)
-            )
-
-            self.log.append(
-                f"URL Analyzer Result: {result}"
-            )
-
-            self.log.append(
-                f"URL analyzed successfully. "
-                f"Status={status or 'UNKNOWN'}; "
-                f"Authentication={authentication or 'UNKNOWN'}"
-            )
-
-            # ==================================================
-            # AUTHENTICATION REQUIRED
-            # ==================================================
-
-            if (
-                authentication_required
-                or status in ("AUTH_REQUIRED", "LOGIN_REQUIRED")
-                or authentication in (
-                    "LOGIN_FORM",
-                    "LOGIN",
-                    "PASSWORD",
-                    "TOKEN",
-                    "SSO",
-                    "AUTH_REQUIRED",
-                    "LOGIN_REQUIRED",
-                )
-            ):
-
-                self.log.append(
-                    "Authentication detected. "
-                    "Credential information is required."
-                )
-
-                credential_fields = result.get(
-                    "credential_fields"
-                ) or []
-
-                if not credential_fields:
-                    credential_fields = [
-                        "Login ID",
-                        "Password",
-                    ]
-
-                dialog = URLCredentialsDialog(
-                    credential_fields=credential_fields,
-                    parent=self,
-                )
-
-                if dialog.exec() != QDialog.Accepted:
-
-                    self.log.append(
-                        "URL authentication cancelled by user."
-                    )
-
-                    self._restore_url_controls()
-                    return
-
-                credentials = dialog.get_credentials()
-
-                if not credentials:
-
-                    QMessageBox.warning(
-                        self,
-                        "Authentication Required",
-                        "Please provide the required credentials.",
-                    )
-
-                    self._restore_url_controls()
-                    return
-
-                self.log.append(
-                    "Credentials received. "
-                    "Starting authenticated Playwright access..."
-                )
-
-                self.authenticate_url_with_credentials(
-                    result,
-                    credentials,
-                )
-
-                return
-
-            # ==================================================
-            # PUBLIC / NO AUTHENTICATION
-            # ==================================================
-
-            if status in (
-                "PUBLIC",
-                "ACCESSIBLE",
-                "SUCCESS",
-            ) or authentication in (
-                "",
-                "NONE",
-                "PUBLIC",
-                "NO_AUTH",
-                "NO AUTH",
-            ):
-
-                self.log.append(
-                    "URL is publicly accessible and ready "
-                    "for Playwright discovery."
-                )
-
-                self.handle_authenticated_url(
-                    result,
-                    credentials=None,
-                )
-
-                return
-
-            # ==================================================
-            # UNKNOWN / FAILED
-            # ==================================================
-
-            self.log.append(
-                f"URL access could not be classified. "
-                f"Status={status or 'UNKNOWN'}; "
-                f"Authentication={authentication or 'UNKNOWN'}"
-            )
-
-            QMessageBox.warning(
-                self,
-                "URL Access Analysis",
-                "QA AI Studio could not determine the URL "
-                "authentication state.",
-            )
-
-            self._restore_url_controls()
-
-        except Exception as ex:
-
-            self.log.append(
-                f"URL analysis result handling failed: {ex}"
-            )
-
-            QMessageBox.critical(
-                self,
-                "URL Access Analysis Failed",
-                str(ex),
-            )
-
-            self._restore_url_controls()
-
-    def handle_authenticated_url(
-        self,
-        result,
-        credentials=None
-    ):
-        """
-        Continue URL processing after successful/public access.
-
-        The actual Playwright discovery/session workflow will be
-        connected in the next development step.
-        """
-
-        url = str(
-            result.get("url", "")
-        ).strip()
-
-        if not url:
-
-            QMessageBox.warning(
-                self,
-                "URL Discovery",
-                "No URL was returned by the Access Analyzer."
-            )
-
-            return
-
-        self.log.append(
-            f"URL ready for Playwright discovery: {url}"
-        )
-
-        # Store the successful URL analysis result for the
-        # next discovery stage.
-        self.url_analysis_result = result
-
-        self.url_credentials = credentials
-
-        # Next development step will start authenticated/
-        # public Playwright discovery using this result.
-
-    def authenticate_url_with_credentials(
-        self,
-        result,
-        credentials
-    ):
-        """
-        Authentication entry point.
-
-        Step 4-D will connect this method to the Playwright
-        authentication worker and persistent browser context.
-        """
-
-        self.url_analysis_result = result
-
-        self.url_credentials = credentials
-
-        self.log.append(
-            "Authenticated Playwright session is ready to be "
-            "connected to the authentication worker."
-        )
-
-    def request_url_credentials(self, result):
-        """Ask for credentials detected by the analyzer."""
-
-        dialog = CredentialsDialog(result, self)
-
-        if dialog.exec() != QDialog.Accepted:
-            self.log.append(
-                "Authentication information was not provided."
-            )
-            self._restore_url_controls()
-            return
-
-        # MEMORY ONLY.
-        self.url_credentials = dialog.credentials()
-
-        self.log.append(
-            "Authentication information collected in memory. "
-            "Credentials were not persisted."
-        )
-
-        # Development #2 ends at UI collection. The authenticated
-        # Playwright session/discovery worker is the next backend phase.
-        self._url_access_ready(result, credentials_collected=True)
-
-
-    def _url_access_ready(self, result, credentials_collected=False):
-        """
-        Mark URL source as ready for the next authenticated/discovery phase.
-
-        No credential is stored in metadata or vector storage here.
-        """
-
-        if credentials_collected:
-            self.log.append(
-                "URL is ready for authenticated Playwright discovery."
-            )
-            self.summary.append(
-                "Authentication information accepted for this session. "
-                "Authenticated URL discovery is ready to start."
-            )
-        else:
-            self.log.append(
-                "URL is publicly accessible and ready for Playwright discovery."
-            )
-
-        # Allow normal metadata editing after access analysis.
-        self.set_fields_enabled(True)
-
-        self.analyze_btn.setEnabled(False)
-        self.upload_btn.setEnabled(False)
-        self.url_btn.setEnabled(True)
-
-
-    def on_url_access_analysis_error(self, message):
-        self.log.append(
-            f"URL access analyzer error: {message}"
-        )
-
-        QMessageBox.critical(
-            self,
-            "URL Access Analyzer Error",
-            message
-        )
-
-        self._restore_url_controls()
-
-
-    def _restore_url_controls(self):
-        self.url_btn.setEnabled(True)
-        self.file_btn.setEnabled(True)
-        self.folder_btn.setEnabled(True)
-        self.api_btn.setEnabled(True)
-        self.sql_btn.setEnabled(True)
-        self.image_btn.setEnabled(True)
-
-        self.set_fields_enabled(True)
-
-
-    def cleanup_url_access_thread(self):
-        if self.url_access_thread:
-            self.url_access_thread.deleteLater()
-
-        self.url_access_thread = None
-        self.url_access_worker = None
-    
