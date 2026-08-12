@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from Core.logger import Logger
 
@@ -64,6 +64,7 @@ class AccessAnalysis:
     redirect_chain: Optional[List[str]] = None
     detected_fields: Optional[List[Dict[str, Any]]] = None
     evidence: Optional[List[str]] = None
+    login_link_candidates: Optional[List[Dict[str, str]]] = None
     error: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -253,6 +254,28 @@ class URLAccessAnalyzer:
                     fields=fields,
                 )
 
+                # Only worth looking for a login link when this page
+                # itself wasn't classified as the login gate — if it
+                # already IS one (LOGIN_FORM/SSO/TOKEN), login_url
+                # above is the authoritative answer.
+                login_link_candidates = (
+                    self._find_login_link_candidates(
+                        page, final_url
+                    )
+                    if auth_type == "NONE"
+                    else []
+                )
+
+                if auth_type == "NONE" and not login_link_candidates:
+
+                    click_result = self._probe_login_via_click(
+                        page, final_url
+                    )
+
+                    if click_result:
+
+                        login_link_candidates = [click_result]
+
                 result = AccessAnalysis(
                     success=True,
                     requested_url=requested_url,
@@ -268,6 +291,7 @@ class URLAccessAnalyzer:
                         asdict(field) for field in fields
                     ],
                     evidence=evidence,
+                    login_link_candidates=login_link_candidates,
                 )
 
                 context.close()
@@ -466,6 +490,240 @@ class URLAccessAnalyzer:
             )
 
         return self._deduplicate_fields(fields)
+
+    def _find_login_link_candidates(
+        self,
+        page,
+        base_url,
+        max_candidates: int = 5,
+    ) -> List[Dict[str, str]]:
+        """
+        When a page has no login form of its own but is plausibly a
+        public landing/portal page, real login access is often one
+        click away — a "Login" / "Sign In" link elsewhere on the
+        page. This looks for exactly that, so the person doesn't
+        have to go hunting for the real login URL by hand.
+
+        Deliberately conservative: only matches an <a> whose visible
+        text OR href contains an explicit login-shaped word. Returns
+        candidates for a human (or a follow-up analysis call) to
+        choose from — it does not navigate to any of them itself.
+        """
+
+        candidates: List[Dict[str, str]] = []
+
+        seen_urls = set()
+
+        try:
+
+            links = page.locator("a[href]")
+
+            count = min(links.count(), 300)
+
+            for index in range(count):
+
+                element = links.nth(index)
+
+                try:
+
+                    href = element.get_attribute("href") or ""
+
+                    text = (element.inner_text() or "").strip()
+
+                except Exception:
+
+                    continue
+
+                if not href:
+
+                    continue
+
+                signature = f"{text} {href}".lower()
+
+                if not any(
+                    word in signature
+                    for word in self.LOGIN_WORDS + self.SSO_WORDS
+                ):
+
+                    continue
+
+                absolute_url = urljoin(base_url, href)
+
+                if absolute_url in seen_urls:
+
+                    continue
+
+                seen_urls.add(absolute_url)
+
+                candidates.append(
+                    {
+                        "method": "link",
+                        "text": text[:120],
+                        "url": absolute_url,
+                    }
+                )
+
+                if len(candidates) >= max_candidates:
+
+                    break
+
+        except Exception as ex:
+
+            self.logger.warning(
+                f"Login link scan warning: {ex}"
+            )
+
+        return candidates
+
+    # A login-shaped control is safe to click for discovery purposes
+    # (it's navigation, same as clicking a tab or a menu item) — but
+    # this is a second guard, same principle used for tab-walking
+    # elsewhere in this app: never click anything whose own label
+    # suggests a mutating action, even if it happened to also match
+    # a login word somehow.
+    _PROBE_MUTATING_WORDS = (
+        "submit", "save", "delete", "remove", "confirm",
+        "create", "approve", "reject", "pay", "checkout",
+        "send", "post", "publish", "logout", "log out", "sign out",
+    )
+
+    def _probe_login_via_click(
+        self,
+        page,
+        base_url,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fallback for when no plain <a href> login link was found —
+        common on SPA-style portals where "Login" is a <button> or a
+        JS-driven element with no real href, so the passive scan in
+        _find_login_link_candidates has nothing to go on.
+
+        Clicks the first visible, enabled, login-worded control it
+        finds (link, button, or button-role element) and reports
+        where that leads, plus whether real login fields appeared
+        there. Only ever attempts one click, and only ever a
+        navigation-shaped one — never anything matching
+        _PROBE_MUTATING_WORDS.
+
+        Returns a candidate dict shaped like the passive scan's
+        (with "method": "click"), or None if nothing usable was
+        found or the click didn't lead anywhere new.
+        """
+
+        try:
+
+            controls = page.locator(
+                "a, button, [role='button'], "
+                "input[type='submit'], input[type='button']"
+            )
+
+            count = min(controls.count(), 100)
+
+            for index in range(count):
+
+                element = controls.nth(index)
+
+                try:
+
+                    text = (element.inner_text() or "").strip()
+
+                except Exception:
+
+                    text = ""
+
+                if not text:
+
+                    continue
+
+                lowered = text.lower()
+
+                if not any(
+                    word in lowered
+                    for word in self.LOGIN_WORDS + self.SSO_WORDS
+                ):
+
+                    continue
+
+                if any(
+                    word in lowered
+                    for word in self._PROBE_MUTATING_WORDS
+                ):
+
+                    continue
+
+                try:
+
+                    if not element.is_visible():
+
+                        continue
+
+                    if not element.is_enabled():
+
+                        continue
+
+                except Exception:
+
+                    continue
+
+                url_before_click = page.url
+
+                try:
+
+                    element.click(timeout=5_000)
+
+                except Exception as ex:
+
+                    self.logger.warning(
+                        f"Login control click warning: {ex}"
+                    )
+
+                    continue
+
+                try:
+
+                    page.wait_for_load_state(
+                        "domcontentloaded", timeout=8_000
+                    )
+
+                except Exception:
+
+                    pass
+
+                try:
+
+                    page.wait_for_timeout(1_500)
+
+                except Exception:
+
+                    pass
+
+                resulting_url = page.url
+
+                if resulting_url == url_before_click:
+
+                    # Click did nothing observable (e.g. opened a
+                    # modal rather than navigating) — not useful as
+                    # a "go here" URL, so don't report it as one.
+                    continue
+
+                fields_found = self._detect_authentication_fields(
+                    page
+                )
+
+                return {
+                    "method": "click",
+                    "text": text[:120],
+                    "url": resulting_url,
+                    "fields_found_there": len(fields_found),
+                }
+
+        except Exception as ex:
+
+            self.logger.warning(
+                f"Login click-probe warning: {ex}"
+            )
+
+        return None
 
     @staticmethod
     def _safe_label_text(page, element) -> str:
