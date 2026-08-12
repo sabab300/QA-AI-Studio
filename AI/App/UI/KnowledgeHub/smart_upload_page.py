@@ -88,6 +88,7 @@ from UI.KnowledgeHub.url_authentication_worker import (
 )
 
 from Core.metadata_manager import MetadataManager
+from Core.discovery_repository import DiscoveryRepository
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
 from UI.KnowledgeHub.upload_worker import UploadWorker
 from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
@@ -159,6 +160,8 @@ class SmartUploadPage(QWidget):
         self.url_discovery_thread = None
         self.url_discovery_worker = None
         self.url_discovery_result = None
+        self.url_discovery_source_url = None
+        self.url_discovery_auth_type = None
 
 
     # ======================================================
@@ -1852,6 +1855,13 @@ class SmartUploadPage(QWidget):
             f"Starting authenticated Playwright discovery: {url}"
         )
 
+        # Kept for on_url_discovery_finished(), which needs the
+        # source URL and auth type to persist the result — the
+        # discovery result itself doesn't carry these back.
+        self.url_discovery_source_url = url
+
+        self.url_discovery_auth_type = authentication_type
+
         self.url_discovery_thread = QThread()
 
         self.url_discovery_worker = URLDiscoveryWorker(
@@ -2005,9 +2015,11 @@ class SmartUploadPage(QWidget):
             )
 
             self.log.append(
-                "Discovered UI knowledge is ready "
-                "for Knowledge Hub processing."
+                "Saving discovered UI knowledge to "
+                "Knowledge Hub..."
             )
+
+            self._save_discovery_result_to_knowledge_hub(result)
 
             self._restore_url_controls()
 
@@ -2024,6 +2036,104 @@ class SmartUploadPage(QWidget):
             )
 
             self._restore_url_controls()
+
+    def _save_discovery_result_to_knowledge_hub(self, result):
+        """
+        Persists a completed discovery result via DiscoveryRepository
+        so it survives past this session, instead of only ever
+        living in this page's log box.
+        """
+
+        source_url = (
+            getattr(self, "url_discovery_source_url", None)
+            or self.selected_url
+            or ""
+        )
+
+        auth_type = getattr(
+            self, "url_discovery_auth_type", None
+        )
+
+        try:
+
+            repository = DiscoveryRepository()
+
+            save_result = repository.save_discovery_result(
+                result,
+                source_url=source_url,
+                auth_type=auth_type,
+            )
+
+        except Exception as ex:
+
+            self.log.append(
+                f"Saving discovered knowledge failed: {ex}"
+            )
+
+            QMessageBox.warning(
+                self,
+                "Knowledge Hub Save Failed",
+                "Discovery completed, but saving the result to "
+                f"Knowledge Hub failed:\n{ex}",
+            )
+
+            return
+
+        if not save_result.get("success"):
+
+            error = save_result.get(
+                "error", "Unknown error while saving."
+            )
+
+            self.log.append(
+                f"Saving discovered knowledge failed: {error}"
+            )
+
+            QMessageBox.warning(
+                self,
+                "Knowledge Hub Save Failed",
+                f"Discovery completed, but saving failed:\n{error}",
+            )
+
+            return
+
+        elements_saved = save_result.get("elements_saved", 0)
+
+        elements_skipped = save_result.get(
+            "elements_skipped_low_confidence", 0
+        )
+
+        self.log.append(
+            f"Saved to Knowledge Hub — Application ID "
+            f"{save_result.get('application_id')}, Business "
+            f"Process ID {save_result.get('business_process_id')}, "
+            f"Variant ID {save_result.get('variant_id')}, Page ID "
+            f"{save_result.get('page_id')}."
+        )
+
+        self.log.append(
+            f"Elements saved: {elements_saved} | "
+            f"Skipped (no usable locator): {elements_skipped} | "
+            f"Tabs recorded: {save_result.get('tabs_created', 0)}"
+        )
+
+        if elements_skipped:
+
+            self.log.append(
+                f"{elements_skipped} element(s) had no reliable "
+                f"locator (no data-testid/id/name/aria-label/"
+                f"placeholder) and were not stored — a bare "
+                f"tag/type selector isn't trustworthy automation "
+                f"knowledge."
+            )
+
+        self.summary.append(
+            "\nSaved to Knowledge Hub:\n"
+            f"Elements saved: {elements_saved}\n"
+            f"Elements skipped: {elements_skipped}\n"
+            f"Tabs recorded: {save_result.get('tabs_created', 0)}\n"
+            f"Discovery session ID: {save_result.get('session_id')}"
+        )
 
     def on_url_discovery_error(self, message):
         """Handle authenticated URL discovery worker errors."""
@@ -2052,3 +2162,4 @@ class SmartUploadPage(QWidget):
 
         self.url_discovery_worker = None
         self.url_discovery_thread = None
+            

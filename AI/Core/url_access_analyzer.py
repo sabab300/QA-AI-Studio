@@ -756,6 +756,15 @@ class URLAccessAnalyzer:
 
         # ---------------------------------------------------------
         # Strong SSO detection
+        #
+        # sso_detected alone is a bare substring match against raw
+        # page text/HTML — "sso" can appear in an asset URL, a CSS
+        # class, a JS variable, or an unrelated word, with zero
+        # relationship to an actual auth gate on THIS page. It is
+        # corroborating evidence, not sufficient on its own. Only a
+        # real redirect to a different host, an auth-flavored final
+        # URL, or an actual detected auth-related field can confirm
+        # SSO by itself; bare text needs one of those alongside it.
         # ---------------------------------------------------------
 
         sso_url_indicators = (
@@ -778,10 +787,20 @@ class URLAccessAnalyzer:
             for indicator in sso_url_indicators
         )
 
-        if (
-            sso_detected
-            or redirected_to_other_host
+        has_any_auth_field = (
+            has_password
+            or has_login_id
+            or has_token
+            or has_login_submit
+        )
+
+        strong_sso_signal = (
+            redirected_to_other_host
             or final_url_has_auth_indicator
+        )
+
+        if strong_sso_signal or (
+            sso_detected and has_any_auth_field
         ):
 
             evidence.append(
@@ -790,6 +809,15 @@ class URLAccessAnalyzer:
             )
 
             return "SSO", evidence
+
+        if sso_detected and not has_any_auth_field:
+
+            evidence.append(
+                "The word 'SSO' or similar was found on the page, "
+                "but no redirect, auth-flavored URL, or actual "
+                "login field was detected — not enough evidence to "
+                "confirm an SSO gate on this page."
+            )
 
         # ---------------------------------------------------------
         # Token

@@ -67,6 +67,7 @@ class URLDiscoveryEngine:
             "buttons": [],
             "links": [],
             "tabs": [],
+            "tab_scans": [],
             "knowledge": [],
             "error": "",
         }
@@ -208,6 +209,25 @@ class URLDiscoveryEngine:
                 )
 
                 # ----------------------------------------------------
+                # DISCOVER ALL TABS ON THIS PAGE
+                # ----------------------------------------------------
+                # Read-only: only clicks elements matched by the tab
+                # selector (nav-shaped, not a Submit/Save/Delete/
+                # Confirm/Create/Approve control), and even then
+                # skips anything whose own label looks mutating, as
+                # a second guard. Most real UIs (this app's own PSW
+                # example included) only render a tab's fields once
+                # that tab is actually clicked, so without this the
+                # scan only ever sees whichever tab happened to be
+                # open by default.
+
+                self._discover_all_tabs(
+                    page,
+                    result,
+                    page_data,
+                )
+
+                # ----------------------------------------------------
                 # KNOWLEDGE SUMMARY
                 # ----------------------------------------------------
 
@@ -232,6 +252,9 @@ class URLDiscoveryEngine:
                         ),
                         "tab_count": len(
                             page_data.get("tabs", [])
+                        ),
+                        "tabs_scanned_count": len(
+                            result.get("tab_scans", [])
                         ),
                     }
                 ]
@@ -690,71 +713,13 @@ class URLDiscoveryEngine:
             pass
 
         # ------------------------------------------------------------
-        # INPUTS
+        # INPUTS + BUTTONS (shared helper — also used per-tab by
+        # _discover_all_tabs, so the two never drift apart)
         # ------------------------------------------------------------
 
-        try:
-
-            inputs = page.locator(
-                "input, textarea, select"
-            )
-
-            for index in range(
-                min(inputs.count(), 1000)
-            ):
-
-                element = inputs.nth(index)
-
-                field = self._extract_element(
-                    element,
-                    index,
-                )
-
-                field["element_type"] = (
-                    self._safe_attr(
-                        element,
-                        "type",
-                    )
-                    or element.evaluate(
-                        "(e) => e.tagName.toLowerCase()"
-                    )
-                )
-
-                data["fields"].append(
-                    field
-                )
-
-        except Exception:
-            pass
-
-        # ------------------------------------------------------------
-        # BUTTONS
-        # ------------------------------------------------------------
-
-        try:
-
-            buttons = page.locator(
-                "button, "
-                "input[type='button'], "
-                "input[type='submit'], "
-                "[role='button']"
-            )
-
-            for index in range(
-                min(buttons.count(), 1000)
-            ):
-
-                element = buttons.nth(index)
-
-                data["buttons"].append(
-                    self._extract_element(
-                        element,
-                        index,
-                    )
-                )
-
-        except Exception:
-            pass
+        data["fields"], data["buttons"] = (
+            self._extract_fields_and_buttons(page)
+        )
 
         # ------------------------------------------------------------
         # LINKS
@@ -922,6 +887,288 @@ class URLDiscoveryEngine:
             pass
 
     # ================================================================
+    # SHARED FIELD/BUTTON EXTRACTION
+    # ================================================================
+    # Factored out of _discover_page so the initial scan and the
+    # per-tab scan (_discover_all_tabs) use exactly one
+    # implementation — two copies of this logic drifting apart is
+    # exactly the kind of bug that's bitten this codebase before
+    # (the login-fill logic existing separately in two files).
+
+    def _extract_fields_and_buttons(
+        self,
+        page,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+
+        fields: list[dict[str, Any]] = []
+
+        buttons: list[dict[str, Any]] = []
+
+        try:
+
+            inputs = page.locator(
+                "input:visible, textarea:visible, select:visible"
+            )
+
+            for index in range(
+                min(inputs.count(), 1000)
+            ):
+
+                element = inputs.nth(index)
+
+                field = self._extract_element(
+                    element,
+                    index,
+                )
+
+                field["element_type"] = (
+                    self._safe_attr(
+                        element,
+                        "type",
+                    )
+                    or element.evaluate(
+                        "(e) => e.tagName.toLowerCase()"
+                    )
+                )
+
+                fields.append(field)
+
+        except Exception:
+            pass
+
+        try:
+
+            button_elements = page.locator(
+                "button:visible, "
+                "input[type='button']:visible, "
+                "input[type='submit']:visible, "
+                "[role='button']:visible"
+            )
+
+            for index in range(
+                min(button_elements.count(), 1000)
+            ):
+
+                element = button_elements.nth(index)
+
+                buttons.append(
+                    self._extract_element(
+                        element,
+                        index,
+                    )
+                )
+
+        except Exception:
+            pass
+
+        return fields, buttons
+
+    # ================================================================
+    # SAFETY GUARD — never click anything mutating-shaped
+    # ================================================================
+    # Discovery is read-only by construction. Tabs are already a
+    # structurally different element class from Submit/Save/Delete
+    # buttons, but this is a second, belt-and-suspenders check on
+    # the label text itself before anything gets clicked.
+
+    _MUTATING_WORDS = (
+        "submit", "save", "delete", "remove", "confirm",
+        "create", "approve", "reject", "cancel order",
+        "pay", "checkout", "send", "post", "publish",
+    )
+
+    def _looks_mutating(self, text: str) -> bool:
+
+        if not text:
+
+            return False
+
+        lowered = text.strip().lower()
+
+        return any(word in lowered for word in self._MUTATING_WORDS)
+
+    # ================================================================
+    # MULTI-TAB DISCOVERY (read-only)
+    # ================================================================
+
+    def _discover_all_tabs(
+        self,
+        page,
+        result,
+        initial_page_data,
+    ) -> None:
+
+        MAX_TABS = 20
+
+        try:
+
+            tab_locator = page.locator(
+                "[role='tab'], "
+                ".tab, "
+                ".nav-tabs a, "
+                ".tabs a"
+            )
+
+            tab_count = min(tab_locator.count(), MAX_TABS)
+
+        except Exception:
+
+            tab_count = 0
+
+        if tab_count == 0:
+
+            return
+
+        # The default/landing view has already been scanned by
+        # _discover_page — record it as the first "tab scan" so
+        # callers get one consistent list to work from, using
+        # whichever tab is currently marked active/selected if we
+        # can tell, else a generic label.
+
+        active_label = self._active_tab_label(page, tab_locator, tab_count)
+
+        result["tab_scans"].append(
+            {
+                "tab_name": active_label or "Default",
+                "url": page.url,
+                "fields": initial_page_data.get("fields", []),
+                "buttons": initial_page_data.get("buttons", []),
+            }
+        )
+
+        visited_labels = {
+            (active_label or "Default").strip().lower()
+        }
+
+        for index in range(tab_count):
+
+            try:
+
+                tab_element = page.locator(
+                    "[role='tab'], "
+                    ".tab, "
+                    ".nav-tabs a, "
+                    ".tabs a"
+                ).nth(index)
+
+                label = self._safe_text(tab_element) or (
+                    self._safe_attr(tab_element, "aria-label")
+                )
+
+                if not label:
+
+                    continue
+
+                normalized = label.strip().lower()
+
+                if normalized in visited_labels:
+
+                    continue
+
+                if self._looks_mutating(label):
+
+                    # Defensive skip — shouldn't trigger in practice
+                    # since this selector targets tab-shaped
+                    # elements, but never click it if it does.
+                    continue
+
+                if not tab_element.is_visible():
+
+                    continue
+
+                if not tab_element.is_enabled():
+
+                    continue
+
+                try:
+
+                    tab_element.click(timeout=5000)
+
+                except Exception:
+
+                    self._dismiss_blocking_modals(page)
+
+                    try:
+
+                        tab_element.click(
+                            timeout=5000, force=True
+                        )
+
+                    except Exception:
+
+                        continue
+
+                try:
+
+                    page.wait_for_load_state(
+                        "networkidle", timeout=5000
+                    )
+
+                except Exception:
+
+                    pass
+
+                self._dismiss_blocking_modals(page)
+
+                tab_fields, tab_buttons = (
+                    self._extract_fields_and_buttons(page)
+                )
+
+                result["tab_scans"].append(
+                    {
+                        "tab_name": label.strip(),
+                        "url": page.url,
+                        "fields": tab_fields,
+                        "buttons": tab_buttons,
+                    }
+                )
+
+                visited_labels.add(normalized)
+
+            except Exception:
+
+                continue
+
+    def _active_tab_label(self, page, tab_locator, tab_count):
+        """
+        Best-effort guess at which tab was already showing when the
+        page loaded (aria-selected='true' or a common "active" CSS
+        class). Returns None rather than guessing if nothing clearly
+        marks one — callers fall back to a generic label instead of
+        trusting a wrong name.
+        """
+
+        for index in range(tab_count):
+
+            try:
+
+                element = tab_locator.nth(index)
+
+                selected = self._safe_attr(
+                    element, "aria-selected"
+                )
+
+                class_name = self._safe_attr(element, "class") or ""
+
+                if (
+                    (selected or "").strip().lower() == "true"
+                    or "active" in class_name.lower()
+                    or "selected" in class_name.lower()
+                ):
+
+                    label = self._safe_text(element)
+
+                    if label:
+
+                        return label.strip()
+
+            except Exception:
+
+                continue
+
+        return None
+
+    # ================================================================
     # ELEMENT EXTRACTION
     # ================================================================
 
@@ -956,6 +1203,10 @@ class URLDiscoveryEngine:
             "type": self._safe_attr(
                 element,
                 "type",
+            ),
+            "data_testid": self._safe_attr(
+                element,
+                "data-testid",
             ),
             "placeholder": self._safe_attr(
                 element,
@@ -1097,3 +1348,4 @@ class URLDiscoveryEngine:
 
         except Exception:
             return False
+        

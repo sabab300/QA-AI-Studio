@@ -213,6 +213,8 @@ class URLAuthenticatedSession:
                 # Username
                 # --------------------------------------------------
 
+                username_filled = False
+
                 if login_value:
 
                     locator = (
@@ -221,13 +223,15 @@ class URLAuthenticatedSession:
                         else None
                     )
 
-                    if not self._fill_locator(
+                    username_filled = self._fill_locator(
                         page,
                         locator,
                         login_value,
-                    ):
+                    )
 
-                        self._fill_first_available(
+                    if not username_filled:
+
+                        username_filled = self._fill_first_available(
                             page,
                             (
                                 "input[type='email']",
@@ -245,6 +249,8 @@ class URLAuthenticatedSession:
                 # Password
                 # --------------------------------------------------
 
+                password_filled = False
+
                 if password_value:
 
                     locator = (
@@ -253,13 +259,15 @@ class URLAuthenticatedSession:
                         else None
                     )
 
-                    if not self._fill_locator(
+                    password_filled = self._fill_locator(
                         page,
                         locator,
                         password_value,
-                    ):
+                    )
 
-                        self._fill_first_available(
+                    if not password_filled:
+
+                        password_filled = self._fill_first_available(
                             page,
                             (
                                 "input[type='password']",
@@ -273,6 +281,8 @@ class URLAuthenticatedSession:
                 # Token / API Key
                 # --------------------------------------------------
 
+                token_filled = False
+
                 if token_value or api_key_value:
 
                     token = (
@@ -280,7 +290,7 @@ class URLAuthenticatedSession:
                         or api_key_value
                     )
 
-                    self._fill_first_available(
+                    token_filled = self._fill_first_available(
                         page,
                         (
                             "input[name*='token' i]",
@@ -355,11 +365,43 @@ class URLAuthenticatedSession:
 
                 # --------------------------------------------------
                 # Verify authentication
+                #
+                # If nothing was actually entered or submitted —
+                # e.g. the analyzer detected zero real login fields
+                # on this page — there is nothing to verify, and
+                # claiming success here would be a false positive:
+                # the page never had a login gate to get past in
+                # the first place, so "no login page visible now"
+                # proves nothing. Stop here with a clear reason
+                # instead of pretending authentication happened.
                 # --------------------------------------------------
+
+                credentials_attempted = (
+                    username_filled
+                    or password_filled
+                    or token_filled
+                )
+
+                if not credentials_attempted:
+
+                    return {
+                        "success": False,
+                        "authenticated": False,
+                        "authentication_pending": True,
+                        "url": page.url,
+                        "error": (
+                            "No login fields were detected on this "
+                            "page, so no credentials could be "
+                            "entered. This may be a public page "
+                            "rather than the actual login screen — "
+                            "check the login URL."
+                        ),
+                    }
 
                 verification = self._verify_authenticated(
                     page,
                     requested_url,
+                    submitted,
                 )
 
                 if not verification["authenticated"]:
@@ -570,6 +612,7 @@ class URLAuthenticatedSession:
         self,
         page,
         requested_url,
+        submitted,
     ):
 
         try:
@@ -666,6 +709,18 @@ class URLAuthenticatedSession:
                 "reason": (
                     "Authentication has not completed. "
                     "Authentication URL is still active."
+                ),
+            }
+
+        if not submitted:
+
+            return {
+                "authenticated": False,
+                "reason": (
+                    "No submit action was detected or performed, "
+                    "so authentication could not be confirmed. "
+                    "The absence of a login page is not, on its "
+                    "own, proof of being logged in."
                 ),
             }
 
