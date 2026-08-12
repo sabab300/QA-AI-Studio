@@ -162,6 +162,9 @@ class SmartUploadPage(QWidget):
         self.url_discovery_result = None
         self.url_discovery_source_url = None
         self.url_discovery_auth_type = None
+        self.authenticated_session = None
+
+
 
 
     # ======================================================
@@ -1660,9 +1663,38 @@ class SmartUploadPage(QWidget):
                 "Authenticated Playwright session "
                 "created successfully."
             )
+            
 
             self.log.append(
                 "Starting authenticated URL discovery..."
+            )
+
+            authenticated_session = (
+                result.get("authenticated_session")
+                if isinstance(result, dict)
+                else None
+            )
+
+            if authenticated_session is None:
+                self.log.append(
+                    "Authentication completed but no live "
+                    "authenticated Playwright session was returned."
+                )
+
+                QMessageBox.critical(
+                    self,
+                    "Authentication Error",
+                    "Authenticated Playwright session was not returned."
+                )
+
+                self._restore_url_controls()
+                return
+
+            self.authenticated_session = authenticated_session
+
+            self.log.append(
+                "Live authenticated Playwright session handed "
+                "to Smart Upload."
             )
 
             self.start_authenticated_url_discovery(
@@ -1795,7 +1827,8 @@ class SmartUploadPage(QWidget):
         authentication_result,
     ):
         """
-        Start real authenticated Playwright discovery.
+        Start real authenticated Playwright discovery
+        using the already authenticated Playwright context.
 
         Credentials remain memory-only.
         """
@@ -1809,12 +1842,8 @@ class SmartUploadPage(QWidget):
             return
 
         url = (
-            authentication_result.get(
-                "requested_url"
-            )
-            or authentication_result.get(
-                "url"
-            )
+            authentication_result.get("requested_url")
+            or authentication_result.get("url")
             or self.selected_url
             or ""
         )
@@ -1829,18 +1858,6 @@ class SmartUploadPage(QWidget):
             or "NONE"
         )
 
-        credentials = (
-            authentication_result.get(
-                "credentials"
-            )
-            or getattr(
-                self,
-                "url_credentials",
-                {}
-            )
-            or {}
-        )
-
         if not url:
 
             QMessageBox.warning(
@@ -1851,24 +1868,99 @@ class SmartUploadPage(QWidget):
 
             return
 
+        # --------------------------------------------------
+        # AUTHENTICATED SESSION MUST ALREADY EXIST
+        # --------------------------------------------------
+
+        authenticated_session = getattr(
+            self,
+            "authenticated_session",
+            None,
+        )
+
+        if authenticated_session is None:
+
+            QMessageBox.critical(
+                self,
+                "URL Discovery",
+                "Authenticated Playwright session is not available."
+            )
+
+            self.log.append(
+                "Authenticated discovery aborted: "
+                "authenticated session is not available."
+            )
+
+            self._restore_url_controls()
+
+            return
+
+        # --------------------------------------------------
+        # GET THE EXISTING AUTHENTICATED CONTEXT
+        # --------------------------------------------------
+
+        try:
+
+            context = (
+                authenticated_session
+                .get_authenticated_context()
+            )
+
+        except Exception as ex:
+
+            QMessageBox.critical(
+                self,
+                "URL Discovery",
+                f"Unable to get authenticated Playwright context:\n{ex}"
+            )
+
+            self.log.append(
+                f"Failed to get authenticated context: {ex}"
+            )
+
+            self._restore_url_controls()
+
+            return
+
+        if context is None:
+
+            QMessageBox.critical(
+                self,
+                "URL Discovery",
+                "Authenticated Playwright context is not available."
+            )
+
+            self.log.append(
+                "Authenticated discovery aborted: "
+                "Playwright context is None."
+            )
+
+            self._restore_url_controls()
+
+            return
+
+        # --------------------------------------------------
+        # STORE DISCOVERY SOURCE INFORMATION
+        # --------------------------------------------------
+
+        self.url_discovery_source_url = url
+        self.url_discovery_auth_type = authentication_type
+
         self.log.append(
             f"Starting authenticated Playwright discovery: {url}"
         )
 
-        # Kept for on_url_discovery_finished(), which needs the
-        # source URL and auth type to persist the result — the
-        # discovery result itself doesn't carry these back.
-        self.url_discovery_source_url = url
-
-        self.url_discovery_auth_type = authentication_type
+        # --------------------------------------------------
+        # CREATE DISCOVERY THREAD
+        # --------------------------------------------------
 
         self.url_discovery_thread = QThread()
 
         self.url_discovery_worker = URLDiscoveryWorker(
+            context=context,
             url=url,
-            credentials=credentials,
             authentication_type=authentication_type,
-            headless=True,
+            headless=False,
         )
 
         self.url_discovery_worker.moveToThread(
@@ -1895,11 +1987,25 @@ class SmartUploadPage(QWidget):
             self.url_discovery_thread.quit
         )
 
-        self.url_discovery_thread.finished.connect(
-            self.cleanup_url_discovery_thread
-        )
-
         self.url_discovery_thread.start()
+
+    def cleanup_authenticated_session(self):
+    
+            session = getattr(
+                self,
+                "authenticated_session",
+                None,
+            )
+    
+            if session is None:
+                return
+    
+            try:
+                session.close()
+            except Exception:
+                pass
+    
+            self.authenticated_session = None
 
     def on_url_discovery_finished(
         self,
@@ -2020,6 +2126,12 @@ class SmartUploadPage(QWidget):
             )
 
             self._save_discovery_result_to_knowledge_hub(result)
+
+            self.log.append(
+                "URL discovery data saved successfully."
+            )
+
+            self.cleanup_authenticated_session()
 
             self._restore_url_controls()
 
@@ -2149,8 +2261,6 @@ class SmartUploadPage(QWidget):
         )
 
         self._restore_url_controls()
-
-        self.cleanup_url_discovery_thread()
 
     def cleanup_url_discovery_thread(self):
 

@@ -11,7 +11,6 @@ from PySide6.QtCore import QObject, Signal
 
 from Core.url_authenticated_session import URLAuthenticatedSession
 
-
 class URLAuthenticationWorker(QObject):
 
     finished = Signal(dict)
@@ -32,6 +31,8 @@ class URLAuthenticationWorker(QObject):
         self.credentials = credentials or {}
         self.headless = headless
 
+        self.session = None
+
     def run(self):
 
         try:
@@ -40,15 +41,22 @@ class URLAuthenticationWorker(QObject):
                 "Starting authenticated Playwright session..."
             )
 
-            session = URLAuthenticatedSession(
+            self.session = URLAuthenticatedSession(
                 headless=self.headless
             )
 
-            result = session.authenticate(
+            result = self.session.authenticate(
                 url=self.url,
                 analysis=self.analysis,
                 credentials=self.credentials,
             )
+
+            if not isinstance(result, dict):
+                result = {
+                    "success": bool(result),
+                }
+
+            result["_authenticated_session"] = self.session
 
             self.finished.emit(result)
 

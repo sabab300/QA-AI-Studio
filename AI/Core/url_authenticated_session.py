@@ -1,15 +1,23 @@
 """
 QA AI Studio
 URL Authenticated Playwright Session
-Development #2C
 
-Creates an authenticated Playwright context.
+Development #2D-FIX
+Permanent in-memory authenticated Playwright context.
+
+Responsibilities:
+    - Create Playwright runtime
+    - Create browser
+    - Create authenticated browser context
+    - Keep browser/context/page alive after authentication
+    - Provide authenticated context to discovery
+    - Close session explicitly during cleanup
 
 Security:
-    - credentials are memory-only
-    - credentials are never logged
-    - credentials are never stored in metadata/vector DB
-    - storage_state is returned in memory only
+    - Credentials are memory-only
+    - Credentials are never logged
+    - Credentials are never stored in DB/vector DB
+    - Browser state remains memory-only
 """
 
 from __future__ import annotations
@@ -26,9 +34,9 @@ class URLAuthenticatedSession:
 
     def __init__(
         self,
-        headless=False,
-        timeout_ms=DEFAULT_TIMEOUT_MS,
-        navigation_timeout_ms=DEFAULT_NAVIGATION_TIMEOUT_MS,
+        headless: bool = False,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        navigation_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ):
 
         self.logger = Logger.get_logger()
@@ -37,8 +45,23 @@ class URLAuthenticatedSession:
         self.timeout_ms = timeout_ms
         self.navigation_timeout_ms = navigation_timeout_ms
 
+        # ------------------------------------------------------
+        # IMPORTANT:
+        # These objects MUST remain alive after authenticate()
+        # ------------------------------------------------------
+
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+
+        self.authenticated = False
+
+        self.requested_url = ""
+        self.authentication_type = "NONE"
+
     # ==========================================================
-    # PUBLIC API
+    # AUTHENTICATE
     # ==========================================================
 
     def authenticate(
@@ -51,7 +74,6 @@ class URLAuthenticatedSession:
         requested_url = (url or "").strip()
 
         if not requested_url:
-
             return {
                 "success": False,
                 "authenticated": False,
@@ -59,7 +81,6 @@ class URLAuthenticatedSession:
             }
 
         if not credentials:
-
             return {
                 "success": False,
                 "authenticated": False,
@@ -85,154 +106,165 @@ class URLAuthenticatedSession:
                 ),
             }
 
-        browser = None
-        context = None
+        # ------------------------------------------------------
+        # Close previous session if any
+        # ------------------------------------------------------
+
+        self.close()
 
         try:
 
-            with sync_playwright() as playwright:
+            # --------------------------------------------------
+            # START PLAYWRIGHT WITHOUT "with"
+            #
+            # This is the critical #2D-FIX.
+            # --------------------------------------------------
 
-                browser = playwright.chromium.launch(
-                    headless=self.headless
+            self.playwright = sync_playwright().start()
+
+            self.browser = self.playwright.chromium.launch(
+                headless=self.headless
+            )
+
+            self.context = self.browser.new_context(
+                ignore_https_errors=True,
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/137.0 Safari/537.36"
+                ),
+            )
+
+            self.page = self.context.new_page()
+
+            self.page.set_default_timeout(
+                self.timeout_ms
+            )
+
+            self.page.set_default_navigation_timeout(
+                self.navigation_timeout_ms
+            )
+
+            login_url = (
+                analysis.get("login_url")
+                or analysis.get("final_url")
+                or requested_url
+            )
+
+            self.requested_url = requested_url
+
+            self.authentication_type = str(
+                analysis.get(
+                    "authentication_type",
+                    "NONE",
+                )
+            ).upper()
+
+            self.logger.info(
+                "Opening authentication page."
+            )
+
+            # --------------------------------------------------
+            # OPEN LOGIN PAGE
+            # --------------------------------------------------
+
+            try:
+
+                self.page.goto(
+                    login_url,
+                    wait_until="domcontentloaded",
+                    timeout=self.navigation_timeout_ms,
                 )
 
-                context = browser.new_context(
-                    ignore_https_errors=True,
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/137.0 Safari/537.36"
-                    ),
+            except PlaywrightTimeoutError:
+
+                self.logger.warning(
+                    "Authentication page navigation timed out."
                 )
 
-                page = context.new_page()
+            self.page.wait_for_timeout(1500)
 
-                page.set_default_timeout(
-                    self.timeout_ms
+            detected_fields = (
+                analysis.get(
+                    "detected_fields",
+                    [],
+                )
+                or []
+            )
+
+            # --------------------------------------------------
+            # CREDENTIAL VALUES
+            # --------------------------------------------------
+
+            login_value = (
+                credentials.get("LOGIN_ID")
+                or credentials.get("Login ID")
+                or credentials.get("USERNAME")
+                or credentials.get("Username")
+                or credentials.get("CREDENTIAL")
+                or credentials.get("Credential")
+            )
+
+            password_value = (
+                credentials.get("PASSWORD")
+                or credentials.get("Password")
+            )
+
+            token_value = (
+                credentials.get("TOKEN")
+                or credentials.get("Token")
+            )
+
+            api_key_value = (
+                credentials.get("API_KEY")
+                or credentials.get("API Key")
+            )
+
+            username_field = self._find_field(
+                detected_fields,
+                (
+                    "LOGIN_ID",
+                    "USERNAME",
+                    "EMAIL",
+                ),
+            )
+
+            password_field = self._find_field(
+                detected_fields,
+                ("PASSWORD",),
+            )
+
+            submit_field = self._find_field(
+                detected_fields,
+                ("LOGIN_SUBMIT",),
+            )
+
+            # --------------------------------------------------
+            # USERNAME
+            # --------------------------------------------------
+
+            username_filled = False
+
+            if login_value:
+
+                locator = (
+                    username_field.get("locator")
+                    if username_field
+                    else None
                 )
 
-                page.set_default_navigation_timeout(
-                    self.navigation_timeout_ms
+                username_filled = self._fill_locator(
+                    self.page,
+                    locator,
+                    login_value,
                 )
 
-                login_url = (
-                    analysis.get("login_url")
-                    or analysis.get("final_url")
-                    or requested_url
-                )
+                if not username_filled:
 
-                self.logger.info(
-                    "Opening authentication page."
-                )
-
-                try:
-
-                    page.goto(
-                        login_url,
-                        wait_until="domcontentloaded",
-                        timeout=self.navigation_timeout_ms,
-                    )
-
-                except PlaywrightTimeoutError:
-
-                    self.logger.warning(
-                        "Authentication page navigation timed out."
-                    )
-
-                try:
-
-                    page.wait_for_timeout(1500)
-
-                except Exception:
-
-                    pass
-
-                auth_type = str(
-                    analysis.get(
-                        "authentication_type",
-                        ""
-                    )
-                ).upper()
-
-                detected_fields = (
-                    analysis.get(
-                        "detected_fields",
-                        []
-                    )
-                    or []
-                )
-
-                # --------------------------------------------------
-                # Fill username/login ID
-                # --------------------------------------------------
-
-                login_value = (
-                    credentials.get("LOGIN_ID")
-                    or credentials.get("Login ID")
-                    or credentials.get("USERNAME")
-                    or credentials.get("Username")
-                    or credentials.get("CREDENTIAL")
-                    or credentials.get("Credential")
-                )
-
-                password_value = (
-                    credentials.get("PASSWORD")
-                    or credentials.get("Password")
-                )
-
-                token_value = (
-                    credentials.get("TOKEN")
-                    or credentials.get("Token")
-                )
-
-                api_key_value = (
-                    credentials.get("API_KEY")
-                    or credentials.get("API Key")
-                )
-
-                username_field = self._find_field(
-                    detected_fields,
-                    (
-                        "LOGIN_ID",
-                        "USERNAME",
-                        "EMAIL",
-                    ),
-                )
-
-                password_field = self._find_field(
-                    detected_fields,
-                    ("PASSWORD",),
-                )
-
-                submit_field = self._find_field(
-                    detected_fields,
-                    ("LOGIN_SUBMIT",),
-                )
-
-                # --------------------------------------------------
-                # Username
-                # --------------------------------------------------
-
-                username_filled = False
-
-                if login_value:
-
-                    locator = (
-                        username_field.get("locator")
-                        if username_field
-                        else None
-                    )
-
-                    username_filled = self._fill_locator(
-                        page,
-                        locator,
-                        login_value,
-                    )
-
-                    if not username_filled:
-
-                        username_filled = self._fill_first_available(
-                            page,
+                    username_filled = (
+                        self._fill_first_available(
+                            self.page,
                             (
                                 "input[type='email']",
                                 "input[name*='user' i]",
@@ -244,31 +276,33 @@ class URLAuthenticatedSession:
                             ),
                             login_value,
                         )
-
-                # --------------------------------------------------
-                # Password
-                # --------------------------------------------------
-
-                password_filled = False
-
-                if password_value:
-
-                    locator = (
-                        password_field.get("locator")
-                        if password_field
-                        else None
                     )
 
-                    password_filled = self._fill_locator(
-                        page,
-                        locator,
-                        password_value,
-                    )
+            # --------------------------------------------------
+            # PASSWORD
+            # --------------------------------------------------
 
-                    if not password_filled:
+            password_filled = False
 
-                        password_filled = self._fill_first_available(
-                            page,
+            if password_value:
+
+                locator = (
+                    password_field.get("locator")
+                    if password_field
+                    else None
+                )
+
+                password_filled = self._fill_locator(
+                    self.page,
+                    locator,
+                    password_value,
+                )
+
+                if not password_filled:
+
+                    password_filled = (
+                        self._fill_first_available(
+                            self.page,
                             (
                                 "input[type='password']",
                                 "input[name*='password' i]",
@@ -276,22 +310,24 @@ class URLAuthenticatedSession:
                             ),
                             password_value,
                         )
-
-                # --------------------------------------------------
-                # Token / API Key
-                # --------------------------------------------------
-
-                token_filled = False
-
-                if token_value or api_key_value:
-
-                    token = (
-                        token_value
-                        or api_key_value
                     )
 
-                    token_filled = self._fill_first_available(
-                        page,
+            # --------------------------------------------------
+            # TOKEN / API KEY
+            # --------------------------------------------------
+
+            token_filled = False
+
+            if token_value or api_key_value:
+
+                token = (
+                    token_value
+                    or api_key_value
+                )
+
+                token_filled = (
+                    self._fill_first_available(
+                        self.page,
                         (
                             "input[name*='token' i]",
                             "input[id*='token' i]",
@@ -301,24 +337,26 @@ class URLAuthenticatedSession:
                         ),
                         token,
                     )
+                )
 
-                # --------------------------------------------------
-                # Submit
-                # --------------------------------------------------
+            # --------------------------------------------------
+            # SUBMIT
+            # --------------------------------------------------
 
-                submitted = False
+            submitted = False
 
-                if submit_field:
+            if submit_field:
 
-                    submitted = self._click_locator(
-                        page,
-                        submit_field.get("locator"),
-                    )
+                submitted = self._click_locator(
+                    self.page,
+                    submit_field.get("locator"),
+                )
 
-                if not submitted:
+            if not submitted:
 
-                    submitted = self._click_first_available(
-                        page,
+                submitted = (
+                    self._click_first_available(
+                        self.page,
                         (
                             "button[type='submit']",
                             "input[type='submit']",
@@ -329,113 +367,113 @@ class URLAuthenticatedSession:
                             "[role='button']:has-text('Sign in')",
                         ),
                     )
-
-                # --------------------------------------------------
-                # SSO without detectable submit control
-                # --------------------------------------------------
-
-                if not submitted and auth_type == "SSO":
-
-                    submitted = self._press_enter(
-                        page
-                    )
-
-                # --------------------------------------------------
-                # Wait for authentication
-                # --------------------------------------------------
-
-                try:
-
-                    page.wait_for_load_state(
-                        "domcontentloaded",
-                        timeout=10_000,
-                    )
-
-                except Exception:
-
-                    pass
-
-                try:
-
-                    page.wait_for_timeout(2000)
-
-                except Exception:
-
-                    pass
-
-                # --------------------------------------------------
-                # Verify authentication
-                #
-                # If nothing was actually entered or submitted —
-                # e.g. the analyzer detected zero real login fields
-                # on this page — there is nothing to verify, and
-                # claiming success here would be a false positive:
-                # the page never had a login gate to get past in
-                # the first place, so "no login page visible now"
-                # proves nothing. Stop here with a clear reason
-                # instead of pretending authentication happened.
-                # --------------------------------------------------
-
-                credentials_attempted = (
-                    username_filled
-                    or password_filled
-                    or token_filled
                 )
 
-                if not credentials_attempted:
+            # --------------------------------------------------
+            # SSO FALLBACK
+            # --------------------------------------------------
 
-                    return {
-                        "success": False,
-                        "authenticated": False,
-                        "authentication_pending": True,
-                        "url": page.url,
-                        "error": (
-                            "No login fields were detected on this "
-                            "page, so no credentials could be "
-                            "entered. This may be a public page "
-                            "rather than the actual login screen — "
-                            "check the login URL."
-                        ),
-                    }
+            if (
+                not submitted
+                and self.authentication_type == "SSO"
+            ):
 
-                verification = self._verify_authenticated(
-                    page,
-                    requested_url,
-                    submitted,
+                submitted = self._press_enter(
+                    self.page
                 )
 
-                if not verification["authenticated"]:
+            # --------------------------------------------------
+            # WAIT
+            # --------------------------------------------------
 
-                    # MFA / CAPTCHA / manual SSO may still be pending.
-                    return {
-                        "success": False,
-                        "authenticated": False,
-                        "authentication_pending": True,
-                        "url": page.url,
-                        "error": verification["reason"],
-                    }
+            try:
 
-                # --------------------------------------------------
-                # IMPORTANT:
-                # Storage state remains memory-only.
-                # --------------------------------------------------
+                self.page.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=10_000,
+                )
 
-                storage_state = context.storage_state()
+            except Exception:
+                pass
+
+            self.page.wait_for_timeout(2000)
+
+            credentials_attempted = (
+                username_filled
+                or password_filled
+                or token_filled
+            )
+
+            if not credentials_attempted:
+
+                self.close()
 
                 return {
-                    "success": True,
-                    "authenticated": True,
-                    "authentication_pending": False,
-                    "url": page.url,
-                    "requested_url": requested_url,
-                    "authentication_type": auth_type,
-                    "storage_state": storage_state,
-                    "page_title": self._safe_title(page),
-                    "message": (
-                        "Authenticated Playwright session "
-                        "created successfully."
+                    "success": False,
+                    "authenticated": False,
+                    "authentication_pending": True,
+                    "url": "",
+                    "error": (
+                        "No login credentials could be "
+                        "entered on the detected authentication page."
                     ),
                 }
+
+            # --------------------------------------------------
+            # VERIFY
+            # --------------------------------------------------
+
+            verification = self._verify_authenticated(
+                self.page,
+                requested_url,
+                submitted,
+            )
+
+            if not verification["authenticated"]:
+
+                # Keep session alive because MFA/manual
+                # authentication may still be pending.
+                return {
+                    "success": False,
+                    "authenticated": False,
+                    "authentication_pending": True,
+                    "url": self.page.url,
+                    "error": verification["reason"],
+                }
+
+            # --------------------------------------------------
+            # AUTHENTICATED
+            # --------------------------------------------------
+
+            self.authenticated = True
+
+            storage_state = (
+                self.context.storage_state()
+            )
+
+            self.logger.info(
+                "Authenticated Playwright session "
+                "created successfully."
+            )
+
+            return {
+                "success": True,
+                "authenticated": True,
+                "authentication_pending": False,
+                "url": self.page.url,
+                "requested_url": requested_url,
+                "authentication_type": (
+                    self.authentication_type
+                ),
+                "storage_state": storage_state,
+                "page_title": self._safe_title(
+                    self.page
+                ),
+                "message": (
+                    "Authenticated Playwright session "
+                    "created successfully."
+                ),
+            }
 
         except Exception as ex:
 
@@ -443,35 +481,144 @@ class URLAuthenticatedSession:
                 "Authenticated Playwright session failed."
             )
 
+            self.close()
+
             return {
                 "success": False,
                 "authenticated": False,
                 "error": str(ex),
             }
 
-        finally:
+    # ==========================================================
+    # CONTEXT ACCESS
+    # ==========================================================
 
-            # Browser/context are deliberately closed here.
-            # The session state returned above is memory-only.
+    def get_authenticated_context(self):
+
+        if (
+            self.context is None
+            or self.browser is None
+        ):
+            raise RuntimeError(
+                "Authenticated Playwright context "
+                "is not available."
+            )
+
+        if not self.authenticated:
+            raise RuntimeError(
+                "Playwright session is not authenticated."
+            )
+
+        return self.context
+
+    # ==========================================================
+    # PAGE ACCESS
+    # ==========================================================
+
+    def get_authenticated_page(self):
+
+        context = (
+            self.get_authenticated_context()
+        )
+
+        pages = context.pages
+
+        for page in reversed(pages):
+
             try:
 
-                if context:
-
-                    context.close()
-
-            except Exception:
-
-                pass
-
-            try:
-
-                if browser:
-
-                    browser.close()
+                if not page.is_closed():
+                    self.page = page
+                    return page
 
             except Exception:
+                continue
 
-                pass
+        self.page = context.new_page()
+
+        self.page.set_default_timeout(
+            self.timeout_ms
+        )
+
+        self.page.set_default_navigation_timeout(
+            self.navigation_timeout_ms
+        )
+
+        return self.page
+
+    # ==========================================================
+    # SESSION STATUS
+    # ==========================================================
+
+    def is_authenticated(self) -> bool:
+
+        if not self.authenticated:
+            return False
+
+        if self.browser is None:
+            return False
+
+        if self.context is None:
+            return False
+
+        try:
+
+            if not self.browser.is_connected():
+                return False
+
+        except Exception:
+
+            return False
+
+        try:
+
+            return any(
+                not page.is_closed()
+                for page in self.context.pages
+            )
+
+        except Exception:
+
+            return False
+
+    # ==========================================================
+    # CLOSE SESSION
+    # ==========================================================
+
+    def close(self):
+
+        self.authenticated = False
+
+        try:
+
+            if self.context is not None:
+                self.context.close()
+
+        except Exception:
+            pass
+
+        self.context = None
+        self.page = None
+
+        try:
+
+            if self.browser is not None:
+                self.browser.close()
+
+        except Exception:
+            pass
+
+        self.browser = None
+
+        try:
+
+            if self.playwright is not None:
+                self.playwright.stop()
+
+        except Exception:
+            pass
+
+        self.playwright = None
 
     # ==========================================================
     # FIELD HELPERS
@@ -481,14 +628,13 @@ class URLAuthenticatedSession:
     def _find_field(
         fields,
         field_types,
-    ) -> Optional[Dict[str, Any]]:
+    ):
 
         wanted = set(field_types)
 
         for field in fields:
 
             if field.get("field_type") in wanted:
-
                 return field
 
         return None
@@ -501,7 +647,6 @@ class URLAuthenticatedSession:
     ):
 
         if not locator:
-
             return False
 
         try:
@@ -527,9 +672,9 @@ class URLAuthenticatedSession:
 
             try:
 
-                locator = page.locator(
-                    selector
-                ).first
+                locator = (
+                    page.locator(selector).first
+                )
 
                 if locator.count():
 
@@ -550,7 +695,6 @@ class URLAuthenticatedSession:
     ):
 
         if not locator:
-
             return False
 
         try:
@@ -575,9 +719,9 @@ class URLAuthenticatedSession:
 
             try:
 
-                locator = page.locator(
-                    selector
-                ).first
+                locator = (
+                    page.locator(selector).first
+                )
 
                 if locator.count():
 
@@ -624,39 +768,20 @@ class URLAuthenticatedSession:
             )
 
         except Exception:
-
             pass
 
         try:
-
             page.wait_for_timeout(1500)
-
         except Exception:
-
             pass
 
         current_url = (
             page.url or ""
         ).lower()
 
-        title = self._safe_title(
-            page
-        ).lower()
-
-        text = self._safe_text(
-            page
-        ).lower()
-
-        login_indicators = (
-            "login",
-            "log in",
-            "sign in",
-            "signin",
-            "username",
-            "password",
-            "authentication required",
-            "single sign-on",
-            "sso",
+        text = (
+            self._safe_text(page)
+            .lower()
         )
 
         password_count = 0
@@ -684,6 +809,18 @@ class URLAuthenticatedSession:
             )
         )
 
+        login_indicators = (
+            "login",
+            "log in",
+            "sign in",
+            "signin",
+            "username",
+            "password",
+            "authentication required",
+            "single sign-on",
+            "sso",
+        )
+
         auth_text = sum(
             1
             for word in login_indicators
@@ -691,7 +828,8 @@ class URLAuthenticatedSession:
         )
 
         if password_count > 0 and (
-            auth_url or auth_text >= 2
+            auth_url
+            or auth_text >= 2
         ):
 
             return {
@@ -717,17 +855,21 @@ class URLAuthenticatedSession:
             return {
                 "authenticated": False,
                 "reason": (
-                    "No submit action was detected or performed, "
-                    "so authentication could not be confirmed. "
-                    "The absence of a login page is not, on its "
-                    "own, proof of being logged in."
+                    "No authentication submit action "
+                    "was detected or performed."
                 ),
             }
 
         return {
             "authenticated": True,
-            "reason": "Authenticated application page detected.",
+            "reason": (
+                "Authenticated application page detected."
+            ),
         }
+
+    # ==========================================================
+    # SAFE HELPERS
+    # ==========================================================
 
     @staticmethod
     def _safe_title(page):
