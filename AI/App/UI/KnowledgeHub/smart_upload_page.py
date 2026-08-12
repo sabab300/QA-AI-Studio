@@ -2148,6 +2148,8 @@ class SmartUploadPage(QWidget):
             str(message),
         )
 
+        self._restore_url_controls()
+
         self.cleanup_url_discovery_thread()
 
     def cleanup_url_discovery_thread(self):
@@ -2162,4 +2164,3 @@ class SmartUploadPage(QWidget):
 
         self.url_discovery_worker = None
         self.url_discovery_thread = None
-            
