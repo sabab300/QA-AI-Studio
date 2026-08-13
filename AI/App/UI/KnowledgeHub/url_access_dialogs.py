@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from AI.Core.url_access_analyzer import AuthenticatedSessionManager
+from AI.Core.url_discovery_worker import run_authenticated_discovery
 
 class URLInputDialog(QDialog):
     """Collect only the URL before any access analysis."""
@@ -146,3 +148,51 @@ class CredentialsDialog(QDialog):
             field_type: edit.text()
             for field_type, edit in self._fields.items()
         }
+
+class URLAccessDialog(QDialog):
+    """Dialog handler for authenticating and initiating Playwright discovery."""
+
+    def __init__(self, target_url: str, parent=None):
+        super().__init__(parent)
+        self.target_url = target_url
+        self.session_mgr = None
+
+    def handle_authenticated_discovery(self, username: str, password: str):
+        """Authenticates and hands off active Playwright page to discovery."""
+        try:
+            self.session_mgr = AuthenticatedSessionManager()
+            
+            # 1. Establish live authenticated page
+            active_page = self.session_mgr.create_authenticated_session(
+                login_url=self.target_url,
+                username=username,
+                password=password
+            )
+
+            # 2. Check that active_page is valid and open
+            if active_page is None or active_page.is_closed():
+                raise ValueError("Authenticated Playwright session was not returned.")
+
+            # 3. Launch discovery using the live page
+            discovered_data = run_authenticated_discovery(
+                login_url=self.target_url,
+                target_url=self.target_url,
+                credentials={"username": username, "password": password}
+            )
+
+            QMessageBox.information(
+                self, 
+                "Success", 
+                f"Successfully authenticated and discovered {len(discovered_data.get('sequence', []))} workflow steps."
+            )
+            self.accept()
+
+        except Exception as err:
+            QMessageBox.critical(
+                self, 
+                "Authentication Error", 
+                f"Failed during authenticated discovery: {str(err)}"
+            )
+        finally:
+            if self.session_mgr:
+                self.session_mgr.close()

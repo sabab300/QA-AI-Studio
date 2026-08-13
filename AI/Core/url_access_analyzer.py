@@ -1128,3 +1128,84 @@ class URLAccessAnalyzer:
 
 # Backwards-friendly alias for future service wiring.
 AccessAnalyzer = URLAccessAnalyzer
+
+# AI/Core/url_access_analyzer.py by ---https://gemini.google.com/app/ba589dff6780c96a---
+
+from playwright.sync_api import sync_playwright, Page, BrowserContext, Browser
+
+class AuthenticatedSessionManager:
+    """Manages persistent authenticated Playwright sessions across redirects."""
+
+    def __init__(self):
+        self.playwright = None
+        self.browser: Browser = None
+        self.context: BrowserContext = None
+        self.page: Page = None
+
+    def create_authenticated_session(self, login_url: str, username: str, password: str) -> dict:
+        """
+        Logs into PSW portal, handles dynamic redirection, and returns 
+        an active session payload dictionary.
+        """
+        try:
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.launch(headless=False)
+            self.context = self.browser.new_context(viewport={"width": 1280, "height": 800})
+            self.page = self.context.new_page()
+
+            print(f"[Auth Manager] Navigating to login URL: {login_url}")
+            self.page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
+
+            # Resilient selectors targeting login inputs (ignoring dynamic UUID IDs)
+            username_selector = "input#usernameInput, input[name='username'], input[type='text']"
+            password_selector = "input[type='password']"
+            submit_selector = "button[type='submit'], input[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
+
+            # Step 1: Input Credentials
+            self.page.wait_for_selector(username_selector, timeout=10000)
+            self.page.fill(username_selector, username)
+
+            self.page.wait_for_selector(password_selector, timeout=10000)
+            self.page.fill(password_selector, password)
+
+            # Step 2: Click Submit
+            print("[Auth Manager] Submitting login form...")
+            self.page.click(submit_selector)
+
+            # Step 3: Handle SPA Navigation to /app/Dashboard
+            try:
+                self.page.wait_for_url(lambda u: "Dashboard" in u or u != login_url, timeout=15000)
+            except Exception:
+                self.page.wait_for_timeout(4000)  # Buffer for client-side rendering
+
+            print(f"[Auth Manager] Active post-login URL: {self.page.url}")
+
+            if self.page.is_closed():
+                raise RuntimeError("Browser page was closed unexpectedly during login.")
+
+            # Return explicit dictionary payload
+            return {
+                "success": True,
+                "context": self.context,
+                "page": self.page,
+                "browser": self.browser,
+                "playwright": self.playwright,
+                "current_url": self.page.url
+            }
+
+        except Exception as err:
+            print(f"[Auth Manager Error] Session creation failed: {err}")
+            self.close()
+            return None
+
+    def close(self):
+        """Safely cleans up Playwright driver instances."""
+        try:
+            if self.context:
+                self.context.close()
+            if self.browser:
+                self.browser.close()
+            if self.playwright:
+                self.playwright.stop()
+        except Exception:
+            pass

@@ -590,3 +590,38 @@ ALL_TABLES = [
     DISCOVERY_WORKFLOW_STEPS_TABLE,
     DISCOVERY_SESSIONS_TABLE,
 ]
+
+# AI/Database/schema.py (Additions for Hierarchy & Workflow Store)
+
+CREATE_KNOWLEDGE_HIERARCHY_TABLE = """
+CREATE TABLE IF NOT EXISTS url_knowledge_hierarchy (
+    id TEXT PRIMARY KEY,
+    application_name TEXT NOT NULL,
+    business_process TEXT NOT NULL,
+    variant_name TEXT NOT NULL,
+    page_name TEXT NOT NULL,
+    tab_name TEXT,
+    section_name TEXT,
+    element_name TEXT NOT NULL,
+    element_type TEXT NOT NULL, -- button, input, select, tab, link
+    locator_primary TEXT NOT NULL, -- e.g., get_by_role / #id
+    locator_xpath TEXT,
+    locator_css TEXT,
+    placeholder_text TEXT,
+    validation_rules TEXT, -- JSON array e.g. ["required", "min:3"]
+    page_url TEXT NOT NULL,
+    workflow_step_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_WORKFLOW_DEPENDENCY_TABLE = """
+CREATE TABLE IF NOT EXISTS workflow_dependencies (
+    id TEXT PRIMARY KEY,
+    business_process TEXT NOT NULL,
+    start_url TEXT NOT NULL,
+    end_url TEXT NOT NULL,
+    step_sequence_json TEXT NOT NULL, -- JSON array of steps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""

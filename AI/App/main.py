@@ -26,6 +26,19 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
+# Set project root (QA AI Agent directory containing the top-level 'AI' package)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Also ensure the inner directory is included if required
+AI_DIR = Path(__file__).resolve().parent.parent
+if str(AI_DIR) not in sys.path:
+    sys.path.insert(0, str(AI_DIR))
+
+# Existing imports follow below...
+from UI.Main.main_window import MainWindow
+
 # --------------------------------------------------
 
 from UI.Main.main_window import MainWindow
