@@ -90,6 +90,7 @@ from UI.KnowledgeHub.url_authentication_worker import (
 from Core.metadata_manager import MetadataManager
 from Core.discovery_repository import DiscoveryRepository
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
+from PySide6.QtWidgets import QMessageBox
 from UI.KnowledgeHub.upload_worker import UploadWorker
 from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
 from UI.KnowledgeHub.url_discovery_worker import URLDiscoveryWorker
@@ -163,9 +164,6 @@ class SmartUploadPage(QWidget):
         self.url_discovery_source_url = None
         self.url_discovery_auth_type = None
         self.authenticated_session = None
-
-
-
 
     # ======================================================
     # UI
@@ -1544,12 +1542,11 @@ class SmartUploadPage(QWidget):
         credentials,
     ):
         """
-        Start real authenticated Playwright authentication.
-        Credentials remain memory-only.
+        Launches both authentication and discovery in a SINGLE worker thread
+        to prevent Playwright thread context-switching errors.
         """
-
-        if self.url_authentication_thread is not None:
-
+        if self.url_discovery_thread is not None:
+            self.log.append("URL process is already running.")
             return
 
         self.url_analysis_result = result
@@ -1562,63 +1559,51 @@ class SmartUploadPage(QWidget):
         )
 
         if not url:
-
             QMessageBox.critical(
                 self,
                 "Authentication",
                 "No URL is available for authentication.",
             )
-
             return
 
-        self.log.append(
-            "Starting authenticated Playwright access..."
+        self.log.append("Starting unified Playwright session (Auth + Discovery)...")
+
+        # 1. Initialize thread and worker
+        self.url_discovery_thread = QThread()
+
+        # Execute both authentication and discovery inside SmartUploadWorker
+        self.url_discovery_worker = SmartUploadWorker(
+            target_url=url,
+            analysis_data=result,
+            credentials=credentials,
+            db_conn=getattr(self, "db_manager", None),
         )
 
-        self.url_authentication_thread = QThread()
+        self.url_discovery_worker.moveToThread(self.url_discovery_thread)
 
-        self.url_authentication_worker = (
-            URLAuthenticationWorker(
-                url=url,
-                analysis=result,
-                credentials=credentials,
-                headless=False,
+        # 2. Connect worker signals
+        self.url_discovery_thread.started.connect(
+            self.url_discovery_worker.run
+        )
+
+        if hasattr(self.url_discovery_worker, "log_signal"):
+            self.url_discovery_worker.log_signal.connect(self.log.append)
+
+        if hasattr(self.url_discovery_worker, "finished_signal"):
+            self.url_discovery_worker.finished_signal.connect(
+                self.on_url_discovery_finished
             )
+
+        # 3. Clean up thread upon completion
+        self.url_discovery_worker.finished_signal.connect(
+            self.url_discovery_thread.quit
+        )
+        self.url_discovery_thread.finished.connect(
+            self.cleanup_url_discovery_thread
         )
 
-        self.url_authentication_worker.moveToThread(
-            self.url_authentication_thread
-        )
-
-        self.url_authentication_thread.started.connect(
-            self.url_authentication_worker.run
-        )
-
-        self.url_authentication_worker.progress.connect(
-            self.log.append
-        )
-
-        self.url_authentication_worker.finished.connect(
-            self.on_url_authentication_finished
-        )
-
-        self.url_authentication_worker.error.connect(
-            self.on_url_authentication_error
-        )
-
-        self.url_authentication_worker.finished.connect(
-            self.url_authentication_thread.quit
-        )
-
-        self.url_authentication_worker.error.connect(
-            self.url_authentication_thread.quit
-        )
-
-        self.url_authentication_thread.finished.connect(
-            self.cleanup_url_authentication_thread
-        )
-
-        self.url_authentication_thread.start()
+        # 4. Start execution on worker thread
+        self.url_discovery_thread.start()
 
     def on_url_authentication_finished(self, result):
         """
@@ -2274,3 +2259,61 @@ class SmartUploadPage(QWidget):
 
         self.url_discovery_worker = None
         self.url_discovery_thread = None
+
+    def start_authenticated_discovery(self, target_url: str, analysis_data: dict, credentials: dict):
+        """
+        Launches the unified SmartUploadWorker thread.
+        """
+        # Pass Database connection if available
+        db_conn = getattr(self, "db_manager", None)
+
+        self.worker = SmartUploadWorker(
+            target_url=target_url,
+            analysis_data=analysis_data,
+            credentials=credentials,
+            db_conn=db_conn,
+            parent=self
+        )
+
+        # Connect Worker Signals to UI
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_discovery_completed)
+
+        # Launch Thread
+        self.worker.start()
+
+    def execute_smart_upload_discovery(self, target_url: str, analysis_data: dict, credentials: dict):
+        """
+        Launches the unified SmartUploadWorker thread.
+        """
+        db_conn = getattr(self, "db_manager", None)
+
+        # Instantiate single thread worker
+        self.worker = SmartUploadWorker(
+            target_url=target_url,
+            analysis_data=analysis_data,
+            credentials=credentials,
+            db_conn=db_conn,
+            parent=self
+        )
+
+        # Connect Worker Signals to UI
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_discovery_completed)
+
+        # Launch Thread safely
+        self.worker.start()
+
+    def on_discovery_completed(self, result: dict):
+        if not result.get("success"):
+            QMessageBox.critical(
+                self, 
+                "URL Discovery Failed", 
+                result.get("error", "An unknown error occurred during discovery.")
+            )
+        else:
+            self.append_log("Knowledge discovery stored successfully!")
+            # Render tabs in the right main content area as per your layout preference
+            self.display_discovered_endpoints(result.get("data"))

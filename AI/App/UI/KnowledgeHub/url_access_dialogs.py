@@ -4,6 +4,7 @@ URL Access Analyzer UI Dialogs
 Development #2
 """
 
+import asyncio
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from AI.Core.url_access_analyzer import AuthenticatedSessionManager
 from AI.Core.url_discovery_worker import run_authenticated_discovery
+
 
 class URLInputDialog(QDialog):
     """Collect only the URL before any access analysis."""
@@ -149,6 +151,7 @@ class CredentialsDialog(QDialog):
             for field_type, edit in self._fields.items()
         }
 
+
 class URLAccessDialog(QDialog):
     """Dialog handler for authenticating and initiating Playwright discovery."""
 
@@ -160,30 +163,26 @@ class URLAccessDialog(QDialog):
     def handle_authenticated_discovery(self, username: str, password: str):
         """Authenticates and hands off active Playwright page to discovery."""
         try:
-            self.session_mgr = AuthenticatedSessionManager()
-            
-            # 1. Establish live authenticated page
-            active_page = self.session_mgr.create_authenticated_session(
-                login_url=self.target_url,
-                username=username,
-                password=password
+            credentials = {"username": username, "password": password}
+
+            # Execute the async discovery routine
+            discovered_data = asyncio.run(
+                run_authenticated_discovery(
+                    login_url=self.target_url,
+                    target_url=self.target_url,
+                    credentials=credentials
+                )
             )
 
-            # 2. Check that active_page is valid and open
-            if active_page is None or active_page.is_closed():
-                raise ValueError("Authenticated Playwright session was not returned.")
+            if not discovered_data:
+                raise ValueError("Authenticated Playwright session failed or returned no results.")
 
-            # 3. Launch discovery using the live page
-            discovered_data = run_authenticated_discovery(
-                login_url=self.target_url,
-                target_url=self.target_url,
-                credentials={"username": username, "password": password}
-            )
+            sequence_count = len(discovered_data.get("sequence", [])) if isinstance(discovered_data, dict) else 0
 
             QMessageBox.information(
                 self, 
                 "Success", 
-                f"Successfully authenticated and discovered {len(discovered_data.get('sequence', []))} workflow steps."
+                f"Successfully authenticated and discovered {sequence_count} workflow steps."
             )
             self.accept()
 
@@ -194,5 +193,5 @@ class URLAccessDialog(QDialog):
                 f"Failed during authenticated discovery: {str(err)}"
             )
         finally:
-            if self.session_mgr:
+            if self.session_mgr and hasattr(self.session_mgr, "close"):
                 self.session_mgr.close()

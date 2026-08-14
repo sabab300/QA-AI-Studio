@@ -12,13 +12,13 @@ from PySide6.QtCore import QFile, QTextStream
 from PySide6.QtWidgets import QApplication
 
 # --------------------------------------------------
-# Paths
+# Paths Initialization
 # --------------------------------------------------
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 
-# Make project importable (Core, Config, Database...)
+# Make project root importable (Core, Config, Database...)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -26,61 +26,48 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-# Set project root (QA AI Agent directory containing the top-level 'AI' package)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# Top-level AI package resolution
+TOP_LEVEL_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(TOP_LEVEL_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOP_LEVEL_PROJECT_ROOT))
 
-# Also ensure the inner directory is included if required
 AI_DIR = Path(__file__).resolve().parent.parent
 if str(AI_DIR) not in sys.path:
     sys.path.insert(0, str(AI_DIR))
 
-# Existing imports follow below...
-from UI.Main.main_window import MainWindow
-
 # --------------------------------------------------
-
-from UI.Main.main_window import MainWindow
+# App Imports
+# --------------------------------------------------
 from Database.db_manager import DatabaseManager
+from UI.Main.main_window import MainWindow
 
 
-def load_stylesheet(app):
-
+def load_stylesheet(app: QApplication) -> None:
+    """Loads and applies the main QSS stylesheet if present."""
     style_file = APP_DIR / "UI" / "Resources" / "style.qss"
 
     if style_file.exists():
-
         file = QFile(str(style_file))
-
         if file.open(QFile.ReadOnly | QFile.Text):
-
             stream = QTextStream(file)
-
             app.setStyleSheet(stream.readAll())
-
             file.close()
 
 
-def main():
-
+def main() -> None:
     app = QApplication(sys.argv)
 
     app.setApplicationName("QA AI Studio")
     app.setOrganizationName("Pakistan Single Window")
     app.setApplicationVersion("1.0")
 
-    # Critical fix (Phase 1 consistency pass): this was never being
-    # called anywhere before. The app only worked because
-    # Database/metadata.db already had tables in it from an older,
-    # since-removed code path — a fresh install or a deleted DB file
-    # would have crashed immediately. This makes schema creation
-    # part of every actual app startup, and is safe to run every
-    # time (only creates what's missing).
+    # Initialize SQLite/PostgreSQL Database Schema
     DatabaseManager().initialize_database()
 
+    # Load UI Styling
     load_stylesheet(app)
 
+    # Launch Desktop Application Main Window
     window = MainWindow()
     window.showMaximized()
 

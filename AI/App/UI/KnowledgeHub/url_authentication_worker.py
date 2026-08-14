@@ -9,7 +9,7 @@ No username/password is persisted.
 
 from PySide6.QtCore import QObject, Signal
 
-from Core.url_authenticated_session import URLAuthenticatedSession
+from AI.Core.url_authenticated_session import UrlAuthenticatedSession
 
 class URLAuthenticationWorker(QObject):
 
@@ -41,7 +41,7 @@ class URLAuthenticationWorker(QObject):
                 "Starting authenticated Playwright session..."
             )
 
-            self.session = URLAuthenticatedSession(
+            self.session = UrlAuthenticatedSession(
                 headless=self.headless
             )
 

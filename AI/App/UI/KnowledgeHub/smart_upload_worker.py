@@ -1,119 +1,112 @@
-# Create: App/UI/KnowledgeHub/smart_upload_worker.py
-
 """
-==========================================================
-QA AI Studio
+QA AI Studio - Unified Smart Upload Discovery Worker
+Location: UI/KnowledgeHub/smart_upload_worker.py
 
-AI Smart Upload Worker
-
-Version : 1.0
-
-Production Background Analysis Executor
-
-Responsibilities:
-    • Run KnowledgeService.smart_upload() for each selected file
-    • Keep the UI responsive during text extraction + analysis
-    • Emit per-file progress so the log can show live status
-    • Return the full set of per-file results in one dict
-    • Never let one bad/unreadable file abort the whole batch
-==========================================================
+Executes Playwright Session Initialization, Authentication, and URL Discovery
+sequentially inside a single QThread context to prevent Playwright thread-switch errors.
 """
 
-from pathlib import Path
+from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal
+import logging
+from PySide6.QtCore import QThread, Signal
 
-from Core.knowledge_service import KnowledgeService
+from Core.url_authenticated_session import URLAuthenticatedSession
+from AI.Core.url_discovery_engine import URLDiscoveryEngine
 
 
-class SmartUploadWorker(QObject):
+class SmartUploadWorker(QThread):
+    """
+    Unified worker that keeps Playwright alive across both Auth and Discovery stages.
+    """
+    log_signal = Signal(str)
+    progress_signal = Signal(int, str)
+    finished_signal = Signal(dict)
 
-    # lifecycle signals
-    started = Signal()
-
-    # emitted once per file as it completes: (file_path, result_dict)
-    file_analyzed = Signal(str, dict)
-
-    # emitted once per file that fails: (file_path, error_message)
-    file_failed = Signal(str, str)
-
-    progress = Signal(str)
-
-    # emitted at the very end with { file_path: result_dict, ... }
-    finished = Signal(dict)
-
-    error = Signal(str)
-
-    def __init__(self, files):
-
-        super().__init__()
-
-        self.files = files
-
-        self.service = KnowledgeService()
-
-    # -------------------------------------------------
-    # Worker execution
-    # -------------------------------------------------
+    def __init__(
+        self,
+        target_url: str,
+        analysis_data: dict,
+        credentials: dict,
+        db_conn=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.target_url = target_url
+        self.analysis_data = analysis_data
+        self.credentials = credentials
+        self.db_conn = db_conn
+        self.logger = logging.getLogger(__name__)
 
     def run(self):
+        """Sequential single-threaded execution."""
+        self.log_signal.emit("Initializing authenticated Playwright environment...")
+        self.progress_signal.emit(10, "Starting Playwright Engine...")
+
+        # 1. Initialize Session INSIDE this thread
+        session = URLAuthenticatedSession(headless=False)
 
         try:
+            # 2. Authenticate
+            self.log_signal.emit(f"Authenticating access for: {self.target_url}")
+            self.progress_signal.emit(30, "Logging into application...")
 
-            self.started.emit()
-
-            if not self.files:
-
-                raise ValueError(
-                    "No files selected for analysis"
-                )
-
-            results = {}
-
-            total = len(self.files)
-
-            for index, file_path in enumerate(self.files, start=1):
-
-                name = Path(file_path).name
-
-                self.progress.emit(
-                    f"Analyzing ({index}/{total}): {name}"
-                )
-
-                try:
-
-                    result = self.service.smart_upload(
-                        source_file=file_path
-                    )
-
-                    results[file_path] = result
-
-                    self.file_analyzed.emit(
-                        file_path,
-                        result
-                    )
-
-                except Exception as file_ex:
-
-                    message = str(file_ex)
-
-                    self.file_failed.emit(
-                        file_path,
-                        message
-                    )
-
-                    self.progress.emit(
-                        f"Failed: {name} — {message}"
-                    )
-
-            self.progress.emit(
-                "AI analysis completed."
+            auth_res = session.authenticate(
+                url=self.target_url,
+                analysis=self.analysis_data,
+                credentials=self.credentials,
             )
 
-            self.finished.emit(results)
+            if not auth_res.get("success"):
+                error_msg = auth_res.get("error", "Authentication failed.")
+                self.log_signal.emit(f"Authentication Failed: {error_msg}")
+                self.finished_signal.emit({"success": False, "error": error_msg})
+                return
+
+            self.log_signal.emit("Authenticated successfully! Transitioning to discovery...")
+            self.progress_signal.emit(60, "Running URL Discovery Engine...")
+
+            # 3. Extract the active context/page from the live session
+            if hasattr(session, "get_authenticated_context"):
+                context = session.get_authenticated_context()
+            else:
+                context = getattr(session, "context", None)
+
+            if context is None:
+                raise ValueError("Could not obtain active Playwright context from session.")
+
+            auth_type = (
+                self.analysis_data.get("authentication_type")
+                or self.analysis_data.get("authentication")
+                or "LOGIN_FORM"
+            )
+
+            # 4. Instantiate URLDiscoveryEngine with supported init parameters
+            discovery_engine = URLDiscoveryEngine(
+                context=context,
+                authentication_type=auth_type,
+                headless=False,
+            )
+
+            # Pass target_url into discover()
+            discovery_result = discovery_engine.discover(target_url=self.target_url)
+
+            self.progress_signal.emit(100, "Discovery Complete.")
+            self.log_signal.emit("URL discovery completed successfully!")
+            
+            self.finished_signal.emit({
+                "success": True,
+                "data": discovery_result
+            })
 
         except Exception as ex:
+            self.logger.exception("Unified Smart Upload Worker encountered an error.")
+            self.log_signal.emit(f"Execution Error: {str(ex)}")
+            self.finished_signal.emit({"success": False, "error": str(ex)})
 
-            self.error.emit(
-                str(ex)
-            )
+        finally:
+            # 5. Clean up Playwright resources on thread exit
+            try:
+                session.close()
+            except Exception:
+                pass
