@@ -66,7 +66,7 @@ class SmartUploadWorker(QThread):
             self.log_signal.emit("Authenticated successfully! Transitioning to discovery...")
             self.progress_signal.emit(60, "Running URL Discovery Engine...")
 
-            # 3. Extract the active context/page from the live session
+            # 3. Extract active context/page from the live session
             if hasattr(session, "get_authenticated_context"):
                 context = session.get_authenticated_context()
             else:
@@ -75,20 +75,14 @@ class SmartUploadWorker(QThread):
             if context is None:
                 raise ValueError("Could not obtain active Playwright context from session.")
 
-            auth_type = (
-                self.analysis_data.get("authentication_type")
-                or self.analysis_data.get("authentication")
-                or "LOGIN_FORM"
-            )
+            # 4. Instantiate URLDiscoveryEngine with clean parameters
+            # (Passing context and db_conn if accepted)
+            try:
+                discovery_engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
+            except TypeError:
+                discovery_engine = URLDiscoveryEngine(context=context)
 
-            # 4. Instantiate URLDiscoveryEngine with supported init parameters
-            discovery_engine = URLDiscoveryEngine(
-                context=context,
-                authentication_type=auth_type,
-                headless=False,
-            )
-
-            # Pass target_url into discover()
+            # 5. Execute discovery on target URL
             discovery_result = discovery_engine.discover(target_url=self.target_url)
 
             self.progress_signal.emit(100, "Discovery Complete.")
@@ -105,7 +99,7 @@ class SmartUploadWorker(QThread):
             self.finished_signal.emit({"success": False, "error": str(ex)})
 
         finally:
-            # 5. Clean up Playwright resources on thread exit
+            # 6. Clean up Playwright resources on thread exit
             try:
                 session.close()
             except Exception:
