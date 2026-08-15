@@ -9,6 +9,7 @@ sequentially inside a single QThread context to prevent Playwright thread-switch
 from __future__ import annotations
 
 import logging
+import time
 from PySide6.QtCore import QThread, Signal
 
 from Core.url_authenticated_session import URLAuthenticatedSession
@@ -63,8 +64,11 @@ class SmartUploadWorker(QThread):
                 self.finished_signal.emit({"success": False, "error": error_msg})
                 return
 
-            self.log_signal.emit("Authenticated successfully! Transitioning to discovery...")
-            self.progress_signal.emit(60, "Running URL Discovery Engine...")
+            self.log_signal.emit("Authenticated successfully! Waiting for post-login dashboard to load...")
+            self.progress_signal.emit(50, "Waiting for page rendering...")
+
+            # Give SPA frontend time to process post-login redirects and render UI controls
+            time.sleep(3)
 
             # 3. Extract active context/page from the live session
             if hasattr(session, "get_authenticated_context"):
@@ -75,6 +79,9 @@ class SmartUploadWorker(QThread):
             if context is None:
                 raise ValueError("Could not obtain active Playwright context from session.")
 
+            self.log_signal.emit("Transitioning to URL discovery engine...")
+            self.progress_signal.emit(70, "Discovering UI elements...")
+
             # 4. Instantiate URLDiscoveryEngine
             try:
                 discovery_engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
@@ -83,23 +90,35 @@ class SmartUploadWorker(QThread):
 
             # 5. Execute discover() with flexible parameter fallbacks
             try:
-                # Try positional argument first
                 discovery_result = discovery_engine.discover(self.target_url)
             except TypeError:
                 try:
-                    # Try keyword argument 'url'
                     discovery_result = discovery_engine.discover(url=self.target_url)
                 except TypeError:
-                    # Try zero-argument call (if engine discovers current active page)
                     discovery_result = discovery_engine.discover()
 
             self.progress_signal.emit(100, "Discovery Complete.")
             self.log_signal.emit("URL discovery completed successfully!")
-            
-            self.finished_signal.emit({
-                "success": True,
-                "data": discovery_result
-            })
+
+            # 6. Normalize discovery output structure for Knowledge Hub DB storage
+            payload = {"success": True}
+
+            if isinstance(discovery_result, dict):
+                # If result is wrapped inside a 'data' key, unwrap it
+                raw_data = discovery_result.get("data", discovery_result) if "data" in discovery_result else discovery_result
+                if isinstance(raw_data, dict):
+                    payload.update(raw_data)
+                else:
+                    payload["data"] = raw_data
+            else:
+                payload["data"] = discovery_result
+
+            # Ensure expected discovery lists exist at top-level
+            for key in ["pages", "forms", "fields", "buttons", "links", "tabs", "navigation_targets"]:
+                if key not in payload or not isinstance(payload[key], list):
+                    payload[key] = payload.get(key, [])
+
+            self.finished_signal.emit(payload)
 
         except Exception as ex:
             self.logger.exception("Unified Smart Upload Worker encountered an error.")
@@ -107,8 +126,9 @@ class SmartUploadWorker(QThread):
             self.finished_signal.emit({"success": False, "error": str(ex)})
 
         finally:
-            # 6. Clean up Playwright resources on thread exit
-            try:
-                session.close()
-            except Exception:
-                pass
+            # Comment out or remove session.close() to keep the browser open post-discovery
+            self.log_signal.emit("Discovery finished. Playwright browser kept open.")
+            # try:
+            #     session.close()
+            # except Exception:
+            #     pass
