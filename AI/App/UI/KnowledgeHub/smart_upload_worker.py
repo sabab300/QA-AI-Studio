@@ -75,15 +75,23 @@ class SmartUploadWorker(QThread):
             if context is None:
                 raise ValueError("Could not obtain active Playwright context from session.")
 
-            # 4. Instantiate URLDiscoveryEngine with clean parameters
-            # (Passing context and db_conn if accepted)
+            # 4. Instantiate URLDiscoveryEngine
             try:
                 discovery_engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
             except TypeError:
                 discovery_engine = URLDiscoveryEngine(context=context)
 
-            # 5. Execute discovery on target URL
-            discovery_result = discovery_engine.discover(target_url=self.target_url)
+            # 5. Execute discover() with flexible parameter fallbacks
+            try:
+                # Try positional argument first
+                discovery_result = discovery_engine.discover(self.target_url)
+            except TypeError:
+                try:
+                    # Try keyword argument 'url'
+                    discovery_result = discovery_engine.discover(url=self.target_url)
+                except TypeError:
+                    # Try zero-argument call (if engine discovers current active page)
+                    discovery_result = discovery_engine.discover()
 
             self.progress_signal.emit(100, "Discovery Complete.")
             self.log_signal.emit("URL discovery completed successfully!")
