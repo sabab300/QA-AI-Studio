@@ -129,6 +129,17 @@ DOCUMENT_TYPES = [
     "Other",
 ]
 
+# Add these imports at the top of App/UI/KnowledgeHub/smart_upload_page.py
+
+try:
+    from UI.KnowledgeHub.business_hierarchy_dialog import BusinessHierarchyDialog
+    from UI.KnowledgeHub.knowledge_db_sync import save_business_hierarchy_to_db
+except ImportError:
+    try:
+        from .business_hierarchy_dialog import BusinessHierarchyDialog
+        from .knowledge_db_sync import save_business_hierarchy_to_db
+    except ImportError:
+        pass
 
 class SmartUploadPage(QWidget):
 
@@ -2317,3 +2328,41 @@ class SmartUploadPage(QWidget):
             self.append_log("Knowledge discovery stored successfully!")
             # Render tabs in the right main content area as per your layout preference
             self.display_discovered_endpoints(result.get("data"))
+
+    # Inside App/UI/KnowledgeHub/smart_upload_page.py
+
+    from UI.KnowledgeHub.business_hierarchy_dialog import BusinessHierarchyDialog
+    from UI.KnowledgeHub.knowledge_db_sync import save_business_hierarchy_to_db
+
+
+    def on_worker_finished(self, result: dict):
+        """Callback fired when SmartUploadWorker finishes Playwright analysis."""
+        if not result.get("success"):
+            QMessageBox.critical(self, "Discovery Failed", f"Error: {result.get('error')}")
+            return
+
+        # Extract raw discovery payload
+        discovery_data = result.get("data", result)
+
+        # Open Pre-Submission Hierarchy Review Dialog
+        dialog = BusinessHierarchyDialog(discovery_data, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            confirmed_hierarchy = dialog.confirmed_data
+
+            # Save verified metadata to Database
+            db_result = save_business_hierarchy_to_db(self.db_conn, confirmed_hierarchy)
+
+            if db_result.get("success"):
+                QMessageBox.information(
+                    self, 
+                    "Knowledge Saved", 
+                    f"Business Hierarchy successfully updated in Knowledge Hub!\n"
+                    f"Discovered Elements Stored: {db_result.get('element_count')}"
+                )
+                # Refresh Knowledge Manager Table if present
+                if hasattr(self, "url_manager_tab"):
+                    self.url_manager_tab.load_url_knowledge()
+            else:
+                QMessageBox.critical(self, "Database Error", f"Could not save: {db_result.get('error')}")
+        else:
+            self.log_message("User cancelled business hierarchy confirmation.")

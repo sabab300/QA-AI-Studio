@@ -67,8 +67,9 @@ class SmartUploadWorker(QThread):
             self.log_signal.emit("Authenticated successfully! Waiting for post-login dashboard to load...")
             self.progress_signal.emit(50, "Waiting for page rendering...")
 
-            # Give SPA frontend time to process post-login redirects and render UI controls
             time.sleep(3)
+
+            # ... Authenticated session steps ...
 
             # 3. Extract active context/page from the live session
             if hasattr(session, "get_authenticated_context"):
@@ -79,32 +80,27 @@ class SmartUploadWorker(QThread):
             if context is None:
                 raise ValueError("Could not obtain active Playwright context from session.")
 
+            # Apply global timeouts across all open context pages
+            for p in context.pages:
+                p.set_default_navigation_timeout(30000)
+                p.set_default_timeout(30000)
+
             self.log_signal.emit("Transitioning to URL discovery engine...")
             self.progress_signal.emit(70, "Discovering UI elements...")
 
             # 4. Instantiate URLDiscoveryEngine
-            try:
-                discovery_engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
-            except TypeError:
-                discovery_engine = URLDiscoveryEngine(context=context)
+            discovery_engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
 
-            # 5. Execute discover() with flexible parameter fallbacks
-            try:
-                discovery_result = discovery_engine.discover(self.target_url)
-            except TypeError:
-                try:
-                    discovery_result = discovery_engine.discover(url=self.target_url)
-                except TypeError:
-                    discovery_result = discovery_engine.discover()
+            # 5. Execute discover()
+            discovery_result = discovery_engine.discover(self.target_url)
 
             self.progress_signal.emit(100, "Discovery Complete.")
             self.log_signal.emit("URL discovery completed successfully!")
 
-            # 6. Normalize discovery output structure for Knowledge Hub DB storage
+            # 6. Normalize discovery output structure
             payload = {"success": True}
 
             if isinstance(discovery_result, dict):
-                # If result is wrapped inside a 'data' key, unwrap it
                 raw_data = discovery_result.get("data", discovery_result) if "data" in discovery_result else discovery_result
                 if isinstance(raw_data, dict):
                     payload.update(raw_data)
@@ -113,7 +109,6 @@ class SmartUploadWorker(QThread):
             else:
                 payload["data"] = discovery_result
 
-            # Ensure expected discovery lists exist at top-level
             for key in ["pages", "forms", "fields", "buttons", "links", "tabs", "navigation_targets"]:
                 if key not in payload or not isinstance(payload[key], list):
                     payload[key] = payload.get(key, [])
@@ -126,9 +121,4 @@ class SmartUploadWorker(QThread):
             self.finished_signal.emit({"success": False, "error": str(ex)})
 
         finally:
-            # Comment out or remove session.close() to keep the browser open post-discovery
             self.log_signal.emit("Discovery finished. Playwright browser kept open.")
-            # try:
-            #     session.close()
-            # except Exception:
-            #     pass

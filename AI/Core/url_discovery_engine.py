@@ -1,262 +1,292 @@
-# AI/Core/url_discovery_engine.py
+"""
+QA AI Studio - URL Discovery & Workflow Traversal Engine
+Location: AI/Core/url_discovery_engine.py
+"""
 
 from __future__ import annotations
+
+import logging
 import re
-from typing import Any
-from playwright.sync_api import Page, BrowserContext
+import time
+from typing import Any, Dict, List, Optional
+from playwright.sync_api import BrowserContext, Page, Locator
+
+logger = logging.getLogger(__name__)
+
+# Mutating action keywords that must NEVER be clicked during passive discovery
+MUTATING_KEYWORDS = [
+    "submit", "save", "create", "confirm", "delete", "post", 
+    "update", "send", "process", "apply", "register", "pay", "checkout"
+]
 
 
 class URLDiscoveryEngine:
+    """
+    Passive & Semi-Active UI Discovery Engine for multi-tab SPAs and business processes.
+    """
 
     def __init__(
         self,
-        context: BrowserContext,
-        headless: bool = False,
-        timeout: int = 30000,
+        context: Optional[BrowserContext] = None,
+        page: Optional[Page] = None,
+        db_conn: Any = None,
+        logger_instance: Optional[logging.Logger] = None,
     ):
-        if context is None:
-            raise ValueError("Authenticated Playwright context is required.")
-
         self.context = context
-        self.headless = headless
-        self.timeout = timeout
+        self.page = page or (context.pages[-1] if context and context.pages else None)
+        self.db_conn = db_conn
+        self.logger = logger_instance or logger
 
-    def discover(
-        self,
-        url: str,
-        authentication_type: str = "NONE",
-    ) -> dict[str, Any]:
+    def _get_active_page(self) -> Optional[Page]:
+        """Resolves the currently active page from context or direct reference."""
+        if self.page and not self.page.is_closed():
+            return self.page
+        if self.context and self.context.pages:
+            return self.context.pages[-1]
+        return None
 
-        if not url:
-            raise ValueError("URL is required.")
+    def discover(self, url: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Scans current page and autonomously traverses business process tabs.
+        """
+        page = self._get_active_page()
+        if not page:
+            raise RuntimeError("No active Playwright page found in context.")
 
-        result: dict[str, Any] = {
-            "success": False,
-            "requested_url": url,
-            "final_url": "",
-            "authentication_type": authentication_type,
-            "pages": [],
-            "navigation": [],
-            "forms": [],
-            "fields": [],
-            "buttons": [],
-            "links": [],
-            "tabs": [],
-            "knowledge": [],
-            "error": "",
-        }
+        page.set_default_navigation_timeout(30000)
+        page.set_default_timeout(30000)
 
-        page = self._get_or_create_page()
-        page.set_default_timeout(self.timeout)
+        # 1. Ensure navigation or wait for post-login redirects to complete
+        if url:
+            current_url = page.url.rstrip('/') if page.url else ""
+            target_url = url.rstrip('/')
 
+            if current_url != target_url:
+                self.logger.info(f"Navigating to discovery target: {url}")
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            else:
+                self.logger.info("Already on target page from auth step. Waiting for post-login rendering...")
+                page.wait_for_load_state("domcontentloaded", timeout=30000)
+
+        # 2. Wait for SPA Post-Login Elements to Render
+        self._wait_for_dashboard_load(page)
+
+        # 3. Primary Page Discovery
+        self.logger.info(f"Scanning primary page state: {page.url}")
+        result = self._discover_page(page)
+
+        # 4. Extract & Traverse Discovered Tabs
+        tabs = result.get("tabs", [])
+        if tabs:
+            self.logger.info(f"Discovered {len(tabs)} workflow tabs/steps. Starting safety-aware traversal...")
+            self._traverse_workflow_tabs(page, tabs, result)
+
+        return result
+
+    def _wait_for_dashboard_load(self, page: Page):
+        """
+        Ensures SPA post-login redirects are finished and interactive elements exist.
+        """
+        self.logger.info("Waiting for post-login DOM elements and SPA network stabilization...")
+        
+        # Wait up to 10s for common dashboard layout containers or visible inputs/buttons
         try:
-            # Do NOT force re-navigation if already on /Dashboard or target page
-            if url not in page.url and "Dashboard" not in page.url:
-                page.goto(url, wait_until="domcontentloaded", timeout=self.timeout)
-
-            page.wait_for_timeout(2000)
-            result["final_url"] = page.url
-
-            # Extract active DOM state
-            page_data = self._discover_page(page)
-            result["pages"].append(page_data)
-            result["navigation"].extend(page_data.get("navigation", []))
-            result["forms"].extend(page_data.get("forms", []))
-            result["fields"].extend(page_data.get("fields", []))
-            result["buttons"].extend(page_data.get("buttons", []))
-            result["links"].extend(page_data.get("links", []))
-            result["tabs"].extend(page_data.get("tabs", []))
-
-            self._discover_navigation_targets(page, result)
-
-            result["success"] = True
-            return result
-
-        except Exception as ex:
-            result["error"] = str(ex)
-            return result
-
-    def _get_or_create_page(self) -> Page:
-        pages = self.context.pages
-        if pages:
-            page = pages[-1]
-            try:
-                if not page.is_closed():
-                    return page
-            except Exception:
-                pass
-        return self.context.new_page()
-
-    def _discover_page(self, page: Page) -> dict[str, Any]:
-        data = {
-            "url": page.url,
-            "title": "",
-            "forms": [],
-            "fields": [],
-            "buttons": [],
-            "links": [],
-            "navigation": [],
-            "tabs": [],
-        }
-
-        try:
-            data["title"] = page.title()
+            page.wait_for_selector(
+                "nav, sidebar, .dashboard, .app-container, [role='navigation'], input:visible, button:visible",
+                timeout=10000
+            )
         except Exception:
-            data["title"] = ""
+            self.logger.warning("Timeout waiting for explicit layout selectors; proceeding with available DOM.")
 
-        # Forms
-        forms = page.locator("form")
-        for index in range(min(forms.count(), 100)):
-            form = forms.nth(index)
-            data["forms"].append({
-                "index": index,
-                "action": self._safe_attr(form, "action"),
-                "method": self._safe_attr(form, "method"),
-            })
+        # Give client-side JS rendering frames time to mount components
+        page.wait_for_timeout(3000)
 
-        # Inputs / Textareas / Selects
-        inputs = page.locator("input, textarea, select")
-        for index in range(min(inputs.count(), 1000)):
-            data["fields"].append(self._extract_element(inputs.nth(index), index))
+    def _discover_page(self, page: Page) -> Dict[str, Any]:
+        """Extracts fields, forms, buttons, links, tabs, and navigation targets from current page state."""
+        page_title = page.title()
+        current_url = page.url
 
-        # Buttons
-        buttons = page.locator("button, input[type='button'], input[type='submit'], [role='button']")
-        for index in range(min(buttons.count(), 500)):
-            data["buttons"].append(self._extract_element(buttons.nth(index), index))
+        fields = self._extract_fields(page)
+        buttons = self._extract_buttons(page)
+        links = self._extract_links(page)
+        tabs = self._extract_tabs(page)
 
-        # Links
-        links = page.locator("a")
-        for index in range(min(links.count(), 500)):
-            element = links.nth(index)
-            href = self._safe_attr(element, "href")
-            text = self._safe_text(element)
-            if href or text:
-                data["links"].append({
-                    "index": index,
-                    "text": text,
-                    "href": href,
-                    "dynamic_xpath": self.generate_dynamic_xpath({"tag_name": "a", "text": text}),
-                })
+        return {
+            "success": True,
+            "url": current_url,
+            "title": page_title,
+            "pages": [{"url": current_url, "title": page_title}],
+            "forms": self._extract_forms(page),
+            "fields": fields,
+            "buttons": buttons,
+            "links": links,
+            "tabs": tabs,
+            "navigation_targets": [l for l in links if self._is_nav_link(l)]
+        }
 
-        # Navigation Bar Links
-        navigation = page.locator("nav a, [role='navigation'] a, [role='tab'], .nav-link, .tab, .tabs a")
-        for index in range(min(navigation.count(), 500)):
-            data["navigation"].append(self._extract_element(navigation.nth(index), index))
+    def _traverse_workflow_tabs(self, page: Page, tabs: List[Dict[str, Any]], aggregated_result: Dict[str, Any]):
+        """Sequentially clicks tabs, fills prerequisite fields heuristically, and scans tab content safely."""
+        for idx, tab in enumerate(tabs):
+            tab_name = tab.get("text") or tab.get("aria_label") or f"Tab {idx+1}"
+            locator_str = tab.get("locator")
 
-        # Tabs
-        tabs = page.locator("[role='tab'], .tab, .nav-tabs a, .tabs a")
-        for index in range(min(tabs.count(), 200)):
-            data["tabs"].append(self._extract_element(tabs.nth(index), index))
-
-        return data
-
-    def _discover_navigation_targets(self, page: Page, result: dict[str, Any]) -> None:
-        links = page.locator("a")
-        existing = {item.get("href") for item in result["navigation"] if item.get("href")}
-
-        for index in range(min(links.count(), 500)):
-            element = links.nth(index)
-            href = self._safe_attr(element, "href")
-
-            if not href or href.startswith("#") or href.startswith("javascript:") or href in existing:
+            if not locator_str:
                 continue
 
-            existing.add(href)
-            result["navigation"].append({
-                "index": index,
-                "text": self._safe_text(element),
-                "href": href,
-            })
+            self.logger.info(f"Navigating to Tab [{idx+1}/{len(tabs)}]: {tab_name}")
+            
+            # Fill existing visible fields on current step before transitioning to unlock next tab
+            self._fill_prerequisite_fields_heuristically(page)
 
-    def _extract_element(self, element, index: int) -> dict[str, Any]:
-        tag_name = ""
+            try:
+                tab_element = page.locator(locator_str).first
+                if tab_element.is_visible():
+                    tab_element.click(timeout=3000)
+                    page.wait_for_timeout(1500)  # Allow SPA rendering
+
+                    # Discover elements rendered inside this new tab
+                    sub_scan = self._discover_page(page)
+                    
+                    # Merge unique new fields & buttons into aggregated result
+                    self._merge_scan_results(aggregated_result, sub_scan, tab_name=tab_name)
+            except Exception as ex:
+                self.logger.warning(f"Could not traverse tab '{tab_name}': {ex}")
+
+    def _fill_prerequisite_fields_heuristically(self, page: Page):
+        """Fills visible empty inputs with harmless placeholder data to satisfy required field validations."""
         try:
-            tag_name = element.evaluate("(e) => e.tagName.toLowerCase()")
-        except Exception:
-            pass
+            inputs = page.locator("input:visible, select:visible, textarea:visible").all()
+            for inp in inputs:
+                try:
+                    is_disabled = inp.is_disabled()
+                    if is_disabled:
+                        continue
 
-        extracted = {
-            "index": index,
-            "tag_name": tag_name,
-            "element_type": self._safe_attr(element, "type"),
-            "id": self._safe_attr(element, "id"),
-            "name": self._safe_attr(element, "name"),
-            "placeholder": self._safe_attr(element, "placeholder"),
-            "aria_label": self._safe_attr(element, "aria-label"),
-            "role": self._safe_attr(element, "role"),
-            "text": self._safe_text(element),
-            "href": self._safe_attr(element, "href"),
-        }
+                    tag_name = inp.evaluate("el => el.tagName.toLowerCase()")
+                    input_type = inp.get_attribute("type") or "text"
+                    val = inp.input_value() if tag_name in ["input", "textarea"] else ""
 
-        extracted["locator"] = self._build_locator(extracted)
-        extracted["dynamic_xpath"] = self.generate_dynamic_xpath(extracted)
+                    if val:
+                        continue  # Already filled
 
-        return extracted
+                    # Apply safe heuristic values
+                    if input_type in ["text", "search"]:
+                        inp.fill("Test Data")
+                    elif input_type == "number":
+                        inp.fill("1")
+                    elif input_type == "email":
+                        inp.fill("qa_test@example.com")
+                    elif input_type == "date":
+                        inp.fill("2026-08-15")
+                    elif tag_name == "select":
+                        options = inp.locator("option").all()
+                        if len(options) > 1:
+                            inp.select_option(index=1)
+                except Exception:
+                    continue
+        except Exception as ex:
+            self.logger.debug(f"Heuristic fill pass complete with minor skips: {ex}")
 
-    def _build_locator(self, element: dict[str, Any]) -> str:
-        element_id = element.get("id", "")
-        if element_id and not self._is_dynamic_id(element_id):
-            return f"#{element_id}"
+    def _extract_buttons(self, page: Page) -> List[Dict[str, Any]]:
+        buttons = []
+        elements = page.locator("button:visible, input[type='button']:visible, input[type='submit']:visible, [role='button']:visible").all()
+        for el in elements:
+            try:
+                text = el.inner_text().strip() or el.get_attribute("value") or el.get_attribute("aria-label") or ""
+                locator_str = self._generate_locator(el)
+                
+                # Check for mutating action keywords
+                is_mutating = any(kw in text.lower() for kw in MUTATING_KEYWORDS)
+                
+                buttons.append({
+                    "text": text,
+                    "locator": locator_str,
+                    "is_mutating_action": is_mutating,
+                    "action_safety": "BLOCKED_DURING_DISCOVERY" if is_mutating else "SAFE"
+                })
+            except Exception:
+                continue
+        return buttons
 
-        name = element.get("name", "")
-        if name and not self._is_dynamic_id(name):
+    def _extract_fields(self, page: Page) -> List[Dict[str, Any]]:
+        fields = []
+        elements = page.locator("input:visible, select:visible, textarea:visible").all()
+        for el in elements:
+            try:
+                field_id = el.get_attribute("id") or ""
+                name = el.get_attribute("name") or ""
+                placeholder = el.get_attribute("placeholder") or ""
+                aria_label = el.get_attribute("aria-label") or ""
+                locator_str = self._generate_locator(el)
+
+                fields.append({
+                    "element_id": field_id,
+                    "name": name,
+                    "placeholder": placeholder,
+                    "aria_label": aria_label,
+                    "locator": locator_str,
+                })
+            except Exception:
+                continue
+        return fields
+
+    def _extract_tabs(self, page: Page) -> List[Dict[str, Any]]:
+        tabs = []
+        tab_elements = page.locator("[role='tab']:visible, .nav-tabs li a:visible, .ant-tabs-tab:visible, ul.tabs li:visible").all()
+        for el in tab_elements:
+            try:
+                text = el.inner_text().strip() or el.get_attribute("aria-label") or ""
+                locator_str = self._generate_locator(el)
+                tabs.append({"text": text, "locator": locator_str})
+            except Exception:
+                continue
+        return tabs
+
+    def _extract_forms(self, page: Page) -> List[Dict[str, Any]]:
+        forms = []
+        for el in page.locator("form:visible").all():
+            try:
+                forms.append({"id": el.get_attribute("id") or "", "action": el.get_attribute("action") or ""})
+            except Exception:
+                continue
+        return forms
+
+    def _extract_links(self, page: Page) -> List[Dict[str, Any]]:
+        links = []
+        for el in page.locator("a[href]:visible").all():
+            try:
+                links.append({"text": el.inner_text().strip(), "href": el.get_attribute("href") or ""})
+            except Exception:
+                continue
+        return links
+
+    def _is_nav_link(self, link: Dict[str, Any]) -> bool:
+        href = link.get("href", "")
+        return bool(href and not href.startswith("#") and not href.startswith("javascript:"))
+
+    def _generate_locator(self, el: Locator) -> str:
+        field_id = el.get_attribute("id")
+        if field_id:
+            return f"#{field_id}"
+        name = el.get_attribute("name")
+        if name:
             return f"[name='{name}']"
-
-        placeholder = element.get("placeholder", "")
+        placeholder = el.get_attribute("placeholder")
         if placeholder:
             return f"[placeholder='{placeholder}']"
+        return el.evaluate("el => el.tagName.toLowerCase()")
 
-        element_type = element.get("element_type", "")
-        if element_type:
-            return f"input[type='{element_type}']"
+    def _merge_scan_results(self, main_res: Dict[str, Any], sub_scan: Dict[str, Any], tab_name: str):
+        existing_locators = {f.get("locator") for f in main_res["fields"]}
+        for field in sub_scan.get("fields", []):
+            if field.get("locator") not in existing_locators:
+                field["tab_origin"] = tab_name
+                main_res["fields"].append(field)
+                existing_locators.add(field.get("locator"))
 
-        role = element.get("role", "")
-        if role:
-            return f"[role='{role}']"
-
-        return element.get("tag_name", "")
-
-    @staticmethod
-    def generate_dynamic_xpath(element: dict) -> str:
-        tag = element.get("tag_name", "*").lower() or "*"
-        attr_type = element.get("element_type", "")
-        placeholder = element.get("placeholder", "")
-        text = element.get("text", "").strip()
-        name = element.get("name", "")
-
-        if name and not any(char.isdigit() for char in name):
-            return f"//{tag}[@name='{name}']"
-
-        if placeholder:
-            return f"//{tag}[contains(@placeholder, '{placeholder}')]"
-
-        if text and tag in ["button", "a", "span", "div"]:
-            return f"//{tag}[normalize-space()='{text}']"
-
-        if attr_type:
-            return f"//{tag}[@type='{attr_type}']"
-
-        return f"//{tag}"
-
-    @staticmethod
-    def _is_dynamic_id(value: str) -> str:
-        uuid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-        if re.match(uuid_pattern, value):
-            return True
-        if len(value) > 20 and re.search(r"\d{4,}", value):
-            return True
-        return False
-
-    @staticmethod
-    def _safe_attr(element, name: str) -> str:
-        try:
-            return element.get_attribute(name) or ""
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _safe_text(element) -> str:
-        try:
-            return (element.inner_text() or "").strip()
-        except Exception:
-            return ""
+        existing_btn_locators = {b.get("locator") for b in main_res["buttons"]}
+        for btn in sub_scan.get("buttons", []):
+            if btn.get("locator") not in existing_btn_locators:
+                btn["tab_origin"] = tab_name
+                main_res["buttons"].append(btn)
+                existing_btn_locators.add(btn.get("locator"))
