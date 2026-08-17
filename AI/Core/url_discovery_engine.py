@@ -85,43 +85,136 @@ class URLDiscoveryEngine:
 
     def _wait_for_dashboard_load(self, page: Page):
         """
-        Ensures SPA post-login redirects are finished and interactive elements exist.
+        Ensures SPA post-login redirects complete and interactive elements render.
         """
-        self.logger.info("Waiting for post-login DOM elements and SPA network stabilization...")
-        
-        # Wait up to 10s for common dashboard layout containers or visible inputs/buttons
+        self.logger.info("Waiting for post-login DOM elements and SPA component mounting...")
+
+        # 1. Wait for DOM content to settle
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            self.logger.warning("DOM content loaded event timed out; checking DOM tree...")
+
+        # 2. Wait explicitly for visual layout containers or form controls
+        dashboard_selectors = (
+            "nav, sidebar, .dashboard, .app-container, [role='navigation'], "
+            "form:visible, input:visible, select:visible, button:visible, .ant-tabs, .nav-tabs"
+        )
         try:
             page.wait_for_selector(
-                "nav, sidebar, .dashboard, .app-container, [role='navigation'], input:visible, button:visible",
-                timeout=10000
+                dashboard_selectors,
+                state="visible",
+                timeout=12000
             )
+            self.logger.info("Dashboard interactive elements detected.")
         except Exception:
-            self.logger.warning("Timeout waiting for explicit layout selectors; proceeding with available DOM.")
+            self.logger.warning("Timeout waiting for visual layout selectors; scanning available DOM.")
 
-        # Give client-side JS rendering frames time to mount components
+        # 3. Allow virtual DOM framework re-renders to paint
         page.wait_for_timeout(3000)
 
-    def _discover_page(self, page: Page) -> Dict[str, Any]:
-        """Extracts fields, forms, buttons, links, tabs, and navigation targets from current page state."""
-        page_title = page.title()
-        current_url = page.url
+    def _generate_locator(self, el: Locator) -> str:
+        """Generates reliable, unique Playwright locators for dynamic DOM elements."""
+        field_id = el.get_attribute("id")
+        if field_id:
+            return f"#{field_id}"
 
-        fields = self._extract_fields(page)
-        buttons = self._extract_buttons(page)
-        links = self._extract_links(page)
-        tabs = self._extract_tabs(page)
+        name = el.get_attribute("name")
+        if name:
+            return f"[name='{name}']"
+
+        aria_label = el.get_attribute("aria-label")
+        if aria_label:
+            return f"[aria-label='{aria_label}']"
+
+        placeholder = el.get_attribute("placeholder")
+        if placeholder:
+            return f"[placeholder='{placeholder}']"
+
+        data_testid = el.get_attribute("data-testid") or el.get_attribute("data-cy")
+        if data_testid:
+            return f"[data-testid='{data_testid}']"
+
+        # Unique positional / text selector fallback (prevents skipped locators)
+        try:
+            tag_name = el.evaluate("e => e.tagName.toLowerCase()")
+            input_type = el.get_attribute("type")
+            text_content = el.inner_text().strip()
+
+            if text_content and len(text_content) < 30:
+                return f"{tag_name}:has-text('{text_content}')"
+            
+            if input_type:
+                return f"{tag_name}[type='{input_type}']"
+            
+            # Absolute fallback using unique CSS path snippet
+            class_name = el.get_attribute("class")
+            if class_name:
+                first_class = class_name.split()[0]
+                return f"{tag_name}.{first_class}"
+        except Exception:
+            pass
+
+        return f"{el.evaluate('e => e.tagName.toLowerCase()')}"
+
+    def _discover_page(self, page: Page) -> Dict[str, Any]:
+        """Scans both top-level document and embedded iFrames for interactive UI elements."""
+        
+        # Give JS/iFrames a moment to settle
+        page.wait_for_timeout(3000)
+        
+        # Collect all active frames (main page + embedded iframes)
+        frames = page.frames
+        self.logger.info(f"Scanning {len(frames)} frame(s) for UI elements...")
+
+        all_fields = []
+        all_buttons = []
+        all_links = []
+        all_tabs = []
+
+        for frame in frames:
+            try:
+                # 1. Discover Fields (Inputs / Selects / Textareas)
+                inputs = frame.locator("input:visible, select:visible, textarea:visible").all()
+                for el in inputs:
+                    loc = self._generate_locator(el)
+                    all_fields.append({
+                        "locator": loc,
+                        "tag_name": el.evaluate("e => e.tagName.toLowerCase()"),
+                        "input_type": el.get_attribute("type") or "text",
+                        "placeholder": el.get_attribute("placeholder") or "",
+                        "aria_label": el.get_attribute("aria-label") or "",
+                        "frame_url": frame.url
+                    })
+
+                # 2. Discover Buttons
+                buttons = frame.locator("button:visible, input[type='button']:visible, input[type='submit']:visible, [role='button']:visible").all()
+                for btn in buttons:
+                    loc = self._generate_locator(btn)
+                    all_buttons.append({
+                        "locator": loc,
+                        "text": btn.inner_text().strip(),
+                        "frame_url": frame.url
+                    })
+
+                # 3. Discover Navigation Tabs / Sub-menus
+                tabs = frame.locator(".ant-tabs-tab:visible, .nav-tabs li:visible, [role='tab']:visible, .tab-item:visible").all()
+                for tab in tabs:
+                    loc = self._generate_locator(tab)
+                    all_tabs.append({
+                        "locator": loc,
+                        "text": tab.inner_text().strip(),
+                        "frame_url": frame.url
+                    })
+
+            except Exception as frame_err:
+                self.logger.warning(f"Error scanning frame {frame.url}: {frame_err}")
 
         return {
-            "success": True,
-            "url": current_url,
-            "title": page_title,
-            "pages": [{"url": current_url, "title": page_title}],
-            "forms": self._extract_forms(page),
-            "fields": fields,
-            "buttons": buttons,
-            "links": links,
-            "tabs": tabs,
-            "navigation_targets": [l for l in links if self._is_nav_link(l)]
+            "fields": all_fields,
+            "buttons": all_buttons,
+            "links": all_links,
+            "tabs": all_tabs
         }
 
     def _traverse_workflow_tabs(self, page: Page, tabs: List[Dict[str, Any]], aggregated_result: Dict[str, Any]):
@@ -265,15 +358,41 @@ class URLDiscoveryEngine:
         return bool(href and not href.startswith("#") and not href.startswith("javascript:"))
 
     def _generate_locator(self, el: Locator) -> str:
+        """Generates reliable, unique Playwright locators for dynamic DOM elements."""
         field_id = el.get_attribute("id")
         if field_id:
             return f"#{field_id}"
+
         name = el.get_attribute("name")
         if name:
             return f"[name='{name}']"
+
+        aria_label = el.get_attribute("aria-label")
+        if aria_label:
+            return f"[aria-label='{aria_label}']"
+
         placeholder = el.get_attribute("placeholder")
         if placeholder:
             return f"[placeholder='{placeholder}']"
+
+        data_testid = el.get_attribute("data-testid") or el.get_attribute("data-cy")
+        if data_testid:
+            return f"[data-testid='{data_testid}']"
+
+        # Structural fallback: combine tag name with visible text or input type
+        try:
+            input_type = el.get_attribute("type")
+            tag_name = el.evaluate("el => el.tagName.toLowerCase()")
+            
+            if input_type:
+                return f"{tag_name}[type='{input_type}']"
+            
+            text_content = el.inner_text().strip()
+            if text_content and len(text_content) < 30:
+                return f"{tag_name}:has-text('{text_content}')"
+        except Exception:
+            pass
+
         return el.evaluate("el => el.tagName.toLowerCase()")
 
     def _merge_scan_results(self, main_res: Dict[str, Any], sub_scan: Dict[str, Any], tab_name: str):
