@@ -624,4 +624,25 @@ CREATE TABLE IF NOT EXISTS workflow_dependencies (
     step_sequence_json TEXT NOT NULL, -- JSON array of steps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
 """
+
+# ==========================================================
+# Discovery Variants — Knowledge Hub link
+#
+# Bridges the discovery/URL-knowledge hierarchy (Application ->
+# Business Process -> Variant -> Page -> Tab -> Element) to the
+# document hierarchy (Domain -> Module -> Knowledge Name -> Version)
+# so a captured business flow (AI Smart Upload -> URL Knowledge) and
+# an uploaded document can be filed under the SAME Knowledge Name,
+# and shown together in one tree instead of two disconnected ones.
+# Nullable/additive — same safe pattern as KNOWLEDGE_ITEMS_MIGRATION.
+# ==========================================================
+
+DISCOVERY_VARIANTS_MIGRATION = [
+
+    """
+    ALTER TABLE discovery_variants
+    ADD COLUMN linked_knowledge_item_id INTEGER
+    """,
+]

@@ -45,12 +45,14 @@ placeholder) are counted and reported as skipped, not silently
 dropped and not stored with a misleading locator.
 """
 
+import hashlib
 import json
 from datetime import datetime
 from urllib.parse import urlparse
 
 from Database.db_manager import DatabaseManager
 from Core.logger import Logger
+from Core.metadata_manager import MetadataManager
 
 
 DEFAULT_BUSINESS_PROCESS = "General"
@@ -58,6 +60,18 @@ DEFAULT_BUSINESS_PROCESS = "General"
 DEFAULT_VARIANT = "Default"
 
 SCANNED_VIEW_TAB_NAME = "(scanned view)"
+
+# Marks a knowledge_items row that exists only to file a captured
+# URL/business-flow under the Domain -> Module -> Knowledge Name ->
+# Version tree — there is no uploaded file behind it, so it is never
+# treated as a document by anything that expects one (embedding
+# queue, file preview, etc.). manage_knowledge_page.py checks this
+# to render its children (steps/fields) instead of a file preview.
+CAPTURED_FLOW_SOURCE_TYPE = "URL_CAPTURE"
+
+CAPTURED_FLOW_DOCUMENT_TYPE = "URL Capture"
+
+DEFAULT_CAPTURED_VERSION = "1.0"
 
 
 class DiscoveryRepository:
@@ -371,6 +385,10 @@ class DiscoveryRepository:
         application_name=None,
         business_process_name=None,
         variant_name=None,
+        domain=None,
+        module=None,
+        knowledge_name=None,
+        version=None,
     ):
         """
         Persists a full, operator-confirmed, multi-step business-flow
@@ -431,6 +449,7 @@ class DiscoveryRepository:
             "skipped_elements": [],
             "steps_saved": 0,
             "workflow_step_ids": [],
+            "knowledge_item_id": None,
             "error": None,
         }
 
@@ -478,7 +497,17 @@ class DiscoveryRepository:
                 or DEFAULT_VARIANT
             )
 
-            variant_id = self._get_or_create_variant(business_process_id, var_name)
+            knowledge_item_id = self._get_or_create_captured_knowledge_item(
+                domain, module, knowledge_name, version
+            )
+
+            summary["knowledge_item_id"] = knowledge_item_id
+
+            variant_id = self._get_or_create_variant(
+                business_process_id,
+                var_name,
+                linked_knowledge_item_id=knowledge_item_id,
+            )
 
             summary["variant_id"] = variant_id
 
@@ -831,6 +860,57 @@ class DiscoveryRepository:
 
         return steps
 
+    def get_captured_flows_for_knowledge_item(self, knowledge_item_id):
+        """
+        The other direction of the link: given a Knowledge Hub node
+        (a knowledge_items.id), returns every captured business flow
+        filed under it, each with its full ordered step/element
+        detail from get_flow_by_variant(). This is what
+        manage_knowledge_page.py calls to nest a captured flow's
+        Steps -> Fields/Locators under the matching row in the tree.
+        """
+
+        if not knowledge_item_id:
+
+            return []
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT dv.id, dv.name, dbp.name, da.name
+            FROM discovery_variants dv
+            JOIN discovery_business_processes dbp
+                ON dbp.id = dv.business_process_id
+            JOIN discovery_applications da
+                ON da.id = dbp.application_id
+            WHERE dv.linked_knowledge_item_id = ?
+            """,
+            (knowledge_item_id,),
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        flows = []
+
+        for variant_id, variant_name, business_process_name, application_name in rows:
+
+            flows.append(
+                {
+                    "variant_id": variant_id,
+                    "variant_name": variant_name,
+                    "business_process_name": business_process_name,
+                    "application_name": application_name,
+                    "steps": self.get_flow_by_variant(variant_id),
+                }
+            )
+
+        return flows    
+
     # ================================================================
     # Locator quality
     # ================================================================
@@ -1101,7 +1181,7 @@ class DiscoveryRepository:
 
         conn.close()
 
-        return application_id
+        return application_id    
 
     def _get_or_create_business_process(self, application_id, name):
 
@@ -1144,7 +1224,126 @@ class DiscoveryRepository:
 
         return business_process_id
 
-    def _get_or_create_variant(self, business_process_id, name):
+    def _get_or_create_captured_knowledge_item(
+        self, domain, module, knowledge_name, version
+    ):
+        """
+        Files a captured business flow under the SAME Domain ->
+        Module -> Knowledge Name -> Version tree that uploaded
+        documents live in, by creating (or reusing) a placeholder
+        knowledge_items row for it.
+
+        Returns None (no linkage — flow is saved unlinked, exactly
+        as before this feature existed) unless domain, module AND
+        knowledge_name are all given; version is optional and
+        defaults to DEFAULT_CAPTURED_VERSION.
+
+        Re-running a capture against the same Domain/Module/Knowledge
+        Name/Version reuses the existing row rather than creating a
+        duplicate node in the tree every time.
+        """
+
+        domain = (domain or "").strip()
+
+        module = (module or "").strip()
+
+        knowledge_name = (knowledge_name or "").strip()
+
+        version = (version or "").strip() or DEFAULT_CAPTURED_VERSION
+
+        if not domain or not module or not knowledge_name:
+
+            return None
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT id FROM knowledge_items
+            WHERE domain = ? AND module = ? AND knowledge_name = ?
+              AND version = ? AND source_type = ?
+            """,
+            (domain, module, knowledge_name, version, CAPTURED_FLOW_SOURCE_TYPE),
+        )
+
+        row = cursor.fetchone()
+
+        if row:
+
+            conn.close()
+
+            return row[0]
+
+        conn.close()
+
+        metadata_manager = MetadataManager()
+
+        domain_id = metadata_manager.get_or_create_domain(domain)
+
+        module_id = metadata_manager.get_or_create_module(domain, module)
+
+        knowledge_path = f"{domain}/{module}/{knowledge_name}/{version}"
+
+        sentinel_sha256 = hashlib.sha256(
+            f"captured-flow::{knowledge_path}".encode("utf-8")
+        ).hexdigest()
+
+        now = datetime.now().isoformat()
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO knowledge_items
+            (domain, module, knowledge_name, version, knowledge_path,
+             file_name, original_path, repository_path, sha256,
+             file_size, extension, knowledge_type, source_type,
+             document_type, status, created_date, modified_date,
+             domain_id, module_id)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', 'CAPTURED_FLOW',
+                    ?, ?, 'ACTIVE', ?, ?, ?, ?)
+            """,
+            (
+                domain,
+                module,
+                knowledge_name,
+                version,
+                knowledge_path,
+                "(no file — captured business flow)",
+                knowledge_path,
+                sentinel_sha256,
+                CAPTURED_FLOW_SOURCE_TYPE,
+                CAPTURED_FLOW_DOCUMENT_TYPE,
+                now,
+                now,
+                domain_id,
+                module_id,
+            ),
+        )
+
+        knowledge_item_id = cursor.lastrowid
+
+        conn.commit()
+
+        conn.close()
+
+        return knowledge_item_id    
+
+    def _get_or_create_variant(
+        self, business_process_id, name, linked_knowledge_item_id=None
+    ):
+        """
+        `linked_knowledge_item_id`, when provided, is what ties this
+        captured URL-knowledge variant to a Domain/Module/Knowledge
+        Name/Version node in the document tree — see
+        _get_or_create_captured_knowledge_item(). Kept in sync on
+        every call (not just at creation) so re-running a capture
+        against a variant that predates this link still picks it up.
+        """
 
         conn = self.db.get_connection()
 
@@ -1160,21 +1359,35 @@ class DiscoveryRepository:
 
         row = cursor.fetchone()
 
+        now = datetime.now().isoformat()
+
         if row:
 
             variant_id = row[0]
 
-        else:
+            if linked_knowledge_item_id is not None:
 
-            now = datetime.now().isoformat()
+                cursor.execute(
+                    """
+                    UPDATE discovery_variants
+                    SET linked_knowledge_item_id = ?, modified_date = ?
+                    WHERE id = ?
+                    """,
+                    (linked_knowledge_item_id, now, variant_id),
+                )
+
+                conn.commit()
+
+        else:
 
             cursor.execute(
                 """
                 INSERT INTO discovery_variants
-                (business_process_id, name, status, created_date, modified_date)
-                VALUES (?, ?, 'Active', ?, ?)
+                (business_process_id, name, linked_knowledge_item_id,
+                 status, created_date, modified_date)
+                VALUES (?, ?, ?, 'Active', ?, ?)
                 """,
-                (business_process_id, name, now, now),
+                (business_process_id, name, linked_knowledge_item_id, now, now),
             )
 
             variant_id = cursor.lastrowid

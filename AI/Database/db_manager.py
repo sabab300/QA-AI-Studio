@@ -17,7 +17,11 @@ from here.
 import sqlite3
 from pathlib import Path
 
-from Database.schema import ALL_TABLES, KNOWLEDGE_ITEMS_MIGRATION
+from Database.schema import (
+    ALL_TABLES,
+    KNOWLEDGE_ITEMS_MIGRATION,
+    DISCOVERY_VARIANTS_MIGRATION,
+)
 
 
 class DatabaseManager:
@@ -55,7 +59,7 @@ class DatabaseManager:
 
                 cursor.execute(statement)
 
-            for migration in KNOWLEDGE_ITEMS_MIGRATION:
+            for migration in KNOWLEDGE_ITEMS_MIGRATION + DISCOVERY_VARIANTS_MIGRATION:
 
                 try:
 

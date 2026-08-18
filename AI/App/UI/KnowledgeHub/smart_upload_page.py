@@ -2273,6 +2273,10 @@ class SmartUploadPage(QWidget):
                 application_name=flow_context.get("application_name"),
                 business_process_name=flow_context.get("business_process_name"),
                 variant_name=flow_context.get("variant_name"),
+                domain=flow_context.get("domain"),
+                module=flow_context.get("module"),
+                knowledge_name=flow_context.get("knowledge_name"),
+                version=flow_context.get("version"),
             )
 
         except Exception as ex:
@@ -2309,12 +2313,28 @@ class SmartUploadPage(QWidget):
             f"Elements skipped: {save_result.get('elements_skipped_low_confidence', 0)}"
         )
 
+        knowledge_item_id = save_result.get("knowledge_item_id")
+
+        if knowledge_item_id:
+            self.log.append(
+                "Linked to Knowledge Hub tree under Domain="
+                f"{flow_context.get('domain')}, Module={flow_context.get('module')}, "
+                f"Knowledge Name={flow_context.get('knowledge_name')} "
+                f"(knowledge item ID {knowledge_item_id}). View it in "
+                "Manage Knowledge."
+            )
+
         self.summary.append(
             "\nSaved guided business flow to Knowledge Hub:\n"
             f"Steps saved: {save_result.get('steps_saved', 0)}\n"
             f"Elements saved: {save_result.get('elements_saved', 0)}\n"
             f"Elements skipped: {save_result.get('elements_skipped_low_confidence', 0)}\n"
             f"Discovery session ID: {save_result.get('session_id')}"
+            + (
+                f"\nLinked Knowledge Hub item ID: {knowledge_item_id}"
+                if knowledge_item_id
+                else ""
+            )
         )
 
         return save_result

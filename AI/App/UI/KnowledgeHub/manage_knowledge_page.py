@@ -56,6 +56,10 @@ from Core.metadata_manager import MetadataManager
 from Core.repository_manager import RepositoryManager
 from Core.vector_store import VectorStore
 from Core.upload_pipeline import UploadPipeline
+from Core.discovery_repository import (
+    DiscoveryRepository,
+    CAPTURED_FLOW_SOURCE_TYPE,
+)
 from PySide6.QtCore import Signal
 
 
@@ -594,6 +598,16 @@ class ManageKnowledgePage(QWidget):
 
                                 doc_item.addChild(file_item)
 
+                                # A row filed here by AI Smart Upload's
+                                # guided URL capture has no real file
+                                # behind it — nest the captured Steps/
+                                # Fields/Locators under it instead.
+                                if file_row["source_type"] == CAPTURED_FLOW_SOURCE_TYPE:
+
+                                    self._populate_captured_flow_children(
+                                        file_item, file_row["id"]
+                                    )
+
         if expand:
 
             self.tree.expandAll()
@@ -603,6 +617,63 @@ class ManageKnowledgePage(QWidget):
             self.tree.expandToDepth(0)
 
         self.update_button_states()
+
+    def _populate_captured_flow_children(self, file_item, knowledge_item_id):
+        """
+        Nests every AI Smart Upload guided capture filed under this
+        Knowledge Hub node as: Captured Flow -> Step -> Field/Locator.
+        """
+
+        try:
+            flows = DiscoveryRepository().get_captured_flows_for_knowledge_item(
+                knowledge_item_id
+            )
+        except Exception:
+            flows = []
+
+        for flow in flows:
+
+            flow_item = QTreeWidgetItem([
+                "Captured Flow: "
+                f"{flow.get('application_name')} / "
+                f"{flow.get('business_process_name')} / "
+                f"{flow.get('variant_name')}",
+                "",
+                "",
+            ])
+
+            file_item.addChild(flow_item)
+
+            for step in flow.get("steps", []):
+
+                step_label = step.get("step_name") or (
+                    f"Step {step.get('step_order')}"
+                )
+
+                if step.get("is_end_step"):
+                    step_label += " (final step)"
+
+                step_item = QTreeWidgetItem(
+                    [f"{step.get('step_order')}. {step_label}", "", ""]
+                )
+
+                flow_item.addChild(step_item)
+
+                for element in step.get("elements", []):
+
+                    element_label = (
+                        f"{element.get('name') or '(unnamed)'} "
+                        f"[{element.get('element_type') or ''}] — "
+                        f"{element.get('locator') or ''}"
+                    )
+
+                    element_item = QTreeWidgetItem([
+                        element_label,
+                        "Required" if element.get("is_required") else "",
+                        element.get("locator_strategy") or "",
+                    ])
+
+                    step_item.addChild(element_item)
 
     @staticmethod
     def _count_files(subtree):
