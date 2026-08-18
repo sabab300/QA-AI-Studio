@@ -123,6 +123,16 @@ class TestCaseRepository:
         for migration in (
             "ALTER TABLE test_cases ADD COLUMN domain_id INTEGER",
             "ALTER TABLE test_cases ADD COLUMN module_id INTEGER",
+            # Manual Recording (Playwright's own codegen recorder,
+            # captured against this test case by hand) — kept in its
+            # own column so it never overwrites the AI-generated
+            # automation_script. active_script_source says which one
+            # Execute actually runs; defaults to 'AUTO' so every
+            # existing row keeps behaving exactly as it does today
+            # until someone records a script and switches it.
+            "ALTER TABLE test_cases ADD COLUMN recorded_script TEXT",
+            "ALTER TABLE test_cases ADD COLUMN active_script_source "
+            "TEXT DEFAULT 'AUTO'",
         ):
 
             try:
@@ -364,6 +374,55 @@ class TestCaseRepository:
 
         conn.close()
 
+    def update_recorded_script(self, test_case_id, recorded_script):
+        """
+        Stores a script captured by hand via Playwright's own
+        codegen recorder ("Record Manually"), kept in its own column
+        so it never overwrites the AI-generated automation_script —
+        active_script_source decides which one actually runs on
+        Execute. Also marks this test case Automated/Playwright,
+        same as an AI-generated script would, since either way it
+        now has something Execute can run.
+        """
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        cursor.execute(
+            """
+            UPDATE test_cases
+            SET recorded_script=?,
+                automation_type='Playwright',
+                status='Automated',
+                modified_date=?
+            WHERE id=?
+            """,
+            (
+                recorded_script,
+                now,
+                test_case_id,
+            )
+        )
+
+        conn.commit()
+
+        conn.close()
+
+
+    def set_active_script_source(self, test_case_id, source):
+        """
+        `source`: 'AUTO' (the AI-generated script) or 'MANUAL' (the
+        hand-recorded one).
+        """
+
+        self._update_field(
+            test_case_id,
+            "active_script_source",
+            source
+        )
 
     def update_result(self, test_case_id, result):
 

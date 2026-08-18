@@ -67,6 +67,7 @@ from UI.QAAutomation.test_execution_worker import (
     AutomationGenerationWorker,
     AutomationSuggestionWorker,
     PlaywrightExecutionWorker,
+    ManualRecordingWorker,
 )
 
 
@@ -313,28 +314,96 @@ class EnvironmentSettingsDialog(QDialog):
 
         self.accept()
 
+# ==========================================================
+# Small dialog: start a manual recording
+# ==========================================================
+
+class ManualRecordingStartDialog(QDialog):
+
+    def __init__(self, tc_number, default_url, parent=None):
+
+        super().__init__(parent)
+
+        self.setWindowTitle(f"Record Manually — {tc_number}")
+
+        self.resize(480, 260)
+
+        layout = QVBoxLayout(self)
+
+        note = QLabel(
+            "This opens a real, visible browser using Playwright's "
+            "own recorder — the same engine Playwright's official "
+            "codegen tool uses. Perform this test case's steps by "
+            "hand, exactly as a user would: click, type, navigate. "
+            "Every action is captured automatically as an editable "
+            "Playwright script, with real, tested locators — not "
+            "AI-guessed ones.\n\n"
+            "When you're done, close the recorder's browser window "
+            "(or click 'Cancel Recording' back in QA AI Studio to "
+            "stop without saving)."
+        )
+
+        note.setWordWrap(True)
+
+        layout.addWidget(note)
+
+        layout.addWidget(QLabel("Starting URL:"))
+
+        self.url_field = QLineEdit(default_url or "")
+
+        self.url_field.setPlaceholderText(
+            "https://qa.psw.gov.pk/... "
+            "(defaults to Test Environment Settings)"
+        )
+
+        layout.addWidget(self.url_field)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+
+        buttons.button(QDialogButtonBox.Ok).setText("Start Recording")
+
+        buttons.accepted.connect(self.accept)
+
+        buttons.rejected.connect(self.reject)
+
+        layout.addWidget(buttons)
+
+    def selected_url(self):
+
+        return self.url_field.text().strip()
+
 
 # ==========================================================
-# Small dialog: view a generated automation script
+# Small dialog: view / edit an automation script
+#
+# A test case can now have TWO scripts — the AI-generated one
+# (automation_script) and a hand-recorded one (recorded_script, via
+# Record Manually). This dialog lets you view/edit either one and
+# choose which is "active" (the one Execute actually runs) — see
+# TestExecutionManager.get_active_script()/set_active_script().
 # ==========================================================
 
 class ViewScriptDialog(QDialog):
 
-    def __init__(self, test_case_id, tc_number, automation_type, script, manager, parent=None):
+    def __init__(self, test_case, manager, parent=None):
 
         super().__init__(parent)
 
-        self.test_case_id = test_case_id
+        self.test_case_id = test_case["id"]
 
-        self.automation_type = automation_type
+        self.automation_type = test_case.get("automation_type") or "Playwright"
 
         self.manager = manager
 
+        self.test_case = dict(test_case)
+
         self.setWindowTitle(
-            f"{tc_number} — {automation_type} Script"
+            f"{test_case['tc_number']} — {self.automation_type} Script"
         )
 
-        self.resize(700, 550)
+        self.resize(720, 600)
 
         layout = QVBoxLayout(self)
 
@@ -348,12 +417,51 @@ class ViewScriptDialog(QDialog):
 
         layout.addWidget(note)
 
+        source_row = QHBoxLayout()
+
+        source_row.addWidget(QLabel("Viewing:"))
+
+        self.source_combo = QComboBox()
+
+        self.source_combo.addItem("Auto-Generated (AI)", "AUTO")
+
+        self.source_combo.addItem("Manually Recorded", "MANUAL")
+
+        active_source = (
+            test_case.get("active_script_source") or "AUTO"
+        ).upper()
+
+        self.source_combo.setCurrentIndex(
+            1 if active_source == "MANUAL" else 0
+        )
+
+        self.source_combo.currentIndexChanged.connect(
+            self._on_source_changed
+        )
+
+        source_row.addWidget(self.source_combo)
+
+        source_row.addStretch()
+
+        self.active_label = QLabel()
+
+        self.active_label.setStyleSheet("color: #16A34A; font-weight: bold;")
+
+        source_row.addWidget(self.active_label)
+
+        self.set_active_btn = QPushButton("Set as Active for Execution")
+
+        self.set_active_btn.clicked.connect(self._set_active)
+
+        source_row.addWidget(self.set_active_btn)
+
+        layout.addLayout(source_row)
+
         self.editor = QPlainTextEdit()
 
-        self.editor.setPlainText(script or "")
-
         self.editor.setPlaceholderText(
-            "No script generated yet — use Add Automation first."
+            "Nothing here yet — use Add Automation (AI-generated) "
+            "or Record Manually to create a script for this source."
         )
 
         font = self.editor.font()
@@ -376,9 +484,67 @@ class ViewScriptDialog(QDialog):
 
         layout.addWidget(buttons)
 
+        self._load_current_source()
+
+    def _current_source(self):
+
+        return self.source_combo.currentData()
+
+    def _script_for(self, source):
+
+        if source == "MANUAL":
+
+            return self.test_case.get("recorded_script") or ""
+
+        return self.test_case.get("automation_script") or ""
+
+    def _load_current_source(self):
+
+        source = self._current_source()
+
+        self.editor.setPlainText(self._script_for(source))
+
+        active_source = (
+            self.test_case.get("active_script_source") or "AUTO"
+        ).upper()
+
+        if source == active_source:
+
+            self.active_label.setText("✓ Active for Execution")
+
+            self.set_active_btn.setEnabled(False)
+
+        else:
+
+            self.active_label.setText("")
+
+            self.set_active_btn.setEnabled(True)
+
+    def _on_source_changed(self):
+
+        self._load_current_source()
+
+    def _set_active(self):
+
+        source = self._current_source()
+
+        try:
+
+            self.manager.set_active_script(self.test_case_id, source)
+
+            self.test_case["active_script_source"] = source
+
+            self._load_current_source()
+
+        except Exception as ex:
+
+            QMessageBox.critical(self, "Could Not Set Active", str(ex))
+
     def save(self):
 
         new_script = self.editor.toPlainText()
+
+        source = self._current_source()
 
         if self.automation_type == "Playwright":
 
@@ -403,11 +569,23 @@ class ViewScriptDialog(QDialog):
 
         try:
 
-            self.manager.update_script(
-                self.test_case_id,
-                self.automation_type,
-                new_script,
-            )
+            if source == "MANUAL":
+
+                self.manager.update_recorded_script(
+                    self.test_case_id, new_script
+                )
+
+                self.test_case["recorded_script"] = new_script
+
+            else:
+
+                self.manager.update_script(
+                    self.test_case_id,
+                    self.automation_type,
+                    new_script,
+                )
+
+                self.test_case["automation_script"] = new_script
 
             self.accept()
 
@@ -449,6 +627,10 @@ class TestExecutionPage(QWidget):
         self.execution_worker = None
 
         self.execution_queue = []
+
+        self.recording_thread = None
+
+        self.recording_worker = None
 
         self.build_ui()
 
@@ -565,7 +747,7 @@ class TestExecutionPage(QWidget):
         table_layout.addLayout(selection_row)
 
 
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 10)
 
         self.table.setHorizontalHeaderLabels([
             "",
@@ -575,6 +757,8 @@ class TestExecutionPage(QWidget):
             "Automation Type",
             "Last Result",
             "Script",
+            "Record",
+            "Active Script",
             "Automate",
         ])
 
@@ -620,6 +804,14 @@ class TestExecutionPage(QWidget):
             "Test Environment Settings"
         )
 
+        self.cancel_recording_btn = QPushButton("Cancel Recording")
+
+        self.cancel_recording_btn.setVisible(False)
+
+        self.cancel_recording_btn.setStyleSheet(
+            "background-color: #DC2626; color: white;"
+        )
+
 
         actions_layout.addWidget(self.execute_selected_btn)
 
@@ -629,10 +821,11 @@ class TestExecutionPage(QWidget):
 
         actions_layout.addWidget(self.update_automation_btn)
 
+        actions_layout.addWidget(self.cancel_recording_btn)
+
         actions_layout.addStretch()
 
         actions_layout.addWidget(self.environment_settings_btn)
-
 
         layout.addWidget(actions_group)
 
@@ -701,6 +894,10 @@ class TestExecutionPage(QWidget):
 
         self.environment_settings_btn.clicked.connect(
             self.open_environment_settings
+        )
+
+        self.cancel_recording_btn.clicked.connect(
+            self.cancel_current_recording
         )
 
 
@@ -907,6 +1104,7 @@ class TestExecutionPage(QWidget):
 
         script_btn.setEnabled(
             bool(test_case.get("automation_script"))
+            or bool(test_case.get("recorded_script"))
         )
 
         script_btn.clicked.connect(
@@ -914,6 +1112,45 @@ class TestExecutionPage(QWidget):
         )
 
         self.table.setCellWidget(row, 6, script_btn)
+
+
+        record_btn = QPushButton("Record Manually")
+
+        record_btn.setToolTip(
+            "Opens a real browser (Playwright's own recorder). "
+            "Perform this test case by hand — clicking, typing, "
+            "navigating — and it's captured as an editable script, "
+            "stored separately from the AI-generated one."
+        )
+
+        record_btn.clicked.connect(
+            lambda _, tc_id=test_case["id"]: self.start_manual_recording(
+                tc_id
+            )
+        )
+
+        self.table.setCellWidget(row, 7, record_btn)
+
+        active_combo = QComboBox()
+
+        active_combo.addItem("Auto-Generated (AI)", "AUTO")
+
+        active_combo.addItem("Manually Recorded", "MANUAL")
+
+        active_source = (
+            test_case.get("active_script_source") or "AUTO"
+        ).upper()
+
+        active_combo.setCurrentIndex(
+            1 if active_source == "MANUAL" else 0
+        )
+
+        active_combo.currentIndexChanged.connect(
+            lambda _, tc_id=test_case["id"], combo=active_combo:
+                self.on_active_script_changed(tc_id, combo)
+        )
+
+        self.table.setCellWidget(row, 8, active_combo)
 
 
         automate_btn = QPushButton("Automate")
@@ -929,8 +1166,7 @@ class TestExecutionPage(QWidget):
             )
         )
 
-        self.table.setCellWidget(row, 7, automate_btn)
-
+        self.table.setCellWidget(row, 9, automate_btn)
 
     # ======================================================
     # Selection helpers
@@ -1333,10 +1569,7 @@ class TestExecutionPage(QWidget):
             return
 
         dialog = ViewScriptDialog(
-            test_case_id,
-            test_case["tc_number"],
-            test_case.get("automation_type", ""),
-            test_case.get("automation_script", ""),
+            test_case,
             self.manager,
             self,
         )
@@ -1348,6 +1581,264 @@ class TestExecutionPage(QWidget):
             )
 
             self.load_test_cases()
+
+
+    # ======================================================
+    # Active Script (Auto-Generated vs Manually Recorded)
+    # ======================================================
+
+    def on_active_script_changed(self, test_case_id, combo):
+
+        source = combo.currentData()
+
+        test_case = self.manager.repository.get_test_case(test_case_id)
+
+        if source == "MANUAL" and not (test_case or {}).get(
+            "recorded_script"
+        ):
+
+            QMessageBox.warning(
+                self,
+                "Nothing Recorded Yet",
+                "This test case doesn't have a manually recorded "
+                "script yet — use 'Record Manually' first. Staying "
+                "on the AI-generated script for now."
+            )
+
+            combo.blockSignals(True)
+
+            combo.setCurrentIndex(0)
+
+            combo.blockSignals(False)
+
+            return
+
+        try:
+
+            self.manager.set_active_script(test_case_id, source)
+
+            self.log.append(
+                f"{self.tc_number_for_id(test_case_id)}: active "
+                f"script set to "
+                + (
+                    "manually recorded"
+                    if source == "MANUAL"
+                    else "AI-generated"
+                )
+                + "."
+            )
+
+        except Exception as ex:
+
+            QMessageBox.critical(self, "QA AI Studio", str(ex))
+
+
+    # ======================================================
+    # Manual Recording
+    #
+    # Alternative to Add/Update Automation's AI-generated script —
+    # opens a real browser (Playwright's own codegen recorder) and
+    # captures your own clicks/typing/navigation as an editable
+    # script, stored separately (recorded_script) so it never
+    # overwrites the AI-generated one.
+    # ======================================================
+
+    def set_actions_enabled(self, enabled):
+        """
+        Disabled while a recording is in progress — only one
+        Playwright recorder session makes sense at a time, and the
+        rest of the page's actions (generation, execution, loading a
+        different test case list) would otherwise race against it.
+        """
+
+        self.execute_selected_btn.setEnabled(enabled)
+
+        self.execute_all_btn.setEnabled(enabled)
+
+        self.add_automation_btn.setEnabled(enabled)
+
+        self.update_automation_btn.setEnabled(enabled)
+
+        self.load_btn.setEnabled(enabled)
+
+        for row in range(self.table.rowCount()):
+
+            record_widget = self.table.cellWidget(row, 7)
+
+            if record_widget:
+
+                record_widget.setEnabled(enabled)
+
+            automate_widget = self.table.cellWidget(row, 9)
+
+            if automate_widget:
+
+                automate_widget.setEnabled(enabled)
+
+
+    def start_manual_recording(self, test_case_id):
+
+        if self.recording_thread is not None:
+
+            QMessageBox.information(
+                self,
+                "Recording In Progress",
+                "Only one recording can run at a time. Finish or "
+                "cancel the current recording first."
+            )
+
+            return
+
+        test_case = self.manager.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            return
+
+        environment = self.manager.environment_config.load()
+
+        dialog = ManualRecordingStartDialog(
+            test_case["tc_number"],
+            environment.get("base_url", ""),
+            self,
+        )
+
+        if dialog.exec() != QDialog.Accepted:
+
+            return
+
+        start_url = dialog.selected_url()
+
+        self.set_actions_enabled(False)
+
+        self.cancel_recording_btn.setVisible(True)
+
+        self.log.append(
+            f"{test_case['tc_number']}: recorder browser opening — "
+            f"perform the test steps by hand, then close the "
+            f"recorder window when done."
+        )
+
+        self.recording_thread = QThread()
+
+        self.recording_worker = ManualRecordingWorker(
+            test_case_id, start_url
+        )
+
+        self.recording_worker.moveToThread(self.recording_thread)
+
+        self.recording_thread.started.connect(
+            self.recording_worker.run
+        )
+
+        self.recording_worker.progress.connect(self.log.append)
+
+        self.recording_worker.finished.connect(
+            self.on_recording_finished
+        )
+
+        self.recording_worker.cancelled.connect(
+            self.on_recording_cancelled
+        )
+
+        self.recording_worker.error.connect(self.on_recording_error)
+
+        self.recording_worker.finished.connect(
+            self.recording_thread.quit
+        )
+
+        self.recording_worker.cancelled.connect(
+            self.recording_thread.quit
+        )
+
+        self.recording_worker.error.connect(
+            self.recording_thread.quit
+        )
+
+        self.recording_thread.finished.connect(
+            self.cleanup_recording_thread
+        )
+
+        self.recording_thread.start()
+
+
+    def cancel_current_recording(self):
+
+        if self.recording_worker is not None:
+
+            self.recording_worker.cancel()
+
+            self.log.append("Cancelling recording...")
+
+
+    def on_recording_finished(self, test_case_id, script):
+
+        tc_number = self.tc_number_for_id(test_case_id)
+
+        self.log.append(
+            f"{tc_number}: manual recording saved "
+            f"({len(script.splitlines())} line(s))."
+        )
+
+        make_active = QMessageBox.question(
+            self,
+            "Recording Saved",
+            f"{tc_number}'s manual recording was saved.\n\n"
+            f"Set it as the ACTIVE script for Execute (instead of "
+            f"whichever script is active now)?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if make_active == QMessageBox.Yes:
+
+            try:
+
+                self.manager.set_active_script(test_case_id, "MANUAL")
+
+            except Exception as ex:
+
+                QMessageBox.critical(self, "QA AI Studio", str(ex))
+
+        self.set_actions_enabled(True)
+
+        self.cancel_recording_btn.setVisible(False)
+
+        self.load_test_cases()
+
+
+    def on_recording_cancelled(self, test_case_id):
+
+        tc_number = self.tc_number_for_id(test_case_id)
+
+        self.log.append(
+            f"{tc_number}: recording cancelled, nothing was saved."
+        )
+
+        self.set_actions_enabled(True)
+
+        self.cancel_recording_btn.setVisible(False)
+
+
+    def on_recording_error(self, message):
+
+        self.log.append(f"Manual recording failed: {message}")
+
+        QMessageBox.critical(self, "Recording Failed", message)
+
+        self.set_actions_enabled(True)
+
+        self.cancel_recording_btn.setVisible(False)
+
+
+    def cleanup_recording_thread(self):
+
+        if self.recording_thread:
+
+            self.recording_thread.deleteLater()
+
+        self.recording_thread = None
+
+        self.recording_worker = None
 
 
     # ======================================================

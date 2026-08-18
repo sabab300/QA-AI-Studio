@@ -154,6 +154,90 @@ class AutomationSuggestionWorker(QObject):
             self.error.emit(str(ex))
 
 
+class ManualRecordingWorker(QObject):
+    """
+    Launches Playwright's own codegen recorder for a single test
+    case and BLOCKS (on this background thread, never the UI thread)
+    until the operator closes the recorder browser — a real,
+    hand-driven browser session can legitimately run for any length
+    of time, so there is no timeout here, only Cancel Recording.
+    """
+
+    started = Signal()
+
+    progress = Signal(str)
+
+    # emitted with (test_case_id, recorded_script)
+    finished = Signal(int, str)
+
+    # emitted with (test_case_id,) when Cancel Recording was used
+    cancelled = Signal(int)
+
+    error = Signal(str)
+
+    def __init__(self, test_case_id, start_url=None):
+
+        super().__init__()
+
+        self.test_case_id = test_case_id
+
+        self.start_url = start_url
+
+        self.manager = TestExecutionManager()
+
+        self._process = None
+
+        self._cancel_requested = False
+
+    def run(self):
+
+        try:
+
+            self.started.emit()
+
+            self.progress.emit(
+                "Opening the recorder browser — perform your test "
+                "steps by hand (click, type, navigate), then close "
+                "the recorder browser window when finished, or use "
+                "Cancel Recording to stop without saving."
+            )
+
+            script = self.manager.record_manual_script(
+                self.test_case_id,
+                self.start_url,
+                on_process_started=self._on_process_started,
+            )
+
+            self.finished.emit(self.test_case_id, script)
+
+        except Exception as ex:
+
+            if self._cancel_requested:
+
+                self.cancelled.emit(self.test_case_id)
+
+            else:
+
+                self.error.emit(str(ex))
+
+    def _on_process_started(self, process):
+
+        self._process = process
+
+    def cancel(self):
+        """
+        Safe to call from the UI thread while run() is executing on
+        the worker thread — terminating a subprocess.Popen doesn't
+        require being on the thread that started it.
+        """
+
+        self._cancel_requested = True
+
+        if self._process is not None and self._process.poll() is None:
+
+            self._process.terminate()
+
+
 class PlaywrightExecutionWorker(QObject):
     """
     Actually runs a generated Playwright script in a real browser,

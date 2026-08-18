@@ -32,7 +32,12 @@ from Core.logger import Logger
 import json
 import re
 import ast
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
 
+RECORDINGS_FOLDER = Path("Output") / "Recordings"
 
 class TestExecutionManager:
 
@@ -333,6 +338,173 @@ class TestExecutionManager:
             script_text,
         )
 
+    # --------------------------------------------------
+    # Manual Recording (hand-driven, via Playwright's OWN codegen
+    # recorder — an alternative to AI-generated scripts)
+    # --------------------------------------------------
+
+    def record_manual_script(
+        self, test_case_id, start_url=None, on_process_started=None
+    ):
+        """
+        Launches Playwright's codegen recorder in a REAL, visible
+        browser and BLOCKS until the operator closes it — this must
+        be called from a background thread, never the UI thread (see
+        App/UI/QAAutomation/test_execution_worker.py's
+        ManualRecordingWorker).
+
+        `on_process_started`, if given, is called once with the
+        running subprocess.Popen so the caller can offer a "Cancel
+        Recording" button — terminating a Popen is safe from any
+        thread.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        if not self.playwright_runner.is_playwright_installed():
+
+            raise RuntimeError(
+                "Playwright isn't installed yet. Run these two "
+                "commands in your terminal, then try again:\n\n"
+                "pip install playwright\n"
+                "playwright install chromium"
+            )
+
+        url = (start_url or "").strip()
+
+        if not url:
+
+            environment = self.environment_config.load()
+
+            url = (environment.get("base_url") or "").strip()
+
+        if not url:
+
+            raise ValueError(
+                "No starting URL given, and no Base URL is set in "
+                "Test Environment Settings. Set one of those first "
+                "so the recorder knows where to open the browser."
+            )
+
+        RECORDINGS_FOLDER.mkdir(parents=True, exist_ok=True)
+
+        # Microsecond resolution, not just seconds — two recordings
+        # for the same test case started within the same second
+        # would otherwise collide on this filename, and the second
+        # call's existence check could find the FIRST call's
+        # already-written file before its own subprocess has done
+        # anything, silently returning stale content instead of the
+        # new (possibly cancelled/empty) recording.
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
+
+        output_path = (
+            RECORDINGS_FOLDER / f"tc{test_case_id}_{timestamp}.py"
+        )
+
+        self.logger.info(
+            f"Launching Playwright codegen recorder against {url} "
+            f"for test case {test_case_id}."
+        )
+
+        process = subprocess.Popen(
+            [
+                sys.executable, "-m", "playwright", "codegen",
+                "--target", "python",
+                "-o", str(output_path),
+                url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        if on_process_started:
+
+            on_process_started(process)
+
+        # Blocks here until the operator closes the recorder browser
+        # (or Cancel Recording terminates the process) — codegen only
+        # writes the output file on exit, there's no "in-progress"
+        # file to poll.
+        _, stderr = process.communicate()
+
+        if not output_path.exists():
+
+            raise RuntimeError(
+                "The recorder closed without producing a script. "
+                "This usually means it was closed immediately, or "
+                "Playwright's browsers aren't installed (run: "
+                "playwright install chromium).\n\n"
+                f"{(stderr or '').strip()[-800:]}"
+            )
+
+        script = output_path.read_text(encoding="utf-8").strip()
+
+        if not script:
+
+            raise RuntimeError(
+                "The recorder produced an empty script — no actions "
+                "were captured. Try again and interact with the "
+                "page before closing the recorder window."
+            )
+
+        self.repository.update_recorded_script(test_case_id, script)
+
+        return script
+
+
+    def update_recorded_script(self, test_case_id, script_text):
+        """
+        Saves a manually-edited version of the RECORDED script (as
+        opposed to update_script(), which edits the AI-generated
+        one) — without re-launching the recorder.
+        """
+
+        self.repository.update_recorded_script(
+            test_case_id, script_text
+        )
+
+
+    def set_active_script(self, test_case_id, source):
+        """
+        `source`: "AUTO" (the AI-generated script) or "MANUAL" (the
+        hand-recorded one). Controls which one Execute actually runs
+        — see get_active_script().
+        """
+
+        if source not in ("AUTO", "MANUAL"):
+
+            raise ValueError("source must be 'AUTO' or 'MANUAL'.")
+
+        self.repository.set_active_script_source(
+            test_case_id, source
+        )
+
+
+    @staticmethod
+    def get_active_script(test_case):
+        """
+        Returns whichever script should actually be used for Execute
+        / as View Script's default tab, per this test case's
+        active_script_source. Falls back to the AI-generated script
+        if MANUAL is selected but nothing has actually been recorded
+        — so a stale selection can never silently make Execute find
+        nothing to run.
+        """
+
+        source = (
+            test_case.get("active_script_source") or "AUTO"
+        ).upper()
+
+        if source == "MANUAL" and test_case.get("recorded_script"):
+
+            return test_case.get("recorded_script")
+
+        return test_case.get("automation_script")
 
     def check_script_syntax(self, script_text):
         """
@@ -581,11 +753,13 @@ class TestExecutionManager:
         # Real execution exists for Playwright now. Selenium/API/SQL
         # still require manual review via View Script — same
         # reasoning as before, they just haven't gotten a runner yet.
+        # get_active_script() checks BOTH the AI-generated and the
+        # manually recorded script, whichever this test case is set
+        # to use.
         return (
             test_case.get("automation_type") == "Playwright"
-            and bool(test_case.get("automation_script"))
+            and bool(self.get_active_script(test_case))
         )
-
 
     def execute_playwright(self, test_case_id, timeout_seconds=None):
         """
@@ -603,13 +777,14 @@ class TestExecutionManager:
                 f"Test case {test_case_id} not found."
             )
 
-        script = test_case.get("automation_script")
+        script = self.get_active_script(test_case)
 
         if not script:
 
             raise ValueError(
-                "No automation script generated yet for this test "
-                "case — use Add Automation first."
+                "No automation script available for this test case "
+                "yet — use Add Automation (AI-generated) or Record "
+                "Manually first."
             )
 
         result = self.playwright_runner.run_script(
