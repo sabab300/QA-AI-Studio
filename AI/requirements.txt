@@ -10,5 +10,6 @@ requests
 pandas
 numpy
 reportlab
-echo
 GitPython
+playwright
+PySide6

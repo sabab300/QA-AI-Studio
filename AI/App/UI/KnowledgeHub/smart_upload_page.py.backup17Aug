@@ -94,10 +94,6 @@ from PySide6.QtWidgets import QMessageBox
 from UI.KnowledgeHub.upload_worker import UploadWorker
 from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
 from UI.KnowledgeHub.url_discovery_worker import URLDiscoveryWorker
-from UI.KnowledgeHub.business_flow_start_dialog import BusinessFlowStartDialog
-from UI.KnowledgeHub.discovery_step_confirmation_dialog import (
-    DiscoveryStepConfirmationDialog,
-)
 
 
 # Extensions the backend TextExtractor can actually read.
@@ -133,6 +129,18 @@ DOCUMENT_TYPES = [
     "Other",
 ]
 
+# Add these imports at the top of App/UI/KnowledgeHub/smart_upload_page.py
+
+try:
+    from UI.KnowledgeHub.business_hierarchy_dialog import BusinessHierarchyDialog
+    from UI.KnowledgeHub.knowledge_db_sync import save_business_hierarchy_to_db
+except ImportError:
+    try:
+        from .business_hierarchy_dialog import BusinessHierarchyDialog
+        from .knowledge_db_sync import save_business_hierarchy_to_db
+    except ImportError:
+        pass
+
 class SmartUploadPage(QWidget):
 
     def __init__(self):
@@ -167,15 +175,6 @@ class SmartUploadPage(QWidget):
         self.url_discovery_source_url = None
         self.url_discovery_auth_type = None
         self.authenticated_session = None
-
-        # Guided business-flow capture state (AI Smart Upload -> URL
-        # Knowledge). flow_context holds the operator-confirmed
-        # Application/Business Process/Variant names for the whole
-        # flow; captured_steps accumulates one confirmed step dict
-        # per screen until the operator marks a step as final.
-        self.flow_context = None
-        self.captured_steps = []
-        self.flow_saved = False
 
     # ======================================================
     # UI
@@ -505,71 +504,6 @@ class SmartUploadPage(QWidget):
 
 
         # ==================================================
-        # Guided Business Flow Capture (URL Knowledge)
-        #
-        # Shown once an authenticated Playwright session is ready.
-        # The operator drives the real business process by hand in
-        # the still-open browser window and clicks "Capture This
-        # Screen" after each step; every capture is reviewed in
-        # DiscoveryStepConfirmationDialog before it is ever saved.
-        # ==================================================
-
-        self.flow_group = QGroupBox(
-            "Guided Business Flow Capture"
-        )
-
-        flow_layout = QVBoxLayout(self.flow_group)
-
-        flow_layout.setContentsMargins(15, 20, 15, 15)
-
-        flow_layout.setSpacing(10)
-
-        self.flow_status_label = QLabel(
-            "Authenticate via “Add URL” above to start a guided capture."
-        )
-
-        self.flow_status_label.setWordWrap(True)
-
-        flow_layout.addWidget(self.flow_status_label)
-
-        flow_buttons = QHBoxLayout()
-
-        self.capture_step_btn = QPushButton("Capture This Screen")
-
-        self.capture_step_btn.setStyleSheet(
-            "background-color: #2563EB; color: white; font-weight: bold; padding: 6px 14px;"
-        )
-
-        self.cancel_flow_btn = QPushButton("Cancel Flow")
-
-        self.capture_step_btn.setEnabled(False)
-        self.cancel_flow_btn.setEnabled(False)
-
-        flow_buttons.addWidget(self.capture_step_btn)
-
-        flow_buttons.addWidget(self.cancel_flow_btn)
-
-        flow_buttons.addStretch()
-
-        flow_layout.addLayout(flow_buttons)
-
-        self.captured_steps_list = QListWidget()
-
-        self.captured_steps_list.setMinimumHeight(90)
-
-        self.captured_steps_list.setSizePolicy(
-            QSizePolicy.Expanding,
-            QSizePolicy.Fixed
-        )
-
-        flow_layout.addWidget(self.captured_steps_list)
-
-        layout.addWidget(self.flow_group)
-
-        self.flow_group.setVisible(False)
-
-
-        # ==================================================
         # Events
         # ==================================================
 
@@ -609,14 +543,6 @@ class SmartUploadPage(QWidget):
 
         self.add_module_btn.clicked.connect(
             self.add_module
-        )
-
-        self.capture_step_btn.clicked.connect(
-            self._on_capture_screen_clicked
-        )
-
-        self.cancel_flow_btn.clicked.connect(
-            self._on_cancel_flow_clicked
         )
 
         self.upload_btn.setEnabled(False)
@@ -1664,36 +1590,20 @@ class SmartUploadPage(QWidget):
             db_conn=getattr(self, "db_manager", None),
         )
 
-        # NOTE: this thread is NOT a short-lived "run once and finish"
-        # worker any more. Once authenticated it idles on its own
-        # command queue (see SmartUploadWorker) so that "Capture This
-        # Screen" can be clicked as many times as the real business
-        # flow needs, all from this one Playwright-safe thread.
         self.url_discovery_worker.moveToThread(self.url_discovery_thread)
-
-        # Reset guided-flow accumulation state for this run.
-        self.flow_context = None
-        self.captured_steps = []
-        self.flow_saved = False
 
         # 2. Connect worker signals
         self.url_discovery_thread.started.connect(
             self.url_discovery_worker.run
         )
 
-        self.url_discovery_worker.log_signal.connect(self.log.append)
+        if hasattr(self.url_discovery_worker, "log_signal"):
+            self.url_discovery_worker.log_signal.connect(self.log.append)
 
-        self.url_discovery_worker.flow_ready_signal.connect(
-            self.on_flow_ready
-        )
-
-        self.url_discovery_worker.step_ready_signal.connect(
-            self.on_step_ready
-        )
-
-        self.url_discovery_worker.finished_signal.connect(
-            self.on_flow_worker_finished
-        )
+        if hasattr(self.url_discovery_worker, "finished_signal"):
+            self.url_discovery_worker.finished_signal.connect(
+                self.on_url_discovery_finished
+            )
 
         # 3. Clean up thread upon completion
         self.url_discovery_worker.finished_signal.connect(
@@ -2057,18 +1967,8 @@ class SmartUploadPage(QWidget):
             self.url_discovery_worker.run
         )
 
-        # NOTE: start_authenticated_url_discovery() / this whole
-        # two-thread (separate auth worker + separate URLDiscoveryWorker)
-        # path is not wired to any button and is not reachable from the
-        # live UI (on_url_analysis_finished() uses
-        # authenticate_url_with_credentials()'s single-thread
-        # SmartUploadWorker instead, which is required for Playwright
-        # thread-safety — see smart_upload_worker.py's module
-        # docstring). Left in place rather than deleted to keep this
-        # change focused, but do not wire a new button to this method
-        # without first switching it to the same single-thread pattern.
         self.url_discovery_worker.finished.connect(
-            self.on_flow_worker_finished
+            self.on_url_discovery_finished
         )
 
         self.url_discovery_worker.error.connect(
@@ -2103,298 +2003,245 @@ class SmartUploadPage(QWidget):
     
             self.authenticated_session = None
 
-    def on_flow_ready(self, payload):
+    def on_url_discovery_finished(
+        self,
+        result,
+    ):
         """
-        Fired once SmartUploadWorker has authenticated and is idling
-        on its command queue, ready for "Capture This Screen" clicks.
-
-        This is where the operator confirms the hierarchy (Application
-        / Business Process / Variant) the whole flow will be filed
-        under, before a single element is captured.
+        Handle real Playwright discovery result.
         """
 
-        if not isinstance(payload, dict) or not payload.get("success"):
-            self.log.append(
-                "Authenticated session did not report ready state; "
-                "guided capture cannot start."
+        try:
+
+            self.url_discovery_result = result
+
+            if not result.get(
+                "success",
+                False
+            ):
+
+                error = result.get(
+                    "error",
+                    "URL discovery failed."
+                )
+
+                self.log.append(
+                    f"URL discovery failed: {error}"
+                )
+
+                QMessageBox.critical(
+                    self,
+                    "URL Discovery Failed",
+                    error
+                )
+
+                self._restore_url_controls()
+
+                return
+
+            pages = result.get(
+                "pages",
+                []
             )
+
+            fields = result.get(
+                "fields",
+                []
+            )
+
+            buttons = result.get(
+                "buttons",
+                []
+            )
+
+            links = result.get(
+                "links",
+                []
+            )
+
+            forms = result.get(
+                "forms",
+                []
+            )
+
+            tabs = result.get(
+                "tabs",
+                []
+            )
+
+            navigation = result.get(
+                "navigation",
+                []
+            )
+
+            self.log.append(
+                "Authenticated Playwright discovery completed."
+            )
+
+            self.log.append(
+                f"Pages discovered: {len(pages)}"
+            )
+
+            self.log.append(
+                f"Forms discovered: {len(forms)}"
+            )
+
+            self.log.append(
+                f"Fields discovered: {len(fields)}"
+            )
+
+            self.log.append(
+                f"Buttons discovered: {len(buttons)}"
+            )
+
+            self.log.append(
+                f"Links discovered: {len(links)}"
+            )
+
+            self.log.append(
+                f"Tabs discovered: {len(tabs)}"
+            )
+
+            self.log.append(
+                f"Navigation targets: {len(navigation)}"
+            )
+
+            self.summary.append(
+                "Authenticated Playwright discovery completed.\n"
+                f"Pages: {len(pages)}\n"
+                f"Forms: {len(forms)}\n"
+                f"Fields: {len(fields)}\n"
+                f"Buttons: {len(buttons)}\n"
+                f"Links: {len(links)}\n"
+                f"Tabs: {len(tabs)}"
+            )
+
+            self.log.append(
+                "Saving discovered UI knowledge to "
+                "Knowledge Hub..."
+            )
+
+            self._save_discovery_result_to_knowledge_hub(result)
+
+            self.log.append(
+                "URL discovery data saved successfully."
+            )
+
+            self.cleanup_authenticated_session()
+
             self._restore_url_controls()
-            return
+
+        except Exception as ex:
+
+            self.log.append(
+                f"Discovery result processing failed: {ex}"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Discovery Error",
+                str(ex)
+            )
+
+            self._restore_url_controls()
+
+    def _save_discovery_result_to_knowledge_hub(self, result):
+        """
+        Persists a completed discovery result via DiscoveryRepository
+        so it survives past this session, instead of only ever
+        living in this page's log box.
+        """
 
         source_url = (
-            self.url_discovery_source_url
-            or payload.get("url")
+            getattr(self, "url_discovery_source_url", None)
             or self.selected_url
             or ""
         )
 
-        dialog = BusinessFlowStartDialog(source_url, parent=self)
-
-        if dialog.exec() != QDialog.Accepted:
-
-            self.log.append(
-                "Guided capture cancelled before it started."
-            )
-
-            if self.url_discovery_worker is not None:
-                self.url_discovery_worker.request_finish(keep_browser_open=False)
-
-            self._restore_url_controls()
-
-            return
-
-        self.flow_context = dialog.values()
-        self.captured_steps = []
-        self.flow_saved = False
-
-        self.captured_steps_list.clear()
-
-        self.flow_group.setVisible(True)
-
-        self.flow_status_label.setText(
-            "Drive the business process in the browser window, then "
-            "click “Capture This Screen” after each step. Click "
-            "“Cancel Flow” if you want to stop without saving."
-        )
-
-        self.capture_step_btn.setEnabled(True)
-        self.cancel_flow_btn.setEnabled(True)
-
-        self.log.append(
-            "Ready for guided capture. Application="
-            f"{self.flow_context.get('application_name')}, "
-            f"Business Process={self.flow_context.get('business_process_name')}, "
-            f"Variant={self.flow_context.get('variant_name')}."
-        )
-
-    def _on_capture_screen_clicked(self):
-
-        if self.url_discovery_worker is None:
-            QMessageBox.warning(
-                self,
-                "Guided Capture",
-                "There is no active authenticated session to capture from.",
-            )
-            return
-
-        self.capture_step_btn.setEnabled(False)
-
-        step_label = f"Step {len(self.captured_steps) + 1}"
-
-        self.log.append(f"Requesting capture of the current screen ({step_label})...")
-
-        self.url_discovery_worker.request_capture(step_label=step_label)
-
-    def on_step_ready(self, scan):
-        """
-        Fired when the worker finishes scanning whatever screen the
-        operator manually navigated to. Nothing from `scan` reaches
-        the database until the operator reviews and confirms it here.
-        """
-
-        self.capture_step_btn.setEnabled(True)
-
-        if not isinstance(scan, dict) or not scan.get("success"):
-            error = scan.get("error") if isinstance(scan, dict) else "Unknown error."
-            self.log.append(f"Capture failed: {error}")
-            QMessageBox.warning(
-                self,
-                "Capture Failed",
-                f"Could not read this screen:\n{error}\n\n"
-                "You can try “Capture This Screen” again once the page "
-                "has finished loading.",
-            )
-            return
-
-        step_index = len(self.captured_steps) + 1
-
-        dialog = DiscoveryStepConfirmationDialog(
-            scan,
-            step_index=step_index,
-            default_page_name=scan.get("page_title") or "",
-            parent=self,
-        )
-
-        if dialog.exec() != QDialog.Accepted:
-            self.log.append(f"Step {step_index} discarded — capture this screen again if needed.")
-            return
-
-        confirmed = dialog.confirmed_step()
-
-        self.captured_steps.append(confirmed)
-
-        included = len(confirmed.get("elements", []))
-
-        self.captured_steps_list.addItem(
-            f"Step {step_index}: {confirmed.get('step_name')} — {included} element(s)"
-            + (" [final step]" if confirmed.get("is_end_step") else "")
-        )
-
-        self.log.append(
-            f"Step {step_index} confirmed and queued: {included} element(s) on "
-            f"'{confirmed.get('page_name')}' / '{confirmed.get('tab_name')}'."
-        )
-
-        if confirmed.get("is_end_step"):
-            self._finish_flow_and_save()
-
-    def _save_captured_steps_to_repository(self):
-        """
-        Persists everything captured so far via
-        DiscoveryRepository.save_flow_result(). Shared by the normal
-        "operator marked the final step" path and by the
-        unexpected-disconnect recovery path in on_flow_worker_finished,
-        so a browser crash mid-flow doesn't have to mean losing steps
-        the operator already reviewed and confirmed.
-        """
-
-        if self.flow_saved:
-            return None
-
-        if not self.captured_steps:
-            return None
-
-        flow_context = self.flow_context or {}
-
-        source_url = (
-            self.url_discovery_source_url
-            or self.selected_url
-            or self.captured_steps[0].get("page_url")
-            or ""
+        auth_type = getattr(
+            self, "url_discovery_auth_type", None
         )
 
         try:
+
             repository = DiscoveryRepository()
 
-            save_result = repository.save_flow_result(
-                self.captured_steps,
+            save_result = repository.save_discovery_result(
+                result,
                 source_url=source_url,
-                auth_type=self.url_discovery_auth_type,
-                application_name=flow_context.get("application_name"),
-                business_process_name=flow_context.get("business_process_name"),
-                variant_name=flow_context.get("variant_name"),
+                auth_type=auth_type,
             )
 
         except Exception as ex:
-            self.log.append(f"Saving the captured business flow failed: {ex}")
+
+            self.log.append(
+                f"Saving discovered knowledge failed: {ex}"
+            )
+
             QMessageBox.warning(
                 self,
                 "Knowledge Hub Save Failed",
-                f"The captured flow could not be saved:\n{ex}",
+                "Discovery completed, but saving the result to "
+                f"Knowledge Hub failed:\n{ex}",
             )
-            return None
 
-        self.flow_saved = True
+            return
 
         if not save_result.get("success"):
-            error = save_result.get("error", "Unknown error while saving.")
-            self.log.append(f"Saving the captured business flow failed: {error}")
+
+            error = save_result.get(
+                "error", "Unknown error while saving."
+            )
+
+            self.log.append(
+                f"Saving discovered knowledge failed: {error}"
+            )
+
             QMessageBox.warning(
                 self,
                 "Knowledge Hub Save Failed",
-                f"The captured flow could not be saved:\n{error}",
+                f"Discovery completed, but saving failed:\n{error}",
             )
-            return save_result
 
-        self.log.append(
-            "Saved business flow to Knowledge Hub — Application ID "
-            f"{save_result.get('application_id')}, Business Process ID "
-            f"{save_result.get('business_process_id')}, Variant ID "
-            f"{save_result.get('variant_id')}."
+            return
+
+        elements_saved = save_result.get("elements_saved", 0)
+
+        elements_skipped = save_result.get(
+            "elements_skipped_low_confidence", 0
         )
 
         self.log.append(
-            f"Steps saved: {save_result.get('steps_saved', 0)} | "
-            f"Elements saved: {save_result.get('elements_saved', 0)} | "
-            f"Elements skipped: {save_result.get('elements_skipped_low_confidence', 0)}"
+            f"Saved to Knowledge Hub — Application ID "
+            f"{save_result.get('application_id')}, Business "
+            f"Process ID {save_result.get('business_process_id')}, "
+            f"Variant ID {save_result.get('variant_id')}, Page ID "
+            f"{save_result.get('page_id')}."
         )
+
+        self.log.append(
+            f"Elements saved: {elements_saved} | "
+            f"Skipped (no usable locator): {elements_skipped} | "
+            f"Tabs recorded: {save_result.get('tabs_created', 0)}"
+        )
+
+        if elements_skipped:
+
+            self.log.append(
+                f"{elements_skipped} element(s) had no reliable "
+                f"locator (no data-testid/id/name/aria-label/"
+                f"placeholder) and were not stored — a bare "
+                f"tag/type selector isn't trustworthy automation "
+                f"knowledge."
+            )
 
         self.summary.append(
-            "\nSaved guided business flow to Knowledge Hub:\n"
-            f"Steps saved: {save_result.get('steps_saved', 0)}\n"
-            f"Elements saved: {save_result.get('elements_saved', 0)}\n"
-            f"Elements skipped: {save_result.get('elements_skipped_low_confidence', 0)}\n"
+            "\nSaved to Knowledge Hub:\n"
+            f"Elements saved: {elements_saved}\n"
+            f"Elements skipped: {elements_skipped}\n"
+            f"Tabs recorded: {save_result.get('tabs_created', 0)}\n"
             f"Discovery session ID: {save_result.get('session_id')}"
         )
-
-        return save_result
-
-    def _finish_flow_and_save(self):
-
-        self.capture_step_btn.setEnabled(False)
-        self.cancel_flow_btn.setEnabled(False)
-
-        self.flow_status_label.setText("Saving captured business flow...")
-
-        self._save_captured_steps_to_repository()
-
-        if self.url_discovery_worker is not None:
-            self.url_discovery_worker.request_finish(keep_browser_open=False)
-
-    def _on_cancel_flow_clicked(self):
-
-        if self.captured_steps:
-            confirm = QMessageBox.question(
-                self,
-                "Cancel Flow",
-                f"{len(self.captured_steps)} confirmed step(s) have not been saved yet. "
-                "Discard them and close the browser?",
-            )
-            if confirm != QMessageBox.Yes:
-                return
-
-        self.capture_step_btn.setEnabled(False)
-        self.cancel_flow_btn.setEnabled(False)
-
-        self.log.append("Guided capture cancelled; nothing was saved.")
-
-        self.captured_steps = []
-        self.flow_context = None
-        self.flow_saved = True  # nothing left to save on worker teardown
-
-        if self.url_discovery_worker is not None:
-            self.url_discovery_worker.request_finish(keep_browser_open=False)
-
-    def on_flow_worker_finished(self, result):
-        """
-        Fired once the worker thread's command loop exits — either
-        because the operator finished/cancelled the flow, or because
-        authentication failed, or because something unexpected went
-        wrong mid-flow (e.g. the operator closed the browser window
-        directly). In the last case, anything already confirmed by
-        the operator is saved here rather than silently lost.
-        """
-
-        success = isinstance(result, dict) and result.get("success")
-
-        if not success and self.captured_steps and not self.flow_saved:
-
-            error = result.get("error", "The session ended unexpectedly.") if isinstance(result, dict) else "The session ended unexpectedly."
-
-            recover = QMessageBox.question(
-                self,
-                "Session Ended Unexpectedly",
-                f"{error}\n\n"
-                f"{len(self.captured_steps)} confirmed step(s) were captured before this "
-                "happened. Save them to Knowledge Hub now?",
-            )
-
-            if recover == QMessageBox.Yes:
-                self._save_captured_steps_to_repository()
-
-        elif not success:
-
-            error = result.get("error", "Unknown error.") if isinstance(result, dict) else "Unknown error."
-            self.log.append(f"Guided capture session ended: {error}")
-
-        self.flow_group.setVisible(False)
-        self.capture_step_btn.setEnabled(False)
-        self.cancel_flow_btn.setEnabled(False)
-
-        self.flow_context = None
-        self.captured_steps = []
-
-        self._restore_url_controls()
 
     def on_url_discovery_error(self, message):
         """Handle authenticated URL discovery worker errors."""
@@ -2423,3 +2270,99 @@ class SmartUploadPage(QWidget):
 
         self.url_discovery_worker = None
         self.url_discovery_thread = None
+
+    def start_authenticated_discovery(self, target_url: str, analysis_data: dict, credentials: dict):
+        """
+        Launches the unified SmartUploadWorker thread.
+        """
+        # Pass Database connection if available
+        db_conn = getattr(self, "db_manager", None)
+
+        self.worker = SmartUploadWorker(
+            target_url=target_url,
+            analysis_data=analysis_data,
+            credentials=credentials,
+            db_conn=db_conn,
+            parent=self
+        )
+
+        # Connect Worker Signals to UI
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_discovery_completed)
+
+        # Launch Thread
+        self.worker.start()
+
+    def execute_smart_upload_discovery(self, target_url: str, analysis_data: dict, credentials: dict):
+        """
+        Launches the unified SmartUploadWorker thread.
+        """
+        db_conn = getattr(self, "db_manager", None)
+
+        # Instantiate single thread worker
+        self.worker = SmartUploadWorker(
+            target_url=target_url,
+            analysis_data=analysis_data,
+            credentials=credentials,
+            db_conn=db_conn,
+            parent=self
+        )
+
+        # Connect Worker Signals to UI
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_discovery_completed)
+
+        # Launch Thread safely
+        self.worker.start()
+
+    def on_discovery_completed(self, result: dict):
+        if not result.get("success"):
+            QMessageBox.critical(
+                self, 
+                "URL Discovery Failed", 
+                result.get("error", "An unknown error occurred during discovery.")
+            )
+        else:
+            self.append_log("Knowledge discovery stored successfully!")
+            # Render tabs in the right main content area as per your layout preference
+            self.display_discovered_endpoints(result.get("data"))
+
+    # Inside App/UI/KnowledgeHub/smart_upload_page.py
+
+    from UI.KnowledgeHub.business_hierarchy_dialog import BusinessHierarchyDialog
+    from UI.KnowledgeHub.knowledge_db_sync import save_business_hierarchy_to_db
+
+
+    def on_worker_finished(self, result: dict):
+        """Callback fired when SmartUploadWorker finishes Playwright analysis."""
+        if not result.get("success"):
+            QMessageBox.critical(self, "Discovery Failed", f"Error: {result.get('error')}")
+            return
+
+        # Extract raw discovery payload
+        discovery_data = result.get("data", result)
+
+        # Open Pre-Submission Hierarchy Review Dialog
+        dialog = BusinessHierarchyDialog(discovery_data, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            confirmed_hierarchy = dialog.confirmed_data
+
+            # Save verified metadata to Database
+            db_result = save_business_hierarchy_to_db(self.db_conn, confirmed_hierarchy)
+
+            if db_result.get("success"):
+                QMessageBox.information(
+                    self, 
+                    "Knowledge Saved", 
+                    f"Business Hierarchy successfully updated in Knowledge Hub!\n"
+                    f"Discovered Elements Stored: {db_result.get('element_count')}"
+                )
+                # Refresh Knowledge Manager Table if present
+                if hasattr(self, "url_manager_tab"):
+                    self.url_manager_tab.load_url_knowledge()
+            else:
+                QMessageBox.critical(self, "Database Error", f"Could not save: {db_result.get('error')}")
+        else:
+            self.log_message("User cancelled business hierarchy confirmation.")
