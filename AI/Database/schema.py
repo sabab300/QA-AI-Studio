@@ -563,6 +563,50 @@ CREATE TABLE IF NOT EXISTS discovery_sessions
         ON DELETE SET NULL
 );
 """
+API_COLLECTIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS api_collections
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    source_file_name TEXT,
+    domain TEXT,
+    module TEXT,
+    knowledge_name TEXT,
+    version TEXT,
+    linked_knowledge_item_id INTEGER,
+    variables_json TEXT,
+    status TEXT DEFAULT 'Active',
+    created_date TEXT,
+    modified_date TEXT
+);
+"""
+
+API_ENDPOINTS_TABLE = """
+CREATE TABLE IF NOT EXISTS api_endpoints
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    folder_path TEXT,
+    name TEXT,
+    method TEXT,
+    url_raw TEXT,
+    url_resolved TEXT,
+    headers_json TEXT,
+    query_params_json TEXT,
+    body_mode TEXT,
+    body_raw TEXT,
+    auth_type TEXT,
+    auth_details_json TEXT,
+    example_response_status INTEGER,
+    example_response_body TEXT,
+    status TEXT DEFAULT 'Active',
+    created_date TEXT,
+    modified_date TEXT,
+    FOREIGN KEY(collection_id)
+        REFERENCES api_collections(id)
+        ON DELETE CASCADE
+);
+"""
 
 
 # ==========================================================
@@ -584,6 +628,8 @@ ALL_TABLES = [
     DISCOVERY_BUSINESS_PROCESSES_TABLE,
     DISCOVERY_VARIANTS_TABLE,
     DISCOVERY_PAGES_TABLE,
+    API_COLLECTIONS_TABLE,
+    API_ENDPOINTS_TABLE,
     DISCOVERY_TABS_TABLE,
     DISCOVERY_SECTIONS_TABLE,
     DISCOVERY_ELEMENTS_TABLE,

@@ -35,6 +35,7 @@ import os
 
 from PySide6.QtCore import QThread, Qt
 from Core.metadata_manager import MetadataManager
+from Core.api_collection_repository import ApiCollectionRepository
 from UI.KnowledgeHub.upload_summary_dialog import UploadSummaryDialog
 
 
@@ -58,6 +59,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QScrollArea,
     QSizePolicy,
+    QApplication,
 )
 
 from UI.KnowledgeHub.upload_worker import UploadWorker
@@ -76,6 +78,8 @@ class UploadManualPage(QWidget):
         self.worker = None
 
         self.upload_source = "-"
+
+        self.api_collection_repository = ApiCollectionRepository()
 
         self.build_ui()
 
@@ -340,8 +344,14 @@ class UploadManualPage(QWidget):
             "Select source type and add knowledge."
         )
 
+        self.source_info.setWordWrap(True)
+
         source_layout.addWidget(
             self.source_info
+        )
+
+        self.source_type.currentTextChanged.connect(
+            self.update_source_info
         )
 
 
@@ -736,6 +746,11 @@ class UploadManualPage(QWidget):
                 )
 
 
+        elif source_type == "API Collection":
+
+            self.import_api_collection()
+
+
         else:
 
             QMessageBox.information(
@@ -743,6 +758,132 @@ class UploadManualPage(QWidget):
                 "Connector",
                 f"{source_type} connector will be enabled in next backend phase."
             )
+
+
+    # ======================================================
+    # Source type guidance
+    # ======================================================
+
+    def update_source_info(self, source_type):
+
+        if source_type == "API Collection":
+
+            self.source_info.setText(
+                "Import a Postman Collection export (.json). This "
+                "imports immediately (it does not use the Selected "
+                "Sources list / Upload & Process button below) and "
+                "files the endpoints under the Domain / Module / "
+                "Knowledge Name / Version above, same as any other "
+                "source — leave Knowledge Name blank to import "
+                "unlinked. View and edit imported endpoints from "
+                "Manage Knowledge. In Postman: right-click the "
+                "collection -> Export -> Collection v2.1."
+            )
+
+        else:
+
+            self.source_info.setText(
+                "Select source type and add knowledge."
+            )
+
+
+    # ======================================================
+    # API Collection import
+    # ======================================================
+
+    def import_api_collection(self):
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Postman Collection",
+            "",
+            "Postman Collection (*.json);;All Files (*.*)",
+        )
+
+        if not file_path:
+
+            return
+
+        domain = self.domain.currentText().strip()
+
+        module = self.module.currentText().strip()
+
+        knowledge_name = self.knowledge_name.text().strip()
+
+        version = self.version.text().strip()
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+
+            result = self.api_collection_repository.import_postman_collection(
+                file_path,
+                domain=domain or None,
+                module=module or None,
+                knowledge_name=knowledge_name or None,
+                version=version or None,
+            )
+
+        finally:
+
+            QApplication.restoreOverrideCursor()
+
+        if not result.get("success"):
+
+            self.log.append(
+                f"API Collection import failed: "
+                f"{result.get('error', 'Unknown error.')}"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Import Failed",
+                result.get("error", "Unknown error.")
+            )
+
+            return
+
+        summary_lines = [
+            "=" * 60,
+            f"Imported API Collection '{result['collection_name']}'",
+            f"Folders found   : {result['folders_found']}",
+            f"Endpoints saved : {result['endpoints_saved']}",
+            f"Endpoints skipped: {result['endpoints_skipped']}",
+        ]
+
+        if result.get("knowledge_item_id"):
+
+            if result.get("indexed_chunks"):
+
+                summary_lines.append(
+                    f"Indexed for AI test case generation: "
+                    f"{result['indexed_chunks']} chunk(s)."
+                )
+
+            summary_lines.append(
+                "Filed under Manage Knowledge — view/edit endpoints "
+                "there, and API automation generation for this "
+                "Domain / Module / Knowledge Name will use them."
+            )
+
+        else:
+
+            summary_lines.append(
+                "Imported without linking to a Domain / Module / "
+                "Knowledge Name above — fill those in and re-import "
+                "to file it under Manage Knowledge."
+            )
+
+        summary_lines.append("=" * 60)
+
+        self.log.append("\n".join(summary_lines))
+
+        QMessageBox.information(
+            self,
+            "API Collection Imported",
+            f"Imported '{result['collection_name']}': "
+            f"{result['endpoints_saved']} endpoint(s) saved."
+        )
 
 
     def add_file(self, path):

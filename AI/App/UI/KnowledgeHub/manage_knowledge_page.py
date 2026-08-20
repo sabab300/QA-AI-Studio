@@ -34,12 +34,15 @@ Selection rules:
 ==========================================================
 """
 
+import json
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
+    QFormLayout,
     QLabel,
     QPushButton,
     QLineEdit,
@@ -50,6 +53,9 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QComboBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
 
 from Core.metadata_manager import MetadataManager
@@ -60,10 +66,25 @@ from Core.discovery_repository import (
     DiscoveryRepository,
     CAPTURED_FLOW_SOURCE_TYPE,
 )
+
+from Core.api_collection_repository import (
+    ApiCollectionRepository,
+    API_COLLECTION_SOURCE_TYPE,
+)
 from PySide6.QtCore import Signal
 
 
 ROW_ID_ROLE = Qt.UserRole
+
+# Marks an endpoint node (a leaf under an imported API Collection's
+# knowledge_items row) so edit_selected() can tell it apart from a
+# regular file leaf, which uses ROW_ID_ROLE instead. A node only
+# ever carries one of the two roles.
+ENDPOINT_ID_ROLE = Qt.UserRole + 1
+
+HTTP_METHODS = [
+    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+]
 
 
 # ==========================================================
@@ -351,6 +372,262 @@ class EditKnowledgeDialog(QDialog):
 
 
 # ==========================================================
+# Postman-style endpoint editor (view + edit one imported request)
+# ==========================================================
+
+class ApiEndpointEditorDialog(QDialog):
+    """
+    Lets someone view and edit one endpoint from an imported Postman
+    Collection directly in Manage Knowledge — method, URL, headers,
+    and body — the same fields Postman itself shows, instead of the
+    single flattened text label the tree previously rendered with no
+    way to inspect or change anything underneath it.
+
+    Saves back to the api_endpoints row via
+    ApiCollectionRepository.update_endpoint() — this edits ONLY the
+    stored copy of this request; it does not re-import or touch the
+    original .json file.
+    """
+
+    def __init__(self, endpoint, repository, parent=None):
+
+        super().__init__(parent)
+
+        self.endpoint = endpoint
+
+        self.repository = repository
+
+        self.setWindowTitle(
+            f"Endpoint — {endpoint.get('name') or '(unnamed)'}"
+        )
+
+        self.resize(640, 560)
+
+        self.build_ui()
+
+    # ------------------------------------------------------
+
+    def build_ui(self):
+
+        layout = QVBoxLayout(self)
+
+        if self.endpoint.get("folder_path"):
+
+            folder_label = QLabel(
+                f"Folder: {self.endpoint['folder_path']}"
+            )
+
+            folder_label.setStyleSheet("color: gray;")
+
+            layout.addWidget(folder_label)
+
+        form = QFormLayout()
+
+        self.method = QComboBox()
+
+        self.method.setEditable(True)
+
+        self.method.addItems(HTTP_METHODS)
+
+        current_method = (self.endpoint.get("method") or "GET").upper()
+
+        index = self.method.findText(current_method)
+
+        if index >= 0:
+
+            self.method.setCurrentIndex(index)
+
+        else:
+
+            self.method.setCurrentText(current_method)
+
+        self.name = QLineEdit(self.endpoint.get("name") or "")
+
+        self.url = QLineEdit(
+            self.endpoint.get("url_raw")
+            or self.endpoint.get("url_resolved")
+            or ""
+        )
+
+        self.url.setPlaceholderText(
+            "https://host/path — {{variables}} are allowed"
+        )
+
+        form.addRow("Method:", self.method)
+
+        form.addRow("Name:", self.name)
+
+        form.addRow("URL:", self.url)
+
+        layout.addLayout(form)
+
+        # --------------------------------------------------
+        # Headers
+        # --------------------------------------------------
+
+        layout.addWidget(QLabel("Headers"))
+
+        self.headers_table = QTableWidget(0, 2)
+
+        self.headers_table.setHorizontalHeaderLabels(["Key", "Value"])
+
+        self.headers_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+
+        self.headers_table.setMinimumHeight(140)
+
+        self._load_headers()
+
+        layout.addWidget(self.headers_table)
+
+        header_buttons = QHBoxLayout()
+
+        add_header_btn = QPushButton("Add Header")
+
+        add_header_btn.clicked.connect(self._add_header_row)
+
+        remove_header_btn = QPushButton("Remove Selected")
+
+        remove_header_btn.clicked.connect(self._remove_header_row)
+
+        header_buttons.addWidget(add_header_btn)
+
+        header_buttons.addWidget(remove_header_btn)
+
+        header_buttons.addStretch()
+
+        layout.addLayout(header_buttons)
+
+        # --------------------------------------------------
+        # Body
+        # --------------------------------------------------
+
+        body_mode = self.endpoint.get("body_mode") or "(none)"
+
+        layout.addWidget(QLabel(f"Body ({body_mode}):"))
+
+        self.body = QTextEdit()
+
+        self.body.setPlainText(self.endpoint.get("body_raw") or "")
+
+        self.body.setMinimumHeight(140)
+
+        layout.addWidget(self.body)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
+        )
+
+        buttons.accepted.connect(self.save)
+
+        buttons.rejected.connect(self.reject)
+
+        layout.addWidget(buttons)
+
+    # ------------------------------------------------------
+
+    def _load_headers(self):
+
+        try:
+
+            headers = json.loads(self.endpoint.get("headers_json") or "[]")
+
+        except (TypeError, ValueError):
+
+            headers = []
+
+        for header in headers:
+
+            self._add_header_row(
+                header.get("key", ""), header.get("value", "")
+            )
+
+    def _add_header_row(self, key="", value=""):
+
+        row = self.headers_table.rowCount()
+
+        self.headers_table.insertRow(row)
+
+        self.headers_table.setItem(row, 0, QTableWidgetItem(key))
+
+        self.headers_table.setItem(row, 1, QTableWidgetItem(value))
+
+    def _remove_header_row(self):
+
+        rows = sorted(
+            {index.row() for index in self.headers_table.selectedIndexes()},
+            reverse=True,
+        )
+
+        for row in rows:
+
+            self.headers_table.removeRow(row)
+
+    def _collect_headers(self):
+
+        headers = []
+
+        for row in range(self.headers_table.rowCount()):
+
+            key_item = self.headers_table.item(row, 0)
+
+            value_item = self.headers_table.item(row, 1)
+
+            key = key_item.text().strip() if key_item else ""
+
+            if not key:
+
+                continue
+
+            headers.append(
+                {
+                    "key": key,
+                    "value": value_item.text() if value_item else "",
+                }
+            )
+
+        return headers
+
+    # ------------------------------------------------------
+
+    def save(self):
+
+        url = self.url.text().strip()
+
+        if not url:
+
+            QMessageBox.warning(
+                self, "QA AI Studio", "URL cannot be empty."
+            )
+
+            return
+
+        try:
+
+            self.repository.update_endpoint(
+                self.endpoint["id"],
+                method=self.method.currentText().strip().upper() or "GET",
+                name=self.name.text().strip() or "(unnamed)",
+                url_raw=url,
+                # Manual edits are the source of truth from here on —
+                # save the same value as "resolved" so script
+                # generation and any future view both show exactly
+                # what was typed rather than a stale {{variable}}
+                # resolution from the original import.
+                url_resolved=url,
+                headers_json=json.dumps(self._collect_headers()),
+                body_raw=self.body.toPlainText(),
+            )
+
+            self.accept()
+
+        except Exception as ex:
+
+            QMessageBox.critical(self, "Save Failed", str(ex))
+
+
+# ==========================================================
 # Main Page
 # ==========================================================
 
@@ -602,9 +879,22 @@ class ManageKnowledgePage(QWidget):
                                 # guided URL capture has no real file
                                 # behind it — nest the captured Steps/
                                 # Fields/Locators under it instead.
+
                                 if file_row["source_type"] == CAPTURED_FLOW_SOURCE_TYPE:
 
                                     self._populate_captured_flow_children(
+                                        file_item, file_row["id"]
+                                    )
+
+                                # Same idea, for an imported Postman
+                                # Collection (QA Automation -> API
+                                # Upload) — nest its real endpoints
+                                # under this node instead of a file
+                                # preview, per the unified-hierarchy
+                                # requirement.
+                                elif file_row["source_type"] == API_COLLECTION_SOURCE_TYPE:
+
+                                    self._populate_api_collection_children(
                                         file_item, file_row["id"]
                                     )
 
@@ -675,6 +965,48 @@ class ManageKnowledgePage(QWidget):
 
                     step_item.addChild(element_item)
 
+    def _populate_api_collection_children(self, file_item, knowledge_item_id):
+        """
+        Nests every endpoint of a Postman Collection imported here
+        (QA Automation -> API Upload) as: Collection -> Endpoint.
+
+        Same reasoning as _populate_captured_flow_children() above —
+        more than one collection can be linked to the same Knowledge
+        Name/Version over time (e.g. a refreshed export), so this
+        shows one "Collection" child per import rather than
+        assuming there is only one.
+        """
+
+        try:
+            endpoints = ApiCollectionRepository().get_endpoints_for_knowledge_item(
+                knowledge_item_id
+            )
+        except Exception:
+            # Never let a Knowledge Hub tree refresh fail just
+            # because the API collection tables couldn't be read.
+            endpoints = []
+
+        for endpoint in endpoints:
+
+            folder_prefix = (
+                f"{endpoint.get('folder_path')} / "
+                if endpoint.get("folder_path") else ""
+            )
+
+            endpoint_label = (
+                f"{endpoint.get('method') or ''} "
+                f"{folder_prefix}{endpoint.get('name') or '(unnamed)'} "
+                f"— {endpoint.get('url_resolved') or endpoint.get('url_raw') or ''}"
+            )
+
+            endpoint_item = QTreeWidgetItem([endpoint_label, "", ""])
+
+            endpoint_item.setData(
+                0, ENDPOINT_ID_ROLE, endpoint.get("id")
+            )
+
+            file_item.addChild(endpoint_item)
+
     @staticmethod
     def _count_files(subtree):
 
@@ -719,13 +1051,30 @@ class ManageKnowledgePage(QWidget):
 
         return self.rows_by_id.get(row_id)
 
+    def selected_endpoint_id(self):
+        """
+        Returns the api_endpoints.id for the selected node, but ONLY
+        if it's an endpoint leaf under an imported API Collection —
+        every other node (file leaves included) returns None here.
+        """
+
+        items = self.tree.selectedItems()
+
+        if not items:
+
+            return None
+
+        return items[0].data(0, ENDPOINT_ID_ROLE)
+
     def update_button_states(self):
 
         has_file_selected = self.selected_item() is not None
 
+        has_endpoint_selected = self.selected_endpoint_id() is not None
+
         self.view_btn.setEnabled(has_file_selected)
 
-        self.edit_btn.setEnabled(has_file_selected)
+        self.edit_btn.setEnabled(has_file_selected or has_endpoint_selected)
 
         self.version_btn.setEnabled(has_file_selected)
 
@@ -767,6 +1116,14 @@ class ManageKnowledgePage(QWidget):
 
     def edit_selected(self):
 
+        endpoint_id = self.selected_endpoint_id()
+
+        if endpoint_id is not None:
+
+            self.edit_selected_endpoint(endpoint_id)
+
+            return
+
         row = self.selected_item()
 
         if not row:
@@ -787,6 +1144,29 @@ class ManageKnowledgePage(QWidget):
             self.load_data()
 
             self.knowledge_changed.emit()
+
+    def edit_selected_endpoint(self, endpoint_id):
+
+        repository = ApiCollectionRepository()
+
+        endpoint = repository.get_endpoint(endpoint_id)
+
+        if not endpoint:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "This endpoint could not be loaded — it may have "
+                "been removed by a newer import."
+            )
+
+            return
+
+        dialog = ApiEndpointEditorDialog(endpoint, repository, self)
+
+        if dialog.exec() == QDialog.Accepted:
+
+            self.load_data()
 
     # ======================================================
     # Versions

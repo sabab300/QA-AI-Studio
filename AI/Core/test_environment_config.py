@@ -50,13 +50,24 @@ class TestEnvironmentConfig:
                 "username": "",
                 "password": "",
                 "notes": "",
+                "slow_mo_ms": "",
+                "default_timeout_ms": "",
             }
 
         try:
 
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
 
-                return json.load(f)
+                data = json.load(f)
+
+            # Older config files predate slow_mo_ms/default_timeout_ms
+            # — fill them in as blank rather than KeyError-ing, so
+            # PlaywrightRunner's own fallback defaults kick in.
+            data.setdefault("slow_mo_ms", "")
+
+            data.setdefault("default_timeout_ms", "")
+
+            return data
 
         except Exception:
 
@@ -70,17 +81,35 @@ class TestEnvironmentConfig:
                 "username": "",
                 "password": "",
                 "notes": "",
+                "slow_mo_ms": "",
+                "default_timeout_ms": "",
             }
 
     # --------------------------------------------------
 
-    def save(self, base_url, username, password, notes=""):
+    def save(
+        self,
+        base_url,
+        username,
+        password,
+        notes="",
+        slow_mo_ms="",
+        default_timeout_ms="",
+    ):
 
         data = {
             "base_url": base_url,
             "username": username,
             "password": password,
             "notes": notes,
+            # How much every Playwright action is artificially slowed
+            # down (milliseconds) and how long Playwright waits for
+            # an element/navigation before giving up — both applied
+            # at RUN time by PlaywrightRunner, to EVERY script
+            # (AI-generated or manually recorded), not baked into the
+            # script text itself. See Core/playwright_runner.py.
+            "slow_mo_ms": slow_mo_ms,
+            "default_timeout_ms": default_timeout_ms,
         }
 
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:

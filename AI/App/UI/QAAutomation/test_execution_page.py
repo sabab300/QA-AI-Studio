@@ -33,6 +33,8 @@ Not in this phase (tracked separately):
 ==========================================================
 """
 
+import os
+
 from PySide6.QtCore import Qt, QThread
 
 from PySide6.QtWidgets import (
@@ -40,6 +42,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
+    QFormLayout,
     QLabel,
     QPushButton,
     QComboBox,
@@ -56,10 +59,16 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QPlainTextEdit,
     QLineEdit,
+    QFileDialog,
+    QApplication,
 )
 
 from Core.metadata_manager import MetadataManager
 from Core.test_environment_config import TestEnvironmentConfig
+from Core.playwright_runner import (
+    DEFAULT_SLOW_MO_MS,
+    DEFAULT_ACTION_TIMEOUT_MS,
+)
 
 from Core.test_execution_manager import TestExecutionManager
 
@@ -67,9 +76,10 @@ from UI.QAAutomation.test_execution_worker import (
     AutomationGenerationWorker,
     AutomationSuggestionWorker,
     PlaywrightExecutionWorker,
+    PlaywrightInteractiveWorker,
+    AiLocatorSuggestionWorker,
     ManualRecordingWorker,
 )
-
 
 AUTOMATION_TYPES = [
     "None",
@@ -86,6 +96,10 @@ RESULT_OPTIONS = [
 ]
 
 TC_ID_ROLE = Qt.UserRole
+
+DEFAULT_SLOW_MO_DISPLAY = f"{DEFAULT_SLOW_MO_MS}ms"
+
+DEFAULT_TIMEOUT_DISPLAY = f"{DEFAULT_ACTION_TIMEOUT_MS}ms"
 
 
 # ==========================================================
@@ -222,7 +236,7 @@ class EnvironmentSettingsDialog(QDialog):
 
         self.setWindowTitle("Test Environment Settings")
 
-        self.resize(450, 260)
+        self.resize(480, 400)
 
         layout = QVBoxLayout(self)
 
@@ -261,6 +275,20 @@ class EnvironmentSettingsDialog(QDialog):
             "optional, e.g. 'use EFS license holder test account'"
         )
 
+        self.slow_mo_ms = QLineEdit()
+
+        self.slow_mo_ms.setPlaceholderText(
+            f"default {DEFAULT_SLOW_MO_DISPLAY} — higher = slower "
+            f"but more reliable"
+        )
+
+        self.default_timeout_ms = QLineEdit()
+
+        self.default_timeout_ms.setPlaceholderText(
+            f"default {DEFAULT_TIMEOUT_DISPLAY} — how long to wait "
+            f"for an element before giving up"
+        )
+
 
         grid.addWidget(QLabel("Base URL"), 0, 0)
 
@@ -278,8 +306,35 @@ class EnvironmentSettingsDialog(QDialog):
 
         grid.addWidget(self.notes, 3, 1)
 
+        grid.addWidget(QLabel("Playback Speed (ms)"), 4, 0)
+
+        grid.addWidget(self.slow_mo_ms, 4, 1)
+
+        grid.addWidget(QLabel("Default Timeout (ms)"), 5, 0)
+
+        grid.addWidget(self.default_timeout_ms, 5, 1)
+
 
         layout.addLayout(grid)
+
+        speed_note = QLabel(
+            "If Execute keeps failing because the real application "
+            "is slower than Playwright expects, raise these instead "
+            "of blaming the script: Playback Speed pauses after "
+            "every click/type/navigate (try 500-1000ms), and Default "
+            "Timeout is how long Playwright waits for something to "
+            "appear before giving up (try 60000ms). Leave both blank "
+            f"to use the defaults ({DEFAULT_SLOW_MO_DISPLAY} / "
+            f"{DEFAULT_TIMEOUT_DISPLAY}). Applies to every script — "
+            "AI-generated or manually recorded — the next time it "
+            "runs, with no need to regenerate or re-record anything."
+        )
+
+        speed_note.setWordWrap(True)
+
+        speed_note.setStyleSheet("color: #64748B;")
+
+        layout.addWidget(speed_note)
 
 
         data = self.config_manager.load()
@@ -292,6 +347,12 @@ class EnvironmentSettingsDialog(QDialog):
 
         self.notes.setText(data.get("notes", ""))
 
+        self.slow_mo_ms.setText(data.get("slow_mo_ms", ""))
+
+        self.default_timeout_ms.setText(
+            data.get("default_timeout_ms", "")
+        )
+
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -303,16 +364,39 @@ class EnvironmentSettingsDialog(QDialog):
 
         layout.addWidget(buttons)
 
-    def save(self):
+        def save(self):
 
-        self.config_manager.save(
-            base_url=self.base_url.text().strip(),
-            username=self.username.text().strip(),
-            password=self.password.text(),
-            notes=self.notes.text().strip(),
-        )
+            slow_mo_text = self.slow_mo_ms.text().strip()
 
-        self.accept()
+            timeout_text = self.default_timeout_ms.text().strip()
+
+            for label, value in (
+                ("Playback Speed", slow_mo_text),
+                ("Default Timeout", timeout_text),
+            ):
+
+                if value and (not value.isdigit() or int(value) < 0):
+
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Value",
+                        f"{label} must be a whole number of "
+                        f"milliseconds (0 or higher), or left blank to "
+                        f"use the default. Got: '{value}'"
+                    )
+
+                    return
+
+            self.config_manager.save(
+                base_url=self.base_url.text().strip(),
+                username=self.username.text().strip(),
+                password=self.password.text(),
+                notes=self.notes.text().strip(),
+                slow_mo_ms=slow_mo_text,
+                default_timeout_ms=timeout_text,
+            )
+
+            self.accept()
 
 # ==========================================================
 # Small dialog: start a manual recording
@@ -596,6 +680,341 @@ class ViewScriptDialog(QDialog):
             )
 
 
+class LocatorRepairDialog(QDialog):
+    """
+    Shown when a Playwright step can't find its Locator/element
+    during an interactive Execute run — the direct fix for
+    "Playwright gets stuck with no way to correct it and keep
+    going." Lets the operator correct the Locator and/or its value
+    directly, drop into an Advanced full-code edit for fixes a
+    locator alone can't cover (e.g. switching a failed .fill() /
+    .click() to .select_option() for a dropdown, or to a role-based
+    click for a calendar day), ask the local AI for a suggestion
+    grounded in the real page right now, or cancel the whole run.
+
+    self.decision is read by the caller (TestExecutionPage.
+    on_step_failed()) after exec() returns — it defaults to
+    {"action": "cancel"} so closing the dialog any way other than a
+    real button (the X button, Escape) never leaves the background
+    thread blocked waiting forever.
+    """
+
+    def __init__(self, failure_event, manager, test_case, parent=None):
+
+        super().__init__(parent)
+
+        self.failure_event = failure_event
+
+        self.manager = manager
+
+        self.test_case = test_case
+
+        self.decision = {"action": "cancel"}
+
+        self.ai_thread = None
+
+        self.ai_worker = None
+
+        self._last_ai_code = ""
+
+        self.setWindowTitle(
+            f"Step {failure_event.get('step')} Failed — Element Not Found"
+        )
+
+        self.resize(560, 520)
+
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        attempt = failure_event.get("attempt", 1)
+
+        title = QLabel(
+            f"Step {failure_event.get('step')} couldn't find its element"
+            + (f" — attempt {attempt}" if attempt > 1 else "")
+        )
+
+        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+
+        layout.addWidget(title)
+
+        layout.addWidget(QLabel("Failing step:"))
+
+        code_view = QPlainTextEdit(failure_event.get("code", ""))
+
+        code_view.setReadOnly(True)
+
+        code_view.setMaximumHeight(50)
+
+        layout.addWidget(code_view)
+
+        error_label = QLabel(f"Error: {failure_event.get('error', '')}")
+
+        error_label.setWordWrap(True)
+
+        error_label.setStyleSheet("color: #B91C1C;")
+
+        layout.addWidget(error_label)
+
+        context_label = QLabel(
+            f"Page: {failure_event.get('title', '') or '(unknown)'}  "
+            f"({failure_event.get('url', '')})"
+        )
+
+        context_label.setWordWrap(True)
+
+        context_label.setStyleSheet("color: #64748B;")
+
+        layout.addWidget(context_label)
+
+        form = QFormLayout()
+
+        self.locator_field = QLineEdit(failure_event.get("locator", ""))
+
+        self.value_field = QLineEdit(failure_event.get("value", ""))
+
+        # Tracked explicitly rather than read back via
+        # self.value_field.isVisible() later — a widget only reports
+        # itself as visible once the dialog is actually on screen,
+        # which makes isVisible() an unreliable/untestable proxy for
+        # "does this step have a value field" at the moment a button
+        # handler runs.
+        self.has_value_field = bool(failure_event.get("value"))
+
+        form.addRow("Locator:", self.locator_field)
+
+        if self.has_value_field:
+
+            form.addRow("Value:", self.value_field)
+
+        else:
+
+            self.value_field.setVisible(False)
+
+        layout.addLayout(form)
+
+        self.advanced_checkbox = QCheckBox(
+            "Advanced: edit this step's full code directly (needed "
+            "for e.g. a dropdown that needs select_option() instead "
+            "of fill()/click(), or a calendar day that needs a "
+            "role-based click)"
+        )
+
+        self.advanced_checkbox.toggled.connect(self._toggle_advanced)
+
+        layout.addWidget(self.advanced_checkbox)
+
+        self.code_edit = QPlainTextEdit(failure_event.get("code", ""))
+
+        self.code_edit.setMaximumHeight(60)
+
+        self.code_edit.setVisible(False)
+
+        layout.addWidget(self.code_edit)
+
+        # -------- AI suggestion area (hidden until requested) -----
+
+        self.ai_status_label = QLabel("")
+
+        self.ai_status_label.setWordWrap(True)
+
+        self.ai_status_label.setVisible(False)
+
+        layout.addWidget(self.ai_status_label)
+
+        self.ai_suggestion_view = QPlainTextEdit()
+
+        self.ai_suggestion_view.setReadOnly(True)
+
+        self.ai_suggestion_view.setMaximumHeight(60)
+
+        self.ai_suggestion_view.setVisible(False)
+
+        layout.addWidget(self.ai_suggestion_view)
+
+        self.ai_explanation_label = QLabel("")
+
+        self.ai_explanation_label.setWordWrap(True)
+
+        self.ai_explanation_label.setStyleSheet("color: #64748B;")
+
+        self.ai_explanation_label.setVisible(False)
+
+        layout.addWidget(self.ai_explanation_label)
+
+        # -------- buttons -------------------------------------
+
+        button_row = QHBoxLayout()
+
+        self.retry_btn = QPushButton("Retry With This Fix")
+
+        self.retry_btn.clicked.connect(self._on_retry)
+
+        self.ai_btn = QPushButton("Ask AI for a Suggestion")
+
+        self.ai_btn.clicked.connect(self._on_ask_ai)
+
+        self.apply_ai_btn = QPushButton("Apply AI Suggestion")
+
+        self.apply_ai_btn.setVisible(False)
+
+        self.apply_ai_btn.clicked.connect(self._on_apply_ai_suggestion)
+
+        self.cancel_btn = QPushButton("Cancel Test Run")
+
+        self.cancel_btn.setStyleSheet(
+            "background-color: #DC2626; color: white;"
+        )
+
+        self.cancel_btn.clicked.connect(self._on_cancel)
+
+        button_row.addWidget(self.retry_btn)
+
+        button_row.addWidget(self.ai_btn)
+
+        button_row.addWidget(self.apply_ai_btn)
+
+        button_row.addStretch()
+
+        button_row.addWidget(self.cancel_btn)
+
+        layout.addLayout(button_row)
+
+    def _toggle_advanced(self, checked):
+
+        self.code_edit.setVisible(checked)
+
+        self.locator_field.setEnabled(not checked)
+
+        self.value_field.setEnabled(not checked)
+
+    def _on_retry(self):
+
+        if self.advanced_checkbox.isChecked():
+
+            self.decision = {
+                "action": "retry_code",
+                "code": self.code_edit.toPlainText().strip(),
+            }
+
+        else:
+
+            self.decision = {
+                "action": "retry",
+                "locator": self.locator_field.text(),
+                "value": (
+                    self.value_field.text()
+                    if self.has_value_field
+                    else self.failure_event.get("value", "")
+                ),
+            }
+
+        self.accept()
+
+    def _on_cancel(self):
+
+        self.decision = {"action": "cancel"}
+
+        self.reject()
+
+    def _on_ask_ai(self):
+        """
+        Only ever reachable by the operator clicking this button —
+        the AI is never called automatically on the first failure,
+        only if/when the operator decides a manual fix isn't coming
+        quickly (matching "if not found so AI Analysis..." — human
+        attempt first, AI only after).
+        """
+
+        self.ai_btn.setEnabled(False)
+
+        self.ai_status_label.setText(
+            "Asking the local AI model for a suggestion — this can "
+            "take a few seconds..."
+        )
+
+        self.ai_status_label.setVisible(True)
+
+        self.ai_thread = QThread()
+
+        self.ai_worker = AiLocatorSuggestionWorker(
+            self.manager, self.failure_event, self.test_case
+        )
+
+        self.ai_worker.moveToThread(self.ai_thread)
+
+        self.ai_thread.started.connect(self.ai_worker.run)
+
+        self.ai_worker.finished.connect(self._on_ai_suggestion_ready)
+
+        self.ai_worker.error.connect(self._on_ai_suggestion_error)
+
+        self.ai_worker.finished.connect(self.ai_thread.quit)
+
+        self.ai_worker.error.connect(self.ai_thread.quit)
+
+        self.ai_thread.finished.connect(self._cleanup_ai_thread)
+
+        self.ai_thread.start()
+
+    def _on_ai_suggestion_ready(self, result):
+
+        self.ai_btn.setEnabled(True)
+
+        if not result.get("success"):
+
+            self.ai_status_label.setText(
+                f"AI suggestion failed: "
+                f"{result.get('error', 'unknown error')}. You can "
+                f"try again or fix it manually above."
+            )
+
+            return
+
+        self.ai_status_label.setText(
+            "AI suggestion (grounded in the real page right now):"
+        )
+
+        self._last_ai_code = result.get("corrected_code", "")
+
+        self.ai_suggestion_view.setPlainText(self._last_ai_code)
+
+        self.ai_suggestion_view.setVisible(True)
+
+        self.ai_explanation_label.setText(
+            result.get("explanation", "")
+        )
+
+        self.ai_explanation_label.setVisible(True)
+
+        self.apply_ai_btn.setVisible(True)
+
+    def _on_ai_suggestion_error(self, message):
+
+        self.ai_btn.setEnabled(True)
+
+        self.ai_status_label.setText(f"AI suggestion failed: {message}")
+
+    def _on_apply_ai_suggestion(self):
+
+        self.decision = {
+            "action": "retry_code",
+            "code": self._last_ai_code,
+        }
+
+        self.accept()
+
+    def _cleanup_ai_thread(self):
+
+        if self.ai_thread:
+
+            self.ai_thread.deleteLater()
+
+        self.ai_thread = None
+
+        self.ai_worker = None
+
+
 # ==========================================================
 # Main Page
 # ==========================================================
@@ -627,6 +1046,19 @@ class TestExecutionPage(QWidget):
         self.execution_worker = None
 
         self.execution_queue = []
+
+        # True only when the run that's about to start was launched
+        # against exactly ONE test case — see
+        # confirm_and_run_playwright(). That's the only case
+        # interactive locator repair is offered; a multi-test batch
+        # keeps behaving exactly as it always has.
+        self._interactive_eligible = False
+
+        # Accumulates {"step", "original", "corrected"} entries for
+        # the CURRENT interactive run, so on_execution_finished() can
+        # offer to save them into the stored script once the run
+        # completes successfully.
+        self.pending_repairs = []
 
         self.recording_thread = None
 
@@ -800,6 +1232,22 @@ class TestExecutionPage(QWidget):
 
         self.update_automation_btn = QPushButton("Update Automation")
 
+        # QA Automation used to only ever see test cases that came
+        # out of AI generation, purely because that was the only
+        # thing that ever wrote a row into test_cases — these two
+        # give it two more ways in: a hand-written Excel sheet of
+        # test cases, or an imported API collection with no test
+        # case at all yet (see TestExecutionManager.
+        # import_test_cases_from_excel() /
+        # generate_automation_from_collection()).
+        self.import_test_cases_btn = QPushButton(
+            "Import Test Cases (Excel)"
+        )
+
+        self.generate_from_collection_btn = QPushButton(
+            "Generate Automation from API Collection"
+        )
+
         self.environment_settings_btn = QPushButton(
             "Test Environment Settings"
         )
@@ -812,6 +1260,18 @@ class TestExecutionPage(QWidget):
             "background-color: #DC2626; color: white;"
         )
 
+        # Only shown/enabled during an interactive (single-test)
+        # Execute run — see confirm_and_run_playwright() and
+        # run_next_execution(). A multi-test batch run doesn't offer
+        # this, since it never pauses to begin with.
+        self.cancel_execution_btn = QPushButton("Cancel Execution")
+
+        self.cancel_execution_btn.setVisible(False)
+
+        self.cancel_execution_btn.setStyleSheet(
+            "background-color: #DC2626; color: white;"
+        )
+
 
         actions_layout.addWidget(self.execute_selected_btn)
 
@@ -821,7 +1281,13 @@ class TestExecutionPage(QWidget):
 
         actions_layout.addWidget(self.update_automation_btn)
 
+        actions_layout.addWidget(self.import_test_cases_btn)
+
+        actions_layout.addWidget(self.generate_from_collection_btn)
+
         actions_layout.addWidget(self.cancel_recording_btn)
+
+        actions_layout.addWidget(self.cancel_execution_btn)
 
         actions_layout.addStretch()
 
@@ -884,12 +1350,24 @@ class TestExecutionPage(QWidget):
             lambda: self.execute(only_selected=False)
         )
 
+        self.cancel_execution_btn.clicked.connect(
+            self.cancel_interactive_execution
+        )
+
         self.add_automation_btn.clicked.connect(
             self.generate_automation_for_selected
         )
 
         self.update_automation_btn.clicked.connect(
             self.generate_automation_for_selected
+        )
+
+        self.import_test_cases_btn.clicked.connect(
+            self.import_test_cases_from_excel
+        )
+
+        self.generate_from_collection_btn.clicked.connect(
+            self.generate_automation_from_collection
         )
 
         self.environment_settings_btn.clicked.connect(
@@ -1011,6 +1489,162 @@ class TestExecutionPage(QWidget):
                 f"Loaded {len(self.test_cases)} test case(s)."
             )
 
+
+    # ======================================================
+    # Import Test Cases (Excel) — Issue: QA Automation was only
+    # ever populated by AI-generated test cases; this lets someone
+    # bring in hand-written ones directly, with no AI/RAG step.
+    # ======================================================
+
+    def import_test_cases_from_excel(self):
+
+        domain = self.domain.currentText().strip()
+
+        module = self.module.currentText().strip()
+
+        knowledge_name = self.knowledge_name.currentText().strip()
+
+        if not (domain and module and knowledge_name):
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Domain, Module and Knowledge Name first."
+            )
+
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Test Case Excel File",
+            "",
+            "Excel Files (*.xlsx *.xlsm);;All Files (*.*)",
+        )
+
+        if not file_path:
+
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+
+            result = self.manager.import_test_cases_from_excel(
+                file_path, domain, module, knowledge_name
+            )
+
+        finally:
+
+            QApplication.restoreOverrideCursor()
+
+        if not result.get("success"):
+
+            QMessageBox.critical(
+                self,
+                "Import Failed",
+                result.get("error", "Unknown error.")
+            )
+
+            return
+
+        self.log.append(
+            f"Imported {result['imported']} test case(s) from "
+            f"'{os.path.basename(file_path)}'."
+        )
+
+        if result.get("skipped"):
+
+            self.log.append(
+                f"Skipped {result['skipped']} row(s) with no Test "
+                f"Case text."
+            )
+
+        self.load_test_cases()
+
+    # ======================================================
+    # Generate Automation from API Collection — no test case
+    # required first. Auto-creates a lightweight test case per
+    # endpoint (see TestExecutionManager.
+    # generate_automation_from_collection()) so results/scripts hang
+    # off the same test_cases plumbing as everything else.
+    # ======================================================
+
+    def generate_automation_from_collection(self):
+
+        domain = self.domain.currentText().strip()
+
+        module = self.module.currentText().strip()
+
+        knowledge_name = self.knowledge_name.currentText().strip()
+
+        if not (domain and module and knowledge_name):
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "Select a Domain, Module and Knowledge Name first."
+            )
+
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Generate Automation from API Collection",
+            f"Generate API automation scripts directly from every "
+            f"endpoint imported under {domain} / {module} / "
+            f"{knowledge_name} — including endpoints with no test "
+            f"case yet?\n\nA lightweight test case is auto-created "
+            f"per endpoint so scripts, results and Execute all work "
+            f"exactly like any other automated test case.",
+        )
+
+        if confirm != QMessageBox.Yes:
+
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+
+            result = self.manager.generate_automation_from_collection(
+                domain, module, knowledge_name
+            )
+
+        finally:
+
+            QApplication.restoreOverrideCursor()
+
+        if not result.get("success"):
+
+            QMessageBox.critical(
+                self,
+                "Generation Failed",
+                result.get("error", "Unknown error.")
+            )
+
+            return
+
+        self.log.append(
+            f"Generated automation for {result['generated']} "
+            f"endpoint(s) from the imported API collection."
+        )
+
+        if result.get("skipped"):
+
+            self.log.append(
+                f"{result['skipped']} endpoint(s) failed — see below:"
+            )
+
+            for item in result.get("results", []):
+
+                if not item.get("success"):
+
+                    self.log.append(
+                        f"  - {item.get('endpoint_name', '')}: "
+                        f"{item.get('error', '')}"
+                    )
+
+        self.load_test_cases()
 
     def populate_table(self):
 
@@ -2021,6 +2655,12 @@ class TestExecutionPage(QWidget):
 
         self.execution_queue = test_case_ids
 
+        # Interactive locator repair only makes sense when someone
+        # is actually watching ONE run and can answer a prompt — a
+        # multi-test batch would otherwise stall indefinitely on the
+        # first broken locator with nobody there to respond.
+        self._interactive_eligible = len(test_case_ids) == 1
+
         self.execute_selected_btn.setEnabled(False)
 
         self.execute_all_btn.setEnabled(False)
@@ -2050,15 +2690,43 @@ class TestExecutionPage(QWidget):
 
         tc_number = self.tc_number_for_id(test_case_id)
 
-        self.log.append(
-            f"Running {tc_number} in a real browser..."
-        )
+        self.pending_repairs = []
 
         self.execution_thread = QThread()
 
-        self.execution_worker = PlaywrightExecutionWorker(
-            test_case_id
-        )
+        if self._interactive_eligible:
+
+            self.log.append(
+                f"Running {tc_number} in a real browser — if a "
+                f"step's locator can't be found, you'll be asked "
+                f"for a fix instead of the run just failing."
+            )
+
+            self.execution_worker = PlaywrightInteractiveWorker(
+                test_case_id
+            )
+
+            self.execution_worker.step_failed.connect(
+                self.on_step_failed
+            )
+
+            self.execution_worker.step_repaired.connect(
+                self.on_step_repaired
+            )
+
+            self.cancel_execution_btn.setVisible(True)
+
+            self.cancel_execution_btn.setEnabled(True)
+
+        else:
+
+            self.log.append(
+                f"Running {tc_number} in a real browser..."
+            )
+
+            self.execution_worker = PlaywrightExecutionWorker(
+                test_case_id
+            )
 
         self.execution_worker.moveToThread(self.execution_thread)
 
@@ -2091,9 +2759,97 @@ class TestExecutionPage(QWidget):
         self.execution_thread.start()
 
 
+    def cancel_interactive_execution(self):
+
+        if self.execution_worker and self._interactive_eligible:
+
+            self.execution_worker.cancel()
+
+            self.log.append(
+                "Cancelling execution — this may take a moment "
+                "while the current step finishes."
+            )
+
+            self.cancel_execution_btn.setEnabled(False)
+
+
+    def on_step_failed(self, event):
+        """
+        Runs on the UI thread (queued-connection delivery from
+        PlaywrightInteractiveWorker's background thread). Shows the
+        repair dialog and sends the operator's decision back — the
+        background thread is blocked waiting for exactly this.
+        """
+
+        manager = self.execution_worker.manager
+
+        test_case = manager.repository.get_test_case(
+            self.execution_worker.test_case_id
+        )
+
+        dialog = LocatorRepairDialog(event, manager, test_case, self)
+
+        dialog.exec()
+
+        self.execution_worker.submit_decision(dialog.decision)
+
+        if dialog.decision.get("action") == "cancel":
+
+            self.log.append(
+                f"Step {event.get('step')}: operator cancelled the "
+                f"run."
+            )
+
+        else:
+
+            self.log.append(
+                f"Step {event.get('step')}: retrying with a "
+                f"corrected step (attempt {event.get('attempt')})..."
+            )
+
+
+    def on_step_repaired(self, repair):
+
+        self.pending_repairs.append(repair)
+
+        self.log.append(
+            f"Step {repair.get('step')} fixed:\n"
+            f"  was: {repair.get('original')}\n"
+            f"  now: {repair.get('corrected')}"
+        )
+
     def on_execution_finished(self, test_case_id, result):
 
         tc_number = self.tc_number_for_id(test_case_id)
+
+        if result.get("interactive_supported") is False:
+
+            # This test case's script matches neither the flat,
+            # AI-generated shape nor the standard Playwright-codegen
+            # (Manually Recorded) shape interactive repair supports
+            # — most likely a script that's been hand-edited into
+            # something unusual. Fall back to a normal run for this
+            # one test case transparently, rather than surfacing an
+            # internal limitation as an error.
+            self.log.append(
+                f"{tc_number}: interactive step-by-step repair isn't "
+                f"available for this script's structure — running "
+                f"it normally instead."
+            )
+
+            self._interactive_eligible = False
+
+            self.execution_queue.insert(0, test_case_id)
+
+            return
+
+        if result.get("cancelled"):
+
+            self.log.append(
+                f"{tc_number}: execution cancelled by operator."
+            )
+
+            return
 
         if "outcome" in result:
 
@@ -2103,14 +2859,50 @@ class TestExecutionPage(QWidget):
 
             self.set_row_last_result(test_case_id, outcome)
 
+            speed_note = ""
+
+            if "slow_mo_ms" in result:
+
+                speed_note = (
+                    f" [slow_mo={result['slow_mo_ms']}ms, "
+                    f"timeout={result.get('timeout_ms')}ms]"
+                )
+
             self.log.append(
                 f"{tc_number}: {outcome} ({duration:.1f}s)"
+                f"{speed_note}"
             )
 
             if not result["success"] and result.get("stderr"):
 
+                # Python tracebacks put the actual exception TYPE
+                # and MESSAGE at the very END, after every "File
+                # ..., line ..., in ..." frame — for Playwright
+                # specifically, those frames are dominated by long
+                # site-packages paths, so the first 500 characters
+                # used to be nothing but that boilerplate, cutting
+                # off before the real reason (e.g. "TimeoutError:
+                # Locator.click: Timeout 45000ms exceeded...")
+                # every single time. Keep the END, not the start.
+                stderr_text = result["stderr"].strip()
+
+                max_len = 4000
+
+                if len(stderr_text) > max_len:
+
+                    stderr_text = (
+                        "...(earlier frames truncated)...\n"
+                        + stderr_text[-max_len:]
+                    )
+
                 self.log.append(
-                    f"{tc_number} error output:\n{result['stderr'][:500]}"
+                    f"{tc_number} error output:\n{stderr_text}"
+                )
+
+            if result.get("success") and self.pending_repairs:
+
+                self.offer_to_save_repairs(
+                    test_case_id, tc_number, self.pending_repairs
                 )
 
         else:
@@ -2125,6 +2917,43 @@ class TestExecutionPage(QWidget):
                 self, "QA AI Studio", result.get("error", "")
             )
 
+
+    def offer_to_save_repairs(self, test_case_id, tc_number, repairs):
+
+        details = "\n".join(
+            f"Step {r.get('step')}:\n"
+            f"  was: {r.get('original')}\n"
+            f"  now: {r.get('corrected')}"
+            for r in repairs
+        )
+
+        confirm = QMessageBox.question(
+            self,
+            "Save Locator Fix?",
+            f"{tc_number} needed {len(repairs)} locator/value "
+            f"fix(es) to pass this run:\n\n{details}\n\n"
+            f"Save these into the stored script so future runs "
+            f"don't need to repair them again?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if confirm != QMessageBox.Yes:
+
+            self.log.append(
+                f"{tc_number}: fix(es) NOT saved — this run's "
+                f"corrections were used once and discarded."
+            )
+
+            return
+
+        manager = TestExecutionManager()
+
+        manager.apply_script_repairs(test_case_id, repairs)
+
+        self.log.append(
+            f"{tc_number}: script updated with {len(repairs)} "
+            f"locator/value fix(es)."
+        )
 
     def on_execution_error(self, message):
 
@@ -2146,6 +2975,8 @@ class TestExecutionPage(QWidget):
         self.execution_thread = None
 
         self.execution_worker = None
+
+        self.cancel_execution_btn.setVisible(False)
 
         self.run_next_execution()
 

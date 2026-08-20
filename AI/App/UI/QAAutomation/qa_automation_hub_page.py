@@ -18,6 +18,14 @@ Sub-sections (per spec):
                                    API token + workspace/list ID
     Test Manager Automation    -> placeholder, waiting on API
                                    details for testmanager.psw.gov.pk
+
+Note (v1.1): "API Upload" used to be its own sub-section here. It
+now lives in Knowledge Hub -> Upload New Knowledge (Source Type:
+"API Collection") instead, alongside every other knowledge source,
+with imported endpoints viewable/editable from Manage Knowledge —
+one upload entry point instead of two. See api_upload_page.py's
+module docstring for the old standalone page (kept in the tree for
+reference; no longer wired in anywhere).
 ==========================================================
 """
 
@@ -34,7 +42,6 @@ from PySide6.QtWidgets import (
 from UI.QAAutomation.test_execution_page import TestExecutionPage
 
 from UI.QAAutomation.git_automation_page import GitAutomationPage
-
 
 class PlaceholderPage(QWidget):
 
