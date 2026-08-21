@@ -1174,7 +1174,7 @@ class ManageKnowledgePage(QWidget):
 
             return
 
-                dialog = ApiEndpointEditorDialog(endpoint, repository, self)
+        dialog = ApiEndpointEditorDialog(endpoint, repository, self)
 
         if dialog.exec() == QDialog.Accepted:
 

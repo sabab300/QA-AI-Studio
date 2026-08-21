@@ -1444,12 +1444,23 @@ class TestExecutionPage(QWidget):
 
         self.execution_queue = []
 
-        # True only when the run that's about to start was launched
-        # against exactly ONE test case — see
-        # confirm_and_run_playwright(). That's the only case
-        # interactive locator repair is offered; a multi-test batch
-        # keeps behaving exactly as it always has.
+                # Whether the run.next_execution() is about to start offers
+        # interactive locator repair — recomputed fresh for EVERY
+        # test case in run_next_execution() (see
+        # _non_interactive_test_case_ids below), never just set once
+        # for the whole batch. Defaults to False here only because
+        # no run is in progress yet.
         self._interactive_eligible = False
+
+        # Test case ids that already proved, THIS run, that their
+        # script's structure doesn't support interactive step-by-step
+        # repair (see on_execution_finished()'s
+        # "interactive_supported is False" branch) — those specific
+        # test cases fall back to a plain run, but every OTHER queued
+        # test case still gets interactive repair regardless of how
+        # many are queued. Reset at the start of every new batch by
+        # confirm_and_run_playwright().
+        self._non_interactive_test_case_ids = set()
 
         # Accumulates {"step", "original", "corrected"} entries for
         # the CURRENT interactive run, so on_execution_finished() can
@@ -1657,10 +1668,13 @@ class TestExecutionPage(QWidget):
             "background-color: #DC2626; color: white;"
         )
 
-        # Only shown/enabled during an interactive (single-test)
-        # Execute run — see confirm_and_run_playwright() and
-        # run_next_execution(). A multi-test batch run doesn't offer
-        # this, since it never pauses to begin with.
+        # Shown/enabled whenever the CURRENT test case in the queue
+        # is running interactively — see confirm_and_run_playwright()
+        # and run_next_execution(). Every test case in a run gets
+        # interactive repair by default now, batch or not; this only
+        # hides itself for the rare test case whose script structure
+        # doesn't support interactive repair (see
+        # on_execution_finished()'s fallback).
         self.cancel_execution_btn = QPushButton("Cancel Execution")
 
         self.cancel_execution_btn.setVisible(False)
@@ -2811,6 +2825,50 @@ class TestExecutionPage(QWidget):
             f"({len(script.splitlines())} line(s))."
         )
 
+        # Playwright's own recorder picked these locators while the
+        # operator drove the browser — flag anything that looks
+        # dynamically generated (an id/name that will likely change
+        # next time the page reloads) BEFORE the first replay,
+        # instead of only discovering it when a replay fails.
+        try:
+
+            flagged = self.manager.scan_script_for_dynamic_locators(
+                script
+            )
+
+        except Exception:
+
+            flagged = []
+
+        if flagged:
+
+            lines = "\n".join(
+                f"  Line {f['line_number']}: {f['code']}"
+                for f in flagged
+            )
+
+            self.log.append(
+                f"{tc_number}: {len(flagged)} recorded locator(s) "
+                f"look dynamically generated and may stop matching "
+                f"on the next run:\n{lines}"
+            )
+
+            QMessageBox.warning(
+                self,
+                "Dynamic Locator(s) Found",
+                f"{tc_number}'s recording used {len(flagged)} "
+                f"locator(s) built from an id/name that looks "
+                f"auto-generated (e.g. a value that changes every "
+                f"time the page loads):\n\n{lines}\n\n"
+                f"These may work today and stop matching on the "
+                f"next run. You can fix them now via 'View Script' "
+                f"(an XPath built on a stable part of the value, or "
+                f"a different attribute, usually survives a reload "
+                f"better) — or leave them as-is and fix them via the "
+                f"Locator Repair popup the first time one actually "
+                f"fails during Execute.",
+            )
+
         make_active = QMessageBox.question(
             self,
             "Recording Saved",
@@ -3164,6 +3222,10 @@ class TestExecutionPage(QWidget):
             f"Make sure you've reviewed them with 'View Script' "
             f"first, especially the target URL — this runs against "
             f"whatever environment the script points to.\n\n"
+            f"If a step's locator or value can't be found, you'll "
+            f"be asked for a fix before that test case continues — "
+            f"the same as a single-test run, regardless of how many "
+            f"are queued here. Stay nearby while this batch runs.\n\n"
             f"Continue?",
             QMessageBox.Yes | QMessageBox.No,
         )
@@ -3182,11 +3244,19 @@ class TestExecutionPage(QWidget):
 
         self.execution_queue = test_case_ids
 
-        # Interactive locator repair only makes sense when someone
-        # is actually watching ONE run and can answer a prompt — a
-        # multi-test batch would otherwise stall indefinitely on the
-        # first broken locator with nobody there to respond.
-        self._interactive_eligible = len(test_case_ids) == 1
+        # Interactive locator repair is now offered for every test
+        # case in the queue, batch or not — the operator asked for
+        # this explicitly: a multi-test run no longer just fails
+        # silently on the first broken locator with nobody able to
+        # respond, because the operator running it IS there watching
+        # and wants the same pause-and-ask popups a single-test run
+        # gets. run_next_execution() re-derives the actual per-test-
+        # case eligibility from _non_interactive_test_case_ids below
+        # (reset here for this new batch) rather than trusting a
+        # single flag for the whole queue — a script structure that
+        # doesn't support interactive repair only falls back to a
+        # plain run for THAT test case, not every one after it.
+        self._non_interactive_test_case_ids = set()
 
         self.execute_selected_btn.setEnabled(False)
 
@@ -3220,6 +3290,15 @@ class TestExecutionPage(QWidget):
         self.pending_repairs = []
 
         self.execution_thread = QThread()
+
+        # Re-derived per test case (not a single flag for the whole
+        # batch) — a script structure that turned out not to support
+        # interactive repair only opts THAT test case out; every
+        # other one in the queue still gets asked about locator/value
+        # problems instead of failing silently.
+        self._interactive_eligible = (
+            test_case_id not in self._non_interactive_test_case_ids
+        )
 
         if self._interactive_eligible:
 
@@ -3364,7 +3443,9 @@ class TestExecutionPage(QWidget):
                 f"it normally instead."
             )
 
-            self._interactive_eligible = False
+            # Only THIS test case opts out — every other one still
+            # queued gets interactive repair, see run_next_execution().
+            self._non_interactive_test_case_ids.add(test_case_id)
 
             self.execution_queue.insert(0, test_case_id)
 

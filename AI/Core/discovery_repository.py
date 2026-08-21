@@ -53,6 +53,11 @@ from urllib.parse import urlparse
 from Database.db_manager import DatabaseManager
 from Core.logger import Logger
 from Core.metadata_manager import MetadataManager
+from Core.url_discovery_engine import (
+    build_xpath_alternative,
+    looks_dynamically_generated,
+    stable_locator_prefix,
+)
 
 
 DEFAULT_BUSINESS_PROCESS = "General"
@@ -905,11 +910,82 @@ class DiscoveryRepository:
                     "variant_name": variant_name,
                     "business_process_name": business_process_name,
                     "application_name": application_name,
-                    "steps": self.get_flow_by_variant(variant_id),
+                                        "steps": self.get_flow_by_variant(variant_id),
                 }
             )
 
-        return flows    
+        return flows
+
+    def get_elements_for_scope(self, domain, module, knowledge_name):
+        """
+        Returns every element captured by ANY URL Knowledge Capture
+        filed under this Domain / Module / Knowledge Name (any
+        version, any number of separate capture sessions) — this is
+        what grounds Playwright script generation: a test case filed
+        under the same Domain/Module/Knowledge Name as a capture can
+        pull its REAL locators (including any XPath alternate)
+        instead of the AI guessing. Mirrors
+        ApiCollectionRepository.get_endpoints_for_scope() for API
+        Automation.
+
+        Each returned element dict also carries page_name/step_name
+        (which screen/step it came from) so a prompt can show that
+        for context — everything else is exactly the shape
+        get_flow_by_variant() already returns per element (name,
+        element_type, locator, locator_strategy, alternate_locators,
+        placeholder, is_required).
+        """
+
+        domain = (domain or "").strip()
+
+        module = (module or "").strip()
+
+        knowledge_name = (knowledge_name or "").strip()
+
+        if not domain or not module or not knowledge_name:
+
+            return []
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT id FROM knowledge_items
+            WHERE domain = ? AND module = ? AND knowledge_name = ?
+              AND source_type = ?
+            """,
+            (domain, module, knowledge_name, CAPTURED_FLOW_SOURCE_TYPE),
+        )
+
+        knowledge_item_ids = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+
+        elements = []
+
+        for knowledge_item_id in knowledge_item_ids:
+
+            flows = self.get_captured_flows_for_knowledge_item(
+                knowledge_item_id
+            )
+
+            for flow in flows:
+
+                for step in flow.get("steps", []):
+
+                    for element in step.get("elements", []):
+
+                        elements.append(
+                            dict(
+                                element,
+                                page_name=step.get("page_name") or "",
+                                step_name=step.get("step_name") or "",
+                            )
+                        )
+
+        return elements    
 
     # ================================================================
     # Locator quality
@@ -989,10 +1065,12 @@ class DiscoveryRepository:
     def _build_locator(self, candidate):
         """
         Returns (locator, strategy, alternates_json) or None if
-        nothing usable enough exists. Priority: data-testid > id >
-        name > aria-label > placeholder > short visible text > an
-        already-computed engine locator (if it isn't a bare
-        tag/type guess). A bare tag/type combination on its own
+        nothing usable enough exists. Priority: data-testid > id
+        (unless it looks dynamically generated) > name (same caveat)
+        > aria-label > placeholder > short visible text > an XPath
+        fallback built from a dynamic-looking id/name's stable
+        prefix > an already-computed engine locator (if it isn't a
+        bare tag/type guess). A bare tag/type combination on its own
         (e.g. "input[type='text']") is still never accepted as a
         PRIMARY locator — it matches too many elements on a real
         page to be trustworthy automation knowledge.
@@ -1029,7 +1107,16 @@ class DiscoveryRepository:
 
             primary, strategy = css, "data-testid"
 
-        element_id = candidate.get("id")
+            element_id = candidate.get("id")
+
+        # An id that looks freshly generated (a UUID, a long digit/hex
+        # run, one long opaque token — see looks_dynamically_generated()
+        # in url_discovery_engine.py) is never trusted as a PRIMARY
+        # locator here: it may pass today and silently stop matching
+        # anything the next time the framework regenerates it. Still
+        # recorded as an alternate for reference — just never promoted
+        # to primary the way a hand-authored id is.
+        id_is_dynamic = bool(element_id) and looks_dynamically_generated(element_id)
 
         if element_id:
 
@@ -1037,11 +1124,13 @@ class DiscoveryRepository:
 
             alternates.append({"strategy": "id", "locator": css})
 
-            if primary is None:
+            if primary is None and not id_is_dynamic:
 
                 primary, strategy = css, "id"
 
         name = candidate.get("name")
+
+        name_is_dynamic = bool(name) and looks_dynamically_generated(name)
 
         if name:
 
@@ -1049,7 +1138,7 @@ class DiscoveryRepository:
 
             alternates.append({"strategy": "name", "locator": css})
 
-            if primary is None:
+            if primary is None and not name_is_dynamic:
 
                 primary, strategy = css, "name"
 
@@ -1077,7 +1166,7 @@ class DiscoveryRepository:
 
                 primary, strategy = css, "placeholder"
 
-        text = (candidate.get("text") or "").strip()
+                text = (candidate.get("text") or "").strip()
 
         if text and len(text) < 40:
 
@@ -1088,6 +1177,43 @@ class DiscoveryRepository:
             if primary is None:
 
                 primary, strategy = css, "text"
+
+        # Nothing stable found yet, but there WAS an id/name — it was
+        # just dynamic-looking. Rather than fall straight through to
+        # "no usable locator", try to salvage an XPath built on
+        # whatever hand-authored prefix survives stripping the
+        # dynamic-looking tail (e.g. "field-8827261" -> "field"). This
+        # is the same fallback URLDiscoveryEngine._generate_locator()
+        # applies itself — kept here too since this function derives
+        # its own primary/strategy independently rather than always
+        # trusting the engine's precomputed candidate["locator"].
+        if primary is None and id_is_dynamic:
+
+            stable = stable_locator_prefix(element_id)
+
+            if stable:
+
+                xpath = f"//{tag}[starts-with(@id, '{stable}')]"
+
+                alternates.append(
+                    {"strategy": "xpath-dynamic-id", "locator": xpath}
+                )
+
+                primary, strategy = xpath, "xpath-dynamic-id"
+
+        if primary is None and name_is_dynamic:
+
+            stable = stable_locator_prefix(name)
+
+            if stable:
+
+                xpath = f"//{tag}[starts-with(@name, '{stable}')]"
+
+                alternates.append(
+                    {"strategy": "xpath-dynamic-name", "locator": xpath}
+                )
+
+                primary, strategy = xpath, "xpath-dynamic-name"
 
         engine_locator = candidate.get("locator")
 
@@ -1108,6 +1234,24 @@ class DiscoveryRepository:
         if primary is None:
 
             return None
+
+        # Whatever ended up PRIMARY above, also make sure a generic
+        # XPath alternate is on hand in the database when one is
+        # buildable and isn't just a duplicate of something already
+        # recorded — not only for the dynamic-id/name fallback case
+        # above, so every element carries an XPath option regardless
+        # of how confident its primary locator already is.
+        xpath_alternative = build_xpath_alternative(tag, candidate)
+
+        if (
+            xpath_alternative
+            and xpath_alternative != primary
+            and xpath_alternative not in (a["locator"] for a in alternates)
+        ):
+
+            alternates.append(
+                {"strategy": "xpath", "locator": xpath_alternative}
+            )
 
         return primary, strategy, json.dumps(alternates)
 

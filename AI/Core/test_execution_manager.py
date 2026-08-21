@@ -314,45 +314,9 @@ class TestExecutionManager:
 
             environment_block = self.environment_config.as_prompt_block()
 
-            requirement = (
-                f"Generate ONLY the body steps for a Playwright test "
-                f"as a FLAT list of simple Python statements — one "
-                f"action per line.\n\n"
-                f"STRICT RULES:\n"
-                f"- Do NOT write 'def', 'if', 'for', 'while', 'try', "
-                f"'with', or any other block/indented statement.\n"
-                f"- Do NOT include imports, browser launch, or "
-                f"browser.close() — those are already handled.\n"
-                f"- A variable named 'page' (a Playwright Page, "
-                f"already created) is available to use directly.\n"
-                f"- Use assert statements to verify the Expected "
-                f"Result.\n"
-                f"- Every line must be independently valid at zero "
-                f"indentation.\n"
-                f"- Playwright does NOT have a 'By' class — that is "
-                f"Selenium, a different library. NEVER write "
-                f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
-                f"are plain strings passed directly as the first "
-                f"argument.\n\n"
-                f"WRONG (Selenium-style, will not work):\n"
-                f"page.fill(By.ID, \"username\", \"myuser\")\n\n"
-                f"CORRECT (Playwright-style):\n"
-                f"page.fill(\"#username\", \"myuser\")\n\n"
-                f"{environment_block}"
-                f"If the exact URL for a step isn't clear from the "
-                f"test case, use 'https://REPLACE_WITH_ACTUAL_URL'.\n\n"
-                f"Test Case: {test_case.get('test_case', '')}\n"
-                f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
-                f"Steps: {test_case.get('steps', '')}\n"
-                f"Expected Result: {test_case.get('expected_result', '')}\n\n"
-                f"Example of the exact format expected:\n"
-                f"page.goto('https://example.com/login')\n"
-                f"page.fill('#username', 'myuser')\n"
-                f"page.click('#login-button')\n"
-                f"assert page.locator('#welcome').is_visible()\n\n"
-                f"Return ONLY the flat list of statements, one per "
-                f"line, no explanation, no markdown fences, no "
-                f"indentation, no function or block wrapper."
+            requirement = self._build_playwright_requirement(
+                test_case, domain, module, knowledge_name,
+                environment_block,
             )
 
         elif automation_type == "API":
@@ -449,6 +413,233 @@ class TestExecutionManager:
         )
 
         return script
+
+    # --------------------------------------------------
+    # Playwright automation grounding
+    # (Manage Knowledge -> URL Knowledge Capture — see
+    # discovery_repository.py)
+    # --------------------------------------------------
+
+    def _build_playwright_requirement(
+        self, test_case, domain, module, knowledge_name,
+        environment_block,
+    ):
+        """
+        Grounds Playwright script generation in real, captured URL
+        Knowledge elements when any have been recorded for this
+        Domain / Module / Knowledge Name (Manage Knowledge -> URL
+        Knowledge Capture) — the same "ground it in something real"
+        fix already applied to API Automation via an imported
+        Postman Collection (see _build_api_requirement() below),
+        applied here so the AI stops guessing plausible-looking but
+        fake selectors from the test case's plain-English wording
+        alone.
+
+        Falls back to the original plain-English-only prompt,
+        completely unchanged, whenever nothing has been captured for
+        this scope — nobody who hasn't used URL Knowledge Capture yet
+        sees any difference.
+        """
+
+        generic_requirement = (
+            f"Generate ONLY the body steps for a Playwright test "
+            f"as a FLAT list of simple Python statements — one "
+            f"action per line.\n\n"
+            f"STRICT RULES:\n"
+            f"- Do NOT write 'def', 'if', 'for', 'while', 'try', "
+            f"'with', or any other block/indented statement.\n"
+            f"- Do NOT include imports, browser launch, or "
+            f"browser.close() — those are already handled.\n"
+            f"- A variable named 'page' (a Playwright Page, "
+            f"already created) is available to use directly.\n"
+            f"- Use assert statements to verify the Expected "
+            f"Result.\n"
+            f"- Every line must be independently valid at zero "
+            f"indentation.\n"
+            f"- Playwright does NOT have a 'By' class — that is "
+            f"Selenium, a different library. NEVER write "
+            f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
+            f"are plain strings passed directly as the first "
+            f"argument.\n\n"
+            f"WRONG (Selenium-style, will not work):\n"
+            f"page.fill(By.ID, \"username\", \"myuser\")\n\n"
+            f"CORRECT (Playwright-style):\n"
+            f"page.fill(\"#username\", \"myuser\")\n\n"
+            f"{environment_block}"
+            f"If the exact URL for a step isn't clear from the "
+            f"test case, use 'https://REPLACE_WITH_ACTUAL_URL'.\n\n"
+            f"Test Case: {test_case.get('test_case', '')}\n"
+            f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
+            f"Steps: {test_case.get('steps', '')}\n"
+            f"Expected Result: {test_case.get('expected_result', '')}\n\n"
+            f"Example of the exact format expected:\n"
+            f"page.goto('https://example.com/login')\n"
+            f"page.fill('#username', 'myuser')\n"
+            f"page.click('#login-button')\n"
+            f"assert page.locator('#welcome').is_visible()\n\n"
+            f"Return ONLY the flat list of statements, one per "
+            f"line, no explanation, no markdown fences, no "
+            f"indentation, no function or block wrapper."
+        )
+
+        try:
+
+            from Core.discovery_repository import DiscoveryRepository
+
+            elements = DiscoveryRepository().get_elements_for_scope(
+                domain, module, knowledge_name
+            )
+
+        except Exception:
+
+            self.logger.exception(
+                "Could not check for captured URL Knowledge elements "
+                "— falling back to the plain-text Playwright prompt."
+            )
+
+            return generic_requirement
+
+        if not elements:
+
+            return generic_requirement
+
+        matched = self._select_relevant_elements(test_case, elements)
+
+        elements_block = self._format_elements_for_prompt(matched)
+
+        return (
+            f"Generate ONLY the body steps for a Playwright test as "
+            f"a FLAT list of simple Python statements — one action "
+            f"per line, using ONLY the real, captured UI element(s) "
+            f"below wherever a step refers to a matching "
+            f"field/button/link — these came from an actual "
+            f"recorded screen (URL Knowledge Capture), so their "
+            f"locator is REAL and must be used EXACTLY as given, "
+            f"character for character. Do NOT invent, guess, or "
+            f"rewrite a different selector than what is shown below, "
+            f"even if it looks more plausible than the test case "
+            f"wording. Some locators below are XPath expressions "
+            f"(they start with '//') — that is correct and "
+            f"intentional (usually because the element's id/name "
+            f"changes between page loads and a plain id/CSS selector "
+            f"would break); Playwright accepts an XPath string "
+            f"directly as the first argument to "
+            f"page.fill()/page.click()/etc, with NO special prefix "
+            f"or wrapper needed — use it exactly as given, never "
+            f"convert it to a different selector style.\n\n"
+            f"STRICT RULES:\n"
+            f"- Do NOT write 'def', 'if', 'for', 'while', 'try', "
+            f"'with', or any other block/indented statement.\n"
+            f"- Do NOT include imports, browser launch, or "
+            f"browser.close() — those are already handled.\n"
+            f"- A variable named 'page' (a Playwright Page, "
+            f"already created) is available to use directly.\n"
+            f"- Use assert statements to verify the Expected "
+            f"Result.\n"
+            f"- Every line must be independently valid at zero "
+            f"indentation.\n"
+            f"- Playwright does NOT have a 'By' class — that is "
+            f"Selenium, a different library. NEVER write "
+            f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
+            f"are plain strings passed directly as the first "
+            f"argument.\n\n"
+            f"{environment_block}"
+            f"If the exact URL for a step isn't clear from the "
+            f"test case, use 'https://REPLACE_WITH_ACTUAL_URL'.\n\n"
+            f"{elements_block}\n"
+            f"Test Case: {test_case.get('test_case', '')}\n"
+            f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
+            f"Steps: {test_case.get('steps', '')}\n"
+            f"Expected Result: {test_case.get('expected_result', '')}\n\n"
+            f"Example of the exact format expected:\n"
+            f"page.goto('https://example.com/login')\n"
+            f"page.fill('#username', 'myuser')\n"
+            f"page.click('#login-button')\n"
+            f"assert page.locator('#welcome').is_visible()\n\n"
+            f"Return ONLY the flat list of statements, one per "
+            f"line, no explanation, no markdown fences, no "
+            f"indentation, no function or block wrapper."
+        )
+
+    def _select_relevant_elements(self, test_case, elements, max_elements=8):
+        """
+        Mirrors _select_relevant_endpoints()'s keyword-overlap
+        matching below, applied to captured URL Knowledge elements
+        instead of API endpoints — keeps the elements block short
+        enough not to bloat the prompt on a capture with many
+        screens, while still always returning SOMETHING (the first
+        max_elements, capture order) rather than nothing when no
+        element's name shares any word with the test case.
+        """
+
+        test_text = " ".join(
+            str(test_case.get(field, ""))
+            for field in ("test_case", "steps", "expected_result")
+        ).lower()
+
+        test_words = set(re.findall(r"[a-z0-9]+", test_text))
+
+        scored = []
+
+        for element in elements:
+
+            element_text = " ".join(
+                str(element.get(field, ""))
+                for field in ("name", "page_name", "step_name")
+            ).lower()
+
+            element_words = set(re.findall(r"[a-z0-9]+", element_text))
+
+            score = len(test_words & element_words)
+
+            scored.append((score, element))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+
+        return [element for _, element in scored[:max_elements]]
+
+    def _format_elements_for_prompt(self, elements):
+
+        lines = ["Real captured UI element(s) for this scope:\n"]
+
+        for element in elements:
+
+            location = " / ".join(
+                part for part in (
+                    element.get("page_name"), element.get("step_name")
+                ) if part
+            )
+
+            lines.append(
+                f"- {element.get('name') or '(unnamed)'} "
+                f"({element.get('element_type', 'element')})"
+                + (f" — on {location}" if location else "")
+            )
+
+            lines.append(f"  Locator: {element.get('locator', '')}")
+
+            alternates = element.get("alternate_locators") or []
+
+            if alternates:
+
+                alt_str = "; ".join(
+                    f"{a.get('strategy', '')}: {a.get('locator', '')}"
+                    for a in alternates
+                )
+
+                lines.append(f"  Alternates: {alt_str}")
+
+            if element.get("placeholder"):
+
+                lines.append(f"  Placeholder: {element['placeholder']}")
+
+            if element.get("is_required"):
+
+                lines.append("  Required: yes")
+
+            lines.append("")
+
+        return "\n".join(lines)
 
     # --------------------------------------------------
     # API automation grounding
@@ -588,7 +779,7 @@ class TestExecutionManager:
                 len(top),
             )
 
-                return top
+        return top
 
     def get_relevant_endpoints_for_test_case(
         self, test_case, endpoints=None, max_endpoints=1
@@ -1034,6 +1225,31 @@ class TestExecutionManager:
         self.repository.update_recorded_script(
             test_case_id, script_text
         )
+
+    def scan_script_for_dynamic_locators(self, script_text):
+        """
+        Called right after Manual Recording finishes (see
+        test_execution_page.py's on_recording_finished()) to flag
+        locators that look dynamically generated BEFORE the first
+        replay, instead of only discovering them when a replay
+        fails. Playwright's own codegen recorder picks its own
+        locators while the operator drives the browser — this can't
+        change what it recorded, only flag what it recorded for
+        review. See scan_script_for_dynamic_locators() in
+        playwright_runner.py for the actual detection logic (it's a
+        plain module-level function there, not on PlaywrightRunner,
+        since it never needs a live browser/subprocess — just the
+        script's own text).
+
+        Returns a list of {"line_number", "code", "locator", "value"}
+        dicts, empty if nothing looks risky.
+        """
+
+        from Core.playwright_runner import (
+            scan_script_for_dynamic_locators as _scan,
+        )
+
+        return _scan(script_text)
 
 
     def set_active_script(self, test_case_id, source):

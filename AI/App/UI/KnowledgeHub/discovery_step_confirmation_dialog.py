@@ -311,12 +311,30 @@ class DiscoveryStepConfirmationDialog(QDialog):
             required_checkbox = required_widget.findChild(QCheckBox) if required_widget else None
             is_required = bool(required_checkbox and required_checkbox.isChecked())
 
-            alternate_locators = None
+            alternates = []
+
             engine_locator = candidate.get("locator")
             if engine_locator and engine_locator != locator:
-                alternate_locators = [
+                alternates.append(
                     {"strategy": candidate.get("locator_strategy") or "engine", "locator": engine_locator}
-                ]
+                )
+
+            # Always offer the computed XPath alternate too (not just
+            # the engine's original locator), unless it's literally
+            # identical to something already in the list — e.g. a
+            # dynamic-id element where the XPath alternate IS what the
+            # engine picked as primary in the first place.
+            xpath_alternative = candidate.get("xpath_alternative")
+            if (
+                xpath_alternative
+                and xpath_alternative != locator
+                and xpath_alternative not in (a["locator"] for a in alternates)
+            ):
+                alternates.append(
+                    {"strategy": "xpath", "locator": xpath_alternative}
+                )
+
+            alternate_locators = alternates or None
 
             elements.append(
                 {

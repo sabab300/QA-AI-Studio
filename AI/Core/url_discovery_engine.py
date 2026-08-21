@@ -45,6 +45,7 @@ guided flow. The guided flow goes further — it never clicks
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from playwright.sync_api import BrowserContext, Page, Locator
 
@@ -55,6 +56,152 @@ MUTATING_KEYWORDS = [
     "submit", "save", "create", "confirm", "delete", "post",
     "update", "send", "process", "apply", "register", "pay", "checkout"
 ]
+
+# ================================================================
+# Dynamic-id/name detection
+# ================================================================
+#
+# Some frameworks generate a fresh id/name every time a component
+# mounts (a UUID, a growing counter, a random hash appended to a
+# stable prefix, ...). Trusting one of those as a plain "#id" or
+# "[name=...]" CSS locator produces a test that passes today and
+# fails the next run for no reason the operator did anything wrong
+# — the id it was recorded against no longer exists.
+#
+# These patterns are deliberately a heuristic, not a certainty: they
+# flag an id/name as "looks auto-generated" so _generate_locator()
+# skips trusting it outright and either falls through to a more
+# stable attribute (data-testid / aria-label / placeholder / text)
+# or, failing that, builds an XPath around whatever STABLE prefix is
+# left once the dynamic-looking tail is stripped off — which is far
+# more likely to still match after a reload than an exact id/name
+# match would be. Playwright accepts XPath directly: any locator
+# string starting with "//" is auto-detected as XPath, no "xpath="
+# prefix required.
+#
+# Tuned to catch the common cases (a trailing UUID, or 4+ digits/hex
+# chars anywhere, or the whole value being one long opaque token)
+# without being so broad it distrusts every id with a number in it —
+# but it is intentionally cautious rather than exact: a false
+# "looks dynamic" verdict only costs a slightly less pretty XPath
+# fallback instead of a #id, never a broken or missing locator.
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_LONG_DIGIT_OR_HEX_RUN_RE = re.compile(r"[0-9a-fA-F]{4,}")
+
+# A trailing "-123456", "_a1b2c3d4", ":r3f9k:" style suffix — stripped
+# off to see if a meaningful, stable prefix is left underneath.
+_TRAILING_DYNAMIC_SUFFIX_RE = re.compile(
+    r"[-_:]*[0-9a-fA-F]{4,}[-_:]*$"
+)
+
+# Below the 4+ consecutive digit/hex-char threshold above, a value is
+# only treated as an opaque random token (rather than an ordinary
+# hand-authored identifier that merely contains a digit, e.g.
+# "addressLine1" or "phoneNumber2") once it is long AND has several
+# digits scattered through it — that combination is common for
+# random base36/base62-style ids and rare for real field names.
+_MIN_OPAQUE_TOKEN_LENGTH = 16
+_MIN_OPAQUE_TOKEN_DIGITS = 3
+
+
+def looks_dynamically_generated(value: str) -> bool:
+    """
+    True if `value` (an id or name attribute) looks like it was
+    generated fresh rather than authored by hand — see the module
+    docstring above for the reasoning and the trade-off.
+    """
+
+    if not value:
+        return False
+
+    if _UUID_RE.search(value):
+        return True
+
+    if _LONG_DIGIT_OR_HEX_RUN_RE.search(value):
+        return True
+
+    if (
+        len(value) >= _MIN_OPAQUE_TOKEN_LENGTH
+        and value.isalnum()
+        and sum(ch.isdigit() for ch in value) >= _MIN_OPAQUE_TOKEN_DIGITS
+    ):
+        return True
+
+    return False
+
+
+def stable_locator_prefix(value: str) -> Optional[str]:
+    """
+    Strips a trailing dynamic-looking chunk off `value` and returns
+    whatever meaningful prefix is left, or None if nothing usable
+    remains (e.g. the value is nothing BUT a hash/UUID, with no
+    hand-authored part to anchor an XPath on at all).
+    """
+
+    prefix = _TRAILING_DYNAMIC_SUFFIX_RE.sub("", value).rstrip("-_:")
+
+    if len(prefix) >= 3:
+        return prefix
+
+    return None
+
+
+def build_xpath_alternative(tag_name: str, attrs: Dict[str, Any]) -> Optional[str]:
+    """
+    Builds a generic XPath for this element regardless of what wins
+    as the PRIMARY locator, so every captured element carries an
+    XPath option in the database — not only the ones whose id/name
+    looked dynamically generated. A stable id/CSS locator is still
+    preferred as primary wherever one exists (see _generate_locator()
+    — XPath tends to be more verbose and, for role/position-based
+    forms of it, more sensitive to markup changes than a direct
+    attribute match); this just makes sure XPath is always ON HAND
+    as a ready-to-use alternate, since it can reach almost anything a
+    CSS selector can and, for a dynamic id/name, some things CSS
+    cannot (e.g. "starts-with").
+
+    Same attribute priority as _generate_locator(), minus the
+    short-visible-text tier (kept out here: a :has-text()-equivalent
+    XPath using contains(text(), ...) is the least reliable of these
+    options and duplicating it as a second "alternate" adds little).
+    Returns None if nothing in `attrs` is usable at all.
+    """
+
+    data_testid = attrs.get("data_testid")
+    if data_testid:
+        return f"//{tag_name}[@data-testid='{data_testid}']"
+
+    aria_label = attrs.get("aria_label")
+    if aria_label:
+        return f"//{tag_name}[@aria-label='{aria_label}']"
+
+    placeholder = attrs.get("placeholder")
+    if placeholder:
+        return f"//{tag_name}[@placeholder='{placeholder}']"
+
+    element_id = attrs.get("id") or ""
+    if element_id:
+        if looks_dynamically_generated(element_id):
+            stable = stable_locator_prefix(element_id)
+            if stable:
+                return f"//{tag_name}[starts-with(@id, '{stable}')]"
+        else:
+            return f"//{tag_name}[@id='{element_id}']"
+
+    element_name = attrs.get("name") or ""
+    if element_name:
+        if looks_dynamically_generated(element_name):
+            stable = stable_locator_prefix(element_name)
+            if stable:
+                return f"//{tag_name}[starts-with(@name, '{stable}')]"
+        else:
+            return f"//{tag_name}[@name='{element_name}']"
+
+    return None
+
 
 FIELD_SELECTOR = "input:visible, select:visible, textarea:visible"
 BUTTON_SELECTOR = (
@@ -271,17 +418,30 @@ class URLDiscoveryEngine:
         """
         Generates a reliable Playwright locator plus the strategy that
         produced it. Priority: id > name > data-testid > aria-label >
-        placeholder > short visible text > type. A bare "tag[type=]"
-        selector is returned only as an absolute last resort, and is
-        clearly labelled "type" so downstream code (DiscoveryRepository)
-        can treat it as low-confidence rather than storing it as if it
-        were unique.
-        """
-        if attrs.get("id"):
-            return f"#{attrs['id']}", "id"
+        placeholder > short visible text > type > a dynamic-id/name
+        XPath fallback > a bare "tag[type=]" selector as an absolute
+        last resort, clearly labelled "type"/"tag-only" so downstream
+        code (DiscoveryRepository) can treat it as low-confidence
+        rather than storing it as if it were unique.
 
-        if attrs.get("name"):
-            return f"{tag_name}[name='{attrs['name']}']", "name"
+        id and name are only trusted when they don't look freshly
+        generated (see looks_dynamically_generated() above) — an id
+        like "field-8827261" or a bare UUID is exactly the kind of
+        locator that works once and quietly breaks on the very next
+        run once the framework regenerates it. When that's all the
+        page offers (no data-testid/aria-label/placeholder/short
+        text either), a stable XPath built from whatever hand-authored
+        prefix survives stripping the dynamic-looking tail is a much
+        safer bet than trusting the exact value verbatim.
+        """
+        element_id = attrs.get("id") or ""
+        element_name = attrs.get("name") or ""
+
+        if element_id and not looks_dynamically_generated(element_id):
+            return f"#{element_id}", "id"
+
+        if element_name and not looks_dynamically_generated(element_name):
+            return f"{tag_name}[name='{element_name}']", "name"
 
         if attrs.get("data_testid"):
             return f"[data-testid='{attrs['data_testid']}']", "data-testid"
@@ -297,11 +457,33 @@ class URLDiscoveryEngine:
             return f"{tag_name}:has-text('{text}')", "text"
 
         input_type = attrs.get("type")
+
+        # We only reach here because id/name existed but looked
+        # dynamically generated (otherwise one of the returns above
+        # would already have fired) — try to salvage a stable XPath
+        # out of them before giving up to the low-confidence
+        # type/tag-only fallbacks.
+        if element_id:
+            stable = stable_locator_prefix(element_id)
+            if stable:
+                return (
+                    f"//{tag_name}[starts-with(@id, '{stable}')]",
+                    "xpath-dynamic-id",
+                )
+
+        if element_name:
+            stable = stable_locator_prefix(element_name)
+            if stable:
+                return (
+                    f"//{tag_name}[starts-with(@name, '{stable}')]",
+                    "xpath-dynamic-name",
+                )
+
         if input_type:
             return f"{tag_name}[type='{input_type}']", "type"
 
         return tag_name, "tag-only"
-
+    
     def _read_attrs(self, el: Locator, tag_name: str) -> Dict[str, Any]:
         """Reads the full attribute set once per element, so every
         candidate (field, button, link or tab) carries the same rich
@@ -343,7 +525,7 @@ class URLDiscoveryEngine:
             except Exception:
                 pass
 
-        return {
+        attrs = {
             "tag": tag_name,
             "type": attr("type"),
             "id": attr("id"),
@@ -355,6 +537,15 @@ class URLDiscoveryEngine:
             "required": required,
             "options": options,
         }
+
+        # Always computed, regardless of what _generate_locator() picks
+        # as the PRIMARY locator, so every candidate carries a ready-to
+        # -use XPath alternate in the database — see
+        # build_xpath_alternative()'s docstring above for why this
+        # isn't just promoted straight to primary.
+        attrs["xpath_alternative"] = build_xpath_alternative(tag_name, attrs)
+
+        return attrs
 
     # ================================================================
     # Per-view scanning

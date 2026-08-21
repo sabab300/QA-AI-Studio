@@ -199,13 +199,24 @@ def _qa_extract_locator_and_value(code_text):
 
 
 def _qa_rebuild_code(code_text, old_locator, old_value, new_locator, new_value):
+    # NOTE: the replacement text is always produced with repr(), never
+    # by re-wrapping raw text in matching quote characters. An XPath
+    # locator very commonly contains a quote itself (e.g.
+    # //button[@id='submit']) -- naively inserting that raw text
+    # between quote characters corrupts the Python source (the
+    # embedded quote ends the string early), which surfaced as
+    # "typing an XPath fix just fails" even though Playwright itself
+    # accepts XPath (any locator starting with "//" is auto-detected
+    # as XPath) without any special handling. repr() always produces
+    # a valid, correctly-escaped Python string literal no matter what
+    # quote characters (or backslashes) the new text contains.
     result = code_text
     if new_locator is not None and new_locator != old_locator and old_locator:
-        result = result.replace("'" + old_locator + "'", "'" + new_locator + "'", 1)
-        result = result.replace('"' + old_locator + '"', '"' + new_locator + '"', 1)
+        result = result.replace("'" + old_locator + "'", repr(new_locator), 1)
+        result = result.replace('"' + old_locator + '"', repr(new_locator), 1)
     if new_value is not None and new_value != old_value and old_value:
-        result = result.replace("'" + old_value + "'", "'" + new_value + "'", 1)
-        result = result.replace('"' + old_value + '"', '"' + new_value + '"', 1)
+        result = result.replace("'" + old_value + "'", repr(new_value), 1)
+        result = result.replace('"' + old_value + '"', repr(new_value), 1)
     return result
 
 
@@ -271,10 +282,94 @@ def _qa_run_step(step_number, code_text):
                     "step": step_number,
                 })
                 sys.exit(2)
-            current_code = outcome
+                        current_code = outcome
 # --- end QA AI Studio interactive step runner ---
 
 '''
+
+
+# ================================================================
+# Post-recording dynamic-locator scan
+# ================================================================
+#
+# Everything above this point is TEXT (the INTERACTIVE_HARNESS_TEMPLATE
+# string) written out and run in a SEPARATE subprocess — none of it is
+# live Python in this process. The regexes and function below ARE real,
+# live code in this process: used right after Manual Recording finishes
+# (see test_execution_page.py's on_recording_finished()) to flag locators
+# that look dynamically generated BEFORE the first replay, instead of
+# only discovering them when a replay fails.
+_SCAN_ATTR_ID_RE = re.compile(r"\[id=['\"]([^'\"]+)['\"]\]")
+_SCAN_ATTR_NAME_RE = re.compile(r"\[name=['\"]([^'\"]+)['\"]\]")
+_SCAN_CSS_ID_RE = re.compile(r"#([A-Za-z0-9_-]+)")
+
+
+def _scan_extract_locator(code_text):
+    """
+    Same convention the interactive harness's own
+    _qa_extract_locator_and_value() uses: the first quoted string on
+    a line is treated as that line's locator.
+    """
+    matches = re.findall(r"'([^']*)'|\"([^\"]*)\"", code_text)
+    values = [a if a else b for a, b in matches]
+    return values[0] if values else ""
+
+
+def scan_script_for_dynamic_locators(script_text):
+    """
+    Scans a recorded/generated script's locators for an id or name
+    attribute value that looks dynamically generated (see
+    looks_dynamically_generated() in url_discovery_engine.py) and
+    returns one flagged entry per risky line — purely informational,
+    never modifies the script. The operator decides what, if
+    anything, to do about a flagged line, via View Script right now
+    or the Locator Repair popup the first time it actually fails
+    during a replay.
+
+    Returns a list of {"line_number", "code", "locator", "value"}
+    dicts, empty if nothing looks risky.
+    """
+
+    from Core.url_discovery_engine import looks_dynamically_generated
+
+    flagged = []
+
+    for line_number, line in enumerate(script_text.splitlines(), start=1):
+
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith("#"):
+
+            continue
+
+        locator = _scan_extract_locator(stripped)
+
+        if not locator:
+
+            continue
+
+        candidate_value = None
+
+        for pattern in (_SCAN_ATTR_ID_RE, _SCAN_ATTR_NAME_RE, _SCAN_CSS_ID_RE):
+
+            match = pattern.search(locator)
+
+            if match:
+
+                candidate_value = match.group(1)
+
+                break
+
+        if candidate_value and looks_dynamically_generated(candidate_value):
+
+            flagged.append({
+                "line_number": line_number,
+                "code": stripped,
+                "locator": locator,
+                "value": candidate_value,
+            })
+
+    return flagged
 
 
 class PlaywrightRunner:
