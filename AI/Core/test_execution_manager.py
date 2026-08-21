@@ -13,8 +13,14 @@ Service layer used by the QA Automation UI. Wraps:
 
 Playwright scripts now actually EXECUTE (Core/playwright_runner.py),
 in an isolated subprocess with a timeout — a hung or bad script can't
-freeze the app. Selenium/API/SQL still only generate + store a
-script for manual review; they haven't gotten a runner yet.
+freeze the app. Selenium/SQL still only generate + store a script
+for manual review; they haven't gotten a runner yet. API test cases
+can now ALSO be run for real (Core/api_automation_runner.py) —
+the operator explicitly chooses "Execute Against Real Server" (vs.
+"Generate Script (Ollama/AI)", today's manual-review behaviour) —
+which sends an actual HTTP request built from the REAL, imported
+endpoint record, never from parsing/executing the AI-generated
+script text.
 
 Since this runs AI-generated code in a real browser against
 whatever URL is inside the script, the UI shows a one-time
@@ -582,7 +588,56 @@ class TestExecutionManager:
                 len(top),
             )
 
-        return top
+                return top
+
+    def get_relevant_endpoints_for_test_case(
+        self, test_case, endpoints=None, max_endpoints=1
+    ):
+        """
+        Public wrapper around _select_relevant_endpoints() for
+        callers outside automation-script generation — specifically
+        "Execute Against Real Server" (see
+        Core/api_automation_runner.py and
+        App/UI/QAAutomation/test_execution_page.py's
+        run_api_automation_rows()), which needs to find which REAL,
+        imported endpoint a given API-type test case should actually
+        be run against.
+
+        Uses the exact same keyword-overlap matching already used to
+        ground AI script generation (_build_api_requirement()), so
+        "what actually gets called" and "what the AI was told to
+        write a script against" are never two different endpoints
+        for the same test case. Defaults to the single best match
+        (max_endpoints=1) — unlike generation, which can reasonably
+        show the AI a few candidates, real execution has to pick
+        exactly one endpoint to send a request to.
+
+        Pass `endpoints` in when the caller already fetched them
+        (e.g. running a whole batch of test cases against the same
+        collection) to avoid re-querying the database per test case;
+        otherwise this looks them up itself from the test case's own
+        domain/module/knowledge_name.
+        """
+
+        if endpoints is None:
+
+            from Core.api_collection_repository import (
+                ApiCollectionRepository,
+            )
+
+            endpoints = ApiCollectionRepository().get_endpoints_for_scope(
+                test_case.get("domain", ""),
+                test_case.get("module", ""),
+                test_case.get("knowledge_name", ""),
+            )
+
+        if not endpoints:
+
+            return []
+
+        return self._select_relevant_endpoints(
+            test_case, endpoints, max_endpoints=max_endpoints
+        )
 
     def _format_endpoints_for_prompt(self, endpoints):
 

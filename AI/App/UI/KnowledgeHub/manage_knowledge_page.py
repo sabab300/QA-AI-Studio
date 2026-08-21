@@ -683,6 +683,12 @@ class ManageKnowledgePage(QWidget):
 
         self.edit_btn = QPushButton("Edit")
 
+        # Only enabled for an endpoint node (an imported API
+        # Collection request) — sends a REAL HTTP request to the
+        # real, imported URL right now, no test case needed first.
+        # See run_selected_endpoint() / Core/api_automation_runner.py.
+        self.run_api_btn = QPushButton("Run Now")
+
         self.version_btn = QPushButton("Versions")
 
         self.delete_btn = QPushButton("Delete")
@@ -698,6 +704,8 @@ class ManageKnowledgePage(QWidget):
         toolbar.addWidget(self.view_btn)
 
         toolbar.addWidget(self.edit_btn)
+
+        toolbar.addWidget(self.run_api_btn)
 
         toolbar.addWidget(self.version_btn)
 
@@ -740,6 +748,8 @@ class ManageKnowledgePage(QWidget):
         self.view_btn.clicked.connect(self.view_details)
 
         self.edit_btn.clicked.connect(self.edit_selected)
+
+        self.run_api_btn.clicked.connect(self.run_selected_endpoint)
 
         self.version_btn.clicked.connect(self.show_versions)
 
@@ -1076,6 +1086,8 @@ class ManageKnowledgePage(QWidget):
 
         self.edit_btn.setEnabled(has_file_selected or has_endpoint_selected)
 
+        self.run_api_btn.setEnabled(has_endpoint_selected)
+
         self.version_btn.setEnabled(has_file_selected)
 
         self.delete_btn.setEnabled(has_file_selected)
@@ -1162,11 +1174,94 @@ class ManageKnowledgePage(QWidget):
 
             return
 
-        dialog = ApiEndpointEditorDialog(endpoint, repository, self)
+                dialog = ApiEndpointEditorDialog(endpoint, repository, self)
 
         if dialog.exec() == QDialog.Accepted:
 
             self.load_data()
+
+    # ======================================================
+    # Run Now — "Execute Against Real Server" for a single endpoint,
+    # no test case required. See Core/api_automation_runner.py.
+    # ======================================================
+
+    def run_selected_endpoint(self):
+
+        endpoint_id = self.selected_endpoint_id()
+
+        if endpoint_id is None:
+
+            return
+
+        repository = ApiCollectionRepository()
+
+        endpoint = repository.get_endpoint(endpoint_id)
+
+        if not endpoint:
+
+            QMessageBox.warning(
+                self,
+                "QA AI Studio",
+                "This endpoint could not be loaded — it may have "
+                "been removed by a newer import."
+            )
+
+            return
+
+        method = endpoint.get("method", "")
+
+        url = endpoint.get("url_resolved") or endpoint.get("url_raw", "")
+
+        confirm = QMessageBox.question(
+            self,
+            "Run Now?",
+            f"This sends a REAL HTTP request:\n\n{method} {url}\n\n"
+            f"Make sure this points at a TEST/UAT server, not "
+            f"production. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if confirm != QMessageBox.Yes:
+
+            return
+
+        outcome = self.run_single_api_endpoint(
+            endpoint.get("name") or "(unnamed)", endpoint
+        )
+
+        if outcome == "Pass":
+
+            QMessageBox.information(
+                self, "QA AI Studio", "Marked as Pass."
+            )
+
+        elif outcome == "Fail":
+
+            QMessageBox.information(
+                self, "QA AI Studio", "Marked as Fail."
+            )
+
+        # "Cancelled" needs no further message — the operator already
+        # chose to stop partway through (missing variable, or Cancel
+        # on the result dialog).
+
+    def run_single_api_endpoint(self, label, endpoint):
+        """
+        Thin wrapper kept on this page for readability at its call
+        site (run_selected_endpoint() above) — the actual resolve/
+        send/show-result/retry loop is
+        UI.QAAutomation.api_run_dialogs.run_api_endpoint_interactive(),
+        shared with QA Automation Execute's "Execute Against Real
+        Server" (see test_execution_page.py's
+        run_api_automation_rows()) so both entry points behave
+        identically. Returns "Pass", "Fail", or "Cancelled".
+        """
+
+        from UI.QAAutomation.api_run_dialogs import (
+            run_api_endpoint_interactive,
+        )
+
+        return run_api_endpoint_interactive(self, label, endpoint)
 
     # ======================================================
     # Versions

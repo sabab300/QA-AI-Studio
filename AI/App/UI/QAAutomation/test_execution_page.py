@@ -226,6 +226,11 @@ class AutomationSuggestionDialog(QDialog):
 # so the AI stops guessing URLs/logins
 # ==========================================================
 
+API_AUTH_TYPES = [
+    "None", "Bearer Token", "API Key Header", "Basic Auth",
+]
+
+
 class EnvironmentSettingsDialog(QDialog):
 
     def __init__(self, config_manager, parent=None):
@@ -236,9 +241,21 @@ class EnvironmentSettingsDialog(QDialog):
 
         self.setWindowTitle("Test Environment Settings")
 
-        self.resize(480, 400)
+        self.resize(560, 720)
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+
+        scroll = QScrollArea()
+
+        scroll.setWidgetResizable(True)
+
+        outer_layout.addWidget(scroll)
+
+        scroll_body = QWidget()
+
+        scroll.setWidget(scroll_body)
+
+        layout = QVBoxLayout(scroll_body)
 
         note = QLabel(
             "Set your REAL test/UAT environment details here. New "
@@ -336,6 +353,196 @@ class EnvironmentSettingsDialog(QDialog):
 
         layout.addWidget(speed_note)
 
+        # --------------------------------------------------
+        # API Automation ("Execute Against Real Server") settings —
+        # everything ApiAutomationRunner needs to actually send a
+        # real request instead of the app only ever producing an
+        # Ollama-generated script text nobody runs. See
+        # Core/api_automation_runner.py.
+        # --------------------------------------------------
+
+        api_group = QGroupBox("API Automation — Execute Against Real Server")
+
+        api_layout = QVBoxLayout(api_group)
+
+        api_note = QLabel(
+            "Used only when you choose 'Execute Against Real "
+            "Server' for an API-type test case or endpoint — this "
+            "actually sends the request, so use a TEST/UAT server "
+            "and a TEST auth token/account here, not production."
+        )
+
+        api_note.setWordWrap(True)
+
+        api_layout.addWidget(api_note)
+
+        api_grid = QGridLayout()
+
+        api_grid.setColumnStretch(1, 1)
+
+        self.api_base_url_override = QLineEdit()
+
+        self.api_base_url_override.setPlaceholderText(
+            "optional — overrides just the host, e.g. "
+            "https://uat.psw.gov.pk (leave blank to call the "
+            "endpoint's own imported URL as-is)"
+        )
+
+        self.api_auth_type = QComboBox()
+
+        self.api_auth_type.addItems(API_AUTH_TYPES)
+
+        self.api_auth_token = QLineEdit()
+
+        self.api_auth_token.setEchoMode(QLineEdit.Password)
+
+        self.api_auth_header_name = QLineEdit()
+
+        self.api_auth_header_name.setPlaceholderText("e.g. X-API-Key")
+
+        self.api_auth_header_value = QLineEdit()
+
+        self.api_auth_header_value.setEchoMode(QLineEdit.Password)
+
+        self.api_username = QLineEdit()
+
+        self.api_password = QLineEdit()
+
+        self.api_password.setEchoMode(QLineEdit.Password)
+
+        self.api_timeout_seconds = QLineEdit()
+
+        self.api_timeout_seconds.setPlaceholderText("default 30")
+
+        self.api_verify_ssl = QCheckBox(
+            "Verify SSL certificates (turn off only for a test "
+            "server with a self-signed certificate)"
+        )
+
+        api_grid.addWidget(QLabel("Base URL Override"), 0, 0)
+
+        api_grid.addWidget(self.api_base_url_override, 0, 1)
+
+        api_grid.addWidget(QLabel("Auth Type"), 1, 0)
+
+        api_grid.addWidget(self.api_auth_type, 1, 1)
+
+        bearer_token_label = QLabel("Bearer Token")
+
+        api_grid.addWidget(bearer_token_label, 2, 0)
+
+        api_grid.addWidget(self.api_auth_token, 2, 1)
+
+        api_key_name_label = QLabel("API Key Header Name")
+
+        api_grid.addWidget(api_key_name_label, 3, 0)
+
+        api_grid.addWidget(self.api_auth_header_name, 3, 1)
+
+        api_key_value_label = QLabel("API Key Header Value")
+
+        api_grid.addWidget(api_key_value_label, 4, 0)
+
+        api_grid.addWidget(self.api_auth_header_value, 4, 1)
+
+        basic_username_label = QLabel("Basic Auth Username")
+
+        api_grid.addWidget(basic_username_label, 5, 0)
+
+        api_grid.addWidget(self.api_username, 5, 1)
+
+        basic_password_label = QLabel("Basic Auth Password")
+
+        api_grid.addWidget(basic_password_label, 6, 0)
+
+        api_grid.addWidget(self.api_password, 6, 1)
+
+        # Kept keyed by the SAME field this label belongs next to, so
+        # _update_api_auth_field_visibility() can toggle each
+        # label/field pair together — a visible field with no label
+        # (or vice versa) would look broken.
+        self._api_auth_field_labels = {
+            id(self.api_auth_token): bearer_token_label,
+            id(self.api_auth_header_name): api_key_name_label,
+            id(self.api_auth_header_value): api_key_value_label,
+            id(self.api_username): basic_username_label,
+            id(self.api_password): basic_password_label,
+        }
+
+        api_grid.addWidget(QLabel("Timeout (seconds)"), 7, 0)
+
+        api_grid.addWidget(self.api_timeout_seconds, 7, 1)
+
+        api_layout.addLayout(api_grid)
+
+        api_layout.addWidget(self.api_verify_ssl)
+
+        self._api_auth_rows = {
+            "Bearer Token": [2],
+            "API Key Header": [3, 4],
+            "Basic Auth": [5, 6],
+        }
+
+        self.api_auth_type.currentTextChanged.connect(
+            self._update_api_auth_field_visibility
+        )
+
+        api_layout.addWidget(QLabel("Extra Headers (sent on every request)"))
+
+        self.api_headers_table = QTableWidget(0, 2)
+
+        self.api_headers_table.setHorizontalHeaderLabels(["Key", "Value"])
+
+        self.api_headers_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+
+        self.api_headers_table.setMinimumHeight(100)
+
+        api_layout.addWidget(self.api_headers_table)
+
+        api_header_buttons = QHBoxLayout()
+
+        add_api_header_btn = QPushButton("Add Header")
+
+        add_api_header_btn.clicked.connect(
+            lambda: self._add_api_header_row()
+        )
+
+        remove_api_header_btn = QPushButton("Remove Selected")
+
+        remove_api_header_btn.clicked.connect(
+            self._remove_api_header_row
+        )
+
+        api_header_buttons.addWidget(add_api_header_btn)
+
+        api_header_buttons.addWidget(remove_api_header_btn)
+
+        api_header_buttons.addStretch()
+
+        api_layout.addLayout(api_header_buttons)
+
+        self.api_variables_label = QLabel()
+
+        self.api_variables_label.setStyleSheet("color: #64748B;")
+
+        self.api_variables_label.setWordWrap(True)
+
+        api_layout.addWidget(self.api_variables_label)
+
+        clear_variables_btn = QPushButton(
+            "Forget Remembered {{variable}} Values"
+        )
+
+        clear_variables_btn.clicked.connect(
+            self._clear_remembered_variables
+        )
+
+        api_layout.addWidget(clear_variables_btn)
+
+        layout.addWidget(api_group)
+
 
         data = self.config_manager.load()
 
@@ -353,6 +560,48 @@ class EnvironmentSettingsDialog(QDialog):
             data.get("default_timeout_ms", "")
         )
 
+        self.api_base_url_override.setText(
+            data.get("api_base_url_override", "")
+        )
+
+        auth_index = self.api_auth_type.findText(
+            data.get("api_auth_type") or "None"
+        )
+
+        self.api_auth_type.setCurrentIndex(max(auth_index, 0))
+
+        self.api_auth_token.setText(data.get("api_auth_token", ""))
+
+        self.api_auth_header_name.setText(
+            data.get("api_auth_header_name", "")
+        )
+
+        self.api_auth_header_value.setText(
+            data.get("api_auth_header_value", "")
+        )
+
+        self.api_username.setText(data.get("api_username", ""))
+
+        self.api_password.setText(data.get("api_password", ""))
+
+        self.api_timeout_seconds.setText(
+            str(data.get("api_timeout_seconds", "") or "")
+        )
+
+        self.api_verify_ssl.setChecked(
+            data.get("api_verify_ssl", True)
+        )
+
+        for key, value in (data.get("api_extra_headers") or {}).items():
+
+            self._add_api_header_row(key, value)
+
+        self._update_api_auth_field_visibility(
+            self.api_auth_type.currentText()
+        )
+
+        self._refresh_api_variables_label(data.get("api_variables") or {})
+
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -364,39 +613,187 @@ class EnvironmentSettingsDialog(QDialog):
 
         layout.addWidget(buttons)
 
-        def save(self):
+    def _update_api_auth_field_visibility(self, auth_type):
 
-            slow_mo_text = self.slow_mo_ms.text().strip()
+        active_rows = set(self._api_auth_rows.get(auth_type, []))
 
-            timeout_text = self.default_timeout_ms.text().strip()
+        # Toggling row visibility on a QGridLayout means hiding each
+        # widget individually — there's no single "hide row" call.
+        # Each field's label is hidden/shown right alongside it, so
+        # there's never a visible label with no field (or vice
+        # versa) next to it.
+        for field, row in (
+            (self.api_auth_token, 2),
+            (self.api_auth_header_name, 3),
+            (self.api_auth_header_value, 4),
+            (self.api_username, 5),
+            (self.api_password, 6),
+        ):
 
-            for label, value in (
-                ("Playback Speed", slow_mo_text),
-                ("Default Timeout", timeout_text),
-            ):
+            visible = row in active_rows
 
-                if value and (not value.isdigit() or int(value) < 0):
+            field.setVisible(visible)
 
-                    QMessageBox.warning(
-                        self,
-                        "Invalid Value",
-                        f"{label} must be a whole number of "
-                        f"milliseconds (0 or higher), or left blank to "
-                        f"use the default. Got: '{value}'"
-                    )
+            self._api_auth_field_labels[id(field)].setVisible(visible)
 
-                    return
+    def _add_api_header_row(self, key="", value=""):
 
-            self.config_manager.save(
-                base_url=self.base_url.text().strip(),
-                username=self.username.text().strip(),
-                password=self.password.text(),
-                notes=self.notes.text().strip(),
-                slow_mo_ms=slow_mo_text,
-                default_timeout_ms=timeout_text,
+        row = self.api_headers_table.rowCount()
+
+        self.api_headers_table.insertRow(row)
+
+        self.api_headers_table.setItem(row, 0, QTableWidgetItem(key))
+
+        self.api_headers_table.setItem(row, 1, QTableWidgetItem(value))
+
+    def _remove_api_header_row(self):
+
+        rows = sorted(
+            {
+                index.row()
+                for index in self.api_headers_table.selectedIndexes()
+            },
+            reverse=True,
+        )
+
+        for row in rows:
+
+            self.api_headers_table.removeRow(row)
+
+    def _collect_api_headers(self):
+
+        headers = {}
+
+        for row in range(self.api_headers_table.rowCount()):
+
+            key_item = self.api_headers_table.item(row, 0)
+
+            value_item = self.api_headers_table.item(row, 1)
+
+            key = key_item.text().strip() if key_item else ""
+
+            if not key:
+
+                continue
+
+            headers[key] = value_item.text() if value_item else ""
+
+        return headers
+
+    def _refresh_api_variables_label(self, variables):
+
+        if not variables:
+
+            self.api_variables_label.setText(
+                "No {{variable}} values remembered yet — you'll be "
+                "asked the first time a real API run needs one."
             )
 
-            self.accept()
+        else:
+
+            names = ", ".join(sorted(variables.keys()))
+
+            self.api_variables_label.setText(
+                f"Remembered values for: {names}"
+            )
+
+    def _clear_remembered_variables(self):
+
+        confirm = QMessageBox.question(
+            self,
+            "Forget Remembered Values?",
+            "This clears every {{variable}} value remembered from "
+            "past API runs — you'll be asked again the next time "
+            "each one is needed. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if confirm != QMessageBox.Yes:
+
+            return
+
+        data = self.config_manager.load()
+
+        data["api_variables"] = {}
+
+        self.config_manager.save(
+            base_url=data.get("base_url", ""),
+            username=data.get("username", ""),
+            password=data.get("password", ""),
+            notes=data.get("notes", ""),
+            slow_mo_ms=data.get("slow_mo_ms", ""),
+            default_timeout_ms=data.get("default_timeout_ms", ""),
+            api_variables={},
+        )
+
+        self._refresh_api_variables_label({})
+
+    def save(self):
+
+        slow_mo_text = self.slow_mo_ms.text().strip()
+
+        timeout_text = self.default_timeout_ms.text().strip()
+
+        for label, value in (
+            ("Playback Speed", slow_mo_text),
+            ("Default Timeout", timeout_text),
+        ):
+
+            if value and (not value.isdigit() or int(value) < 0):
+
+                QMessageBox.warning(
+                    self,
+                    "Invalid Value",
+                    f"{label} must be a whole number of "
+                    f"milliseconds (0 or higher), or left blank to "
+                    f"use the default. Got: '{value}'"
+                )
+
+                return
+
+        api_timeout_text = self.api_timeout_seconds.text().strip()
+
+        if api_timeout_text:
+
+            try:
+
+                if float(api_timeout_text) <= 0:
+
+                    raise ValueError
+
+            except ValueError:
+
+                QMessageBox.warning(
+                    self,
+                    "Invalid Value",
+                    f"API Timeout must be a positive number of "
+                    f"seconds, or left blank to use the default "
+                    f"(30s). Got: '{api_timeout_text}'"
+                )
+
+                return
+
+        self.config_manager.save(
+            base_url=self.base_url.text().strip(),
+            username=self.username.text().strip(),
+            password=self.password.text(),
+            notes=self.notes.text().strip(),
+            slow_mo_ms=slow_mo_text,
+            default_timeout_ms=timeout_text,
+            api_auth_type=self.api_auth_type.currentText(),
+            api_auth_token=self.api_auth_token.text(),
+            api_auth_header_name=self.api_auth_header_name.text().strip(),
+            api_auth_header_value=self.api_auth_header_value.text(),
+            api_username=self.api_username.text().strip(),
+            api_password=self.api_password.text(),
+            api_extra_headers=self._collect_api_headers(),
+            api_timeout_seconds=api_timeout_text,
+            api_verify_ssl=self.api_verify_ssl.isChecked(),
+            api_base_url_override=self.api_base_url_override.text().strip(),
+        )
+
+        self.accept()
+
 
 # ==========================================================
 # Small dialog: start a manual recording
@@ -2571,7 +2968,9 @@ class TestExecutionPage(QWidget):
 
         playwright_ready = []
 
-        other_with_script = []
+        api_ready = []
+
+        unsupported = []
 
         for row in rows:
 
@@ -2587,9 +2986,13 @@ class TestExecutionPage(QWidget):
 
                 playwright_ready.append(row)
 
+            elif automation_type == "API":
+
+                api_ready.append(row)
+
             else:
 
-                other_with_script.append(row)
+                unsupported.append(row)
 
         if without_script:
 
@@ -2602,26 +3005,150 @@ class TestExecutionPage(QWidget):
                 f"Use 'Add Automation' first."
             )
 
-        if other_with_script:
+        if unsupported:
 
             numbers = ", ".join(
-                self.row_tc_number(r) for r in other_with_script
+                self.row_tc_number(r) for r in unsupported
             )
 
             QMessageBox.information(
                 self,
                 "Manual Review Required",
-                f"{len(other_with_script)} automated test case(s) "
-                f"use Selenium/API/SQL, which don't have an "
-                f"automatic runner yet.\n\nTest cases: {numbers}\n\n"
+                f"{len(unsupported)} automated test case(s) use "
+                f"Selenium/SQL, which don't have an automatic "
+                f"runner yet.\n\nTest cases: {numbers}\n\n"
                 f"Use 'View Script' on each row to review and run "
                 f"it in your own test environment."
             )
+
+        if api_ready:
+
+            self.handle_api_rows(api_ready)
 
         if playwright_ready:
 
             self.confirm_and_run_playwright(playwright_ready)
 
+
+    def handle_api_rows(self, rows):
+        """
+        API-type test cases get a choice the other unsupported
+        automation types (Selenium/SQL) don't: generate/keep an
+        Ollama-produced script for manual review (today's existing
+        behaviour, unchanged), OR actually send the real HTTP
+        request right now and report back what happened. See
+        Core/api_automation_runner.py and
+        App/UI/QAAutomation/api_run_dialogs.py.
+        """
+
+        from UI.QAAutomation.api_run_dialogs import ApiRunModeDialog
+
+        mode_dialog = ApiRunModeDialog(len(rows), self)
+
+        if mode_dialog.exec() != QDialog.Accepted:
+
+            self.log.append(
+                f"{len(rows)} API test case(s): cancelled — no "
+                f"action taken."
+            )
+
+            return
+
+        if mode_dialog.chosen_mode != "execute":
+
+            numbers = ", ".join(self.row_tc_number(r) for r in rows)
+
+            QMessageBox.information(
+                self,
+                "Manual Review Required",
+                f"{len(rows)} API test case(s) — use 'View Script' "
+                f"on each row to review the generated script and "
+                f"run it in your own test environment.\n\n"
+                f"Test cases: {numbers}"
+            )
+
+            return
+
+        self.run_api_automation_rows(rows)
+
+
+    def run_api_automation_rows(self, rows):
+        """
+        The "Execute Against Real Server" path chosen in
+        handle_api_rows() — finds the REAL, imported endpoint each
+        test case actually matches (never the AI-generated script
+        text — see
+        TestExecutionManager.get_relevant_endpoints_for_test_case())
+        and runs it through the same real-request flow Manage
+        Knowledge's "Run Now" uses
+        (UI.QAAutomation.api_run_dialogs.run_api_endpoint_interactive()
+        — shared by both entry points so they behave identically).
+        """
+
+        from UI.QAAutomation.api_run_dialogs import (
+            run_api_endpoint_interactive,
+        )
+
+        for row in rows:
+
+            test_case_id = self.row_tc_id(row)
+
+            tc_number = self.row_tc_number(row)
+
+            test_case = self.manager.repository.get_test_case(
+                test_case_id
+            )
+
+            if not test_case:
+
+                self.log.append(
+                    f"{tc_number}: test case could not be loaded — "
+                    f"skipped."
+                )
+
+                continue
+
+            matched = self.manager.get_relevant_endpoints_for_test_case(
+                test_case
+            )
+
+            if not matched:
+
+                self.log.append(
+                    f"{tc_number}: no imported API Collection "
+                    f"endpoint found for this Domain / Module / "
+                    f"Knowledge Name — import one via Upload New "
+                    f"Knowledge -> API Collection first. Skipped."
+                )
+
+                continue
+
+            endpoint = matched[0]
+
+            self.log.append(
+                f"{tc_number}: sending "
+                f"{endpoint.get('method')} "
+                f"{endpoint.get('url_resolved') or endpoint.get('url_raw')} "
+                f"..."
+            )
+
+            outcome = run_api_endpoint_interactive(
+                self, tc_number, endpoint
+            )
+
+            if outcome in ("Pass", "Fail"):
+
+                self.manager.repository.update_result(
+                    test_case_id, outcome
+                )
+
+                self.set_row_last_result(test_case_id, outcome)
+
+                self.log.append(f"{tc_number}: {outcome}.")
+
+            else:
+
+                self.log.append(f"{tc_number}: cancelled.")
 
     def confirm_and_run_playwright(self, rows):
 

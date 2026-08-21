@@ -267,7 +267,7 @@ class URLDiscoveryEngine:
     # Locator generation — single implementation (no shadowed duplicate)
     # ================================================================
 
-    def _generate_locator(self, el: Locator, tag_name: str, attrs: Dict[str, Any]) -> (str, str):
+    def _generate_locator(self, el: Locator, tag_name: str, attrs: Dict[str, Any]) -> tuple[str, str]:
         """
         Generates a reliable Playwright locator plus the strategy that
         produced it. Priority: id > name > data-testid > aria-label >
