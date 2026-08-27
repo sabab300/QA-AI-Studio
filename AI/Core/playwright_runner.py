@@ -282,7 +282,7 @@ def _qa_run_step(step_number, code_text):
                     "step": step_number,
                 })
                 sys.exit(2)
-                        current_code = outcome
+            current_code = outcome
 # --- end QA AI Studio interactive step runner ---
 
 '''

@@ -54,6 +54,7 @@ from Database.db_manager import DatabaseManager
 from Core.logger import Logger
 from Core.metadata_manager import MetadataManager
 from Core.url_discovery_engine import (
+    build_class_based_locator,
     build_xpath_alternative,
     looks_dynamically_generated,
     stable_locator_prefix,
@@ -1107,7 +1108,7 @@ class DiscoveryRepository:
 
             primary, strategy = css, "data-testid"
 
-            element_id = candidate.get("id")
+        element_id = candidate.get("id")
 
         # An id that looks freshly generated (a UUID, a long digit/hex
         # run, one long opaque token — see looks_dynamically_generated()
@@ -1154,7 +1155,7 @@ class DiscoveryRepository:
 
                 primary, strategy = css, "aria-label"
 
-        placeholder = candidate.get("placeholder")
+                placeholder = candidate.get("placeholder")
 
         if placeholder:
 
@@ -1166,7 +1167,7 @@ class DiscoveryRepository:
 
                 primary, strategy = css, "placeholder"
 
-                text = (candidate.get("text") or "").strip()
+        text = (candidate.get("text") or "").strip()
 
         if text and len(text) < 40:
 
@@ -1201,9 +1202,9 @@ class DiscoveryRepository:
 
                 primary, strategy = xpath, "xpath-dynamic-id"
 
-        if primary is None and name_is_dynamic:
+            if primary is None and name_is_dynamic:
 
-            stable = stable_locator_prefix(name)
+                stable = stable_locator_prefix(name)
 
             if stable:
 
@@ -1214,6 +1215,29 @@ class DiscoveryRepository:
                 )
 
                 primary, strategy = xpath, "xpath-dynamic-name"
+
+        # Still nothing usable — same last-resort class-attribute
+        # fallback as URLDiscoveryEngine._generate_locator(), for
+        # third-party widget wrappers (Kendo/Ant/MUI date pickers,
+        # custom dropdowns, ...) with no id/name/data-testid/
+        # aria-label/placeholder at all. See build_class_based_locator()'s
+        # docstring in url_discovery_engine.py for why every class
+        # token is combined into one compound selector.
+        if primary is None:
+
+            class_attr = candidate.get("class_attr") or candidate.get("class") or ""
+
+            if class_attr:
+
+                class_locator = build_class_based_locator(tag, class_attr)
+
+                if class_locator:
+
+                    alternates.append(
+                        {"strategy": "class", "locator": class_locator}
+                    )
+
+                    primary, strategy = class_locator, "class"
 
         engine_locator = candidate.get("locator")
 

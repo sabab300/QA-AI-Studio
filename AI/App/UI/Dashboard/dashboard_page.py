@@ -20,6 +20,7 @@ from UI.Components.info_card import InfoCard
 
 from Config import settings
 from Core.metadata_manager import MetadataManager
+from Core.logger import Logger
 
 
 class DashboardPage(QWidget):
@@ -29,6 +30,7 @@ class DashboardPage(QWidget):
         super().__init__()
 
         self.metadata = MetadataManager()
+        self.logger = Logger.get_logger()
 
         self.build_ui()
 
@@ -166,6 +168,12 @@ class DashboardPage(QWidget):
             items = self.metadata.list_all()
 
         except Exception:
+
+            self.logger.exception(
+                "Dashboard failed to load knowledge items — showing "
+                "0 counts, which may NOT mean there is genuinely no "
+                "knowledge yet. Check the log above for the real cause."
+            )
 
             items = []
 

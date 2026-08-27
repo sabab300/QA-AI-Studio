@@ -191,7 +191,7 @@ def build_xpath_alternative(tag_name: str, attrs: Dict[str, Any]) -> Optional[st
         else:
             return f"//{tag_name}[@id='{element_id}']"
 
-    element_name = attrs.get("name") or ""
+        element_name = attrs.get("name") or ""
     if element_name:
         if looks_dynamically_generated(element_name):
             stable = stable_locator_prefix(element_name)
@@ -200,7 +200,122 @@ def build_xpath_alternative(tag_name: str, attrs: Dict[str, Any]) -> Optional[st
         else:
             return f"//{tag_name}[@name='{element_name}']"
 
+    class_attr = attrs.get("class_attr") or ""
+    if class_attr:
+        class_xpath = build_class_based_xpath(tag_name, class_attr)
+        if class_xpath:
+            return class_xpath
+
     return None
+
+
+# A CSS-Modules-style compiled class name: "<ComponentName>_<localName>__<hash>"
+# (webpack's css-loader default localIdentName is "[name]_[local]__[hash:base64:5]",
+# and other bundlers use the same "__<short-alnum-hash>" convention). The part
+# before "__" names the component/field and is STABLE across rebuilds; only the
+# hash suffix regenerates. This is a different shape than the id/name dynamic
+# patterns above (a UUID or a long digit/hex run), so it gets its own, narrower
+# pattern instead of overloading looks_dynamically_generated().
+_CSS_MODULE_CLASS_RE = re.compile(r"^(.+)__([0-9a-zA-Z]{4,10})$")
+
+
+def stable_class_tokens(class_attr_value: str) -> List[Any]:
+    """
+    Splits a `class` attribute value into individual class tokens and
+    classifies each one as either an exact, hand-authored class name
+    ("exact") or a CSS-Modules-style compiled name with its volatile
+    build hash stripped off ("contains" — matched with a substring
+    selector against whatever stable prefix survives).
+
+    Used only as a LAST-RESORT locator source (see
+    build_class_based_locator() / build_class_based_xpath() below) —
+    a `class` attribute is frequently shared by many elements on a
+    page (layout/utility classes), so this is only ever reached after
+    every more specific attribute (data-testid/aria-label/placeholder
+    /id/name) has already failed to produce anything, and even then
+    every token found is combined together into one selector rather
+    than trusting any single class name alone to be unique.
+    """
+
+    tokens = []
+
+    for raw_token in (class_attr_value or "").split():
+
+        match = _CSS_MODULE_CLASS_RE.match(raw_token)
+
+        if match and len(match.group(1)) >= 3:
+            tokens.append(("contains", match.group(1)))
+        else:
+            tokens.append(("exact", raw_token))
+
+    # De-dupe while preserving order, and cap how many tokens feed
+    # into one selector — past 4, a compound selector adds fragility
+    # (any single class changing breaks the whole thing) without
+    # meaningfully improving uniqueness any further.
+    seen = set()
+    deduped = []
+    for kind, value in tokens:
+        key = (kind, value)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((kind, value))
+
+    return deduped[:4]
+
+
+def build_class_based_locator(tag_name: str, class_attr_value: str) -> Optional[str]:
+    """
+    Last-resort CSS locator built from the `class` attribute, for
+    elements (very often a third-party widget's wrapper <div> — a
+    Kendo/Ant/MUI date picker, a custom dropdown, ...) that expose no
+    id, name, data-testid, aria-label, placeholder, or short visible
+    text at all. Combines every class token into ONE compound
+    selector (e.g. ".k-form-field-wrap.custom-datepicker-wrapper
+    [class*='FormComponent_smallDateInput']") rather than picking a
+    single class name, since any one class alone (especially a
+    generic wrapper/utility class) is likely to match many elements
+    on the same page. Returns None if the element has no class
+    attribute at all.
+    """
+
+    tokens = stable_class_tokens(class_attr_value)
+
+    if not tokens:
+        return None
+
+    fragments = []
+    for kind, value in tokens:
+        if kind == "exact":
+            fragments.append(f".{value}")
+        else:
+            fragments.append(f"[class*='{value}']")
+
+    return f"{tag_name}{''.join(fragments)}"
+
+
+def build_class_based_xpath(tag_name: str, class_attr_value: str) -> Optional[str]:
+    """
+    XPath equivalent of build_class_based_locator() — same last-
+    resort role, same compound-of-every-token approach, expressed as
+    XPath conditions instead of CSS.
+    """
+
+    tokens = stable_class_tokens(class_attr_value)
+
+    if not tokens:
+        return None
+
+    conditions = []
+    for kind, value in tokens:
+        if kind == "exact":
+            conditions.append(
+                f'contains(concat(" ", normalize-space(@class), " "), " {value} ")'
+            )
+        else:
+            conditions.append(f'contains(@class, "{value}")')
+
+    return f"//{tag_name}[{' and '.join(conditions)}]"
 
 
 FIELD_SELECTOR = "input:visible, select:visible, textarea:visible"
@@ -419,10 +534,12 @@ class URLDiscoveryEngine:
         Generates a reliable Playwright locator plus the strategy that
         produced it. Priority: id > name > data-testid > aria-label >
         placeholder > short visible text > type > a dynamic-id/name
-        XPath fallback > a bare "tag[type=]" selector as an absolute
-        last resort, clearly labelled "type"/"tag-only" so downstream
-        code (DiscoveryRepository) can treat it as low-confidence
-        rather than storing it as if it were unique.
+        XPath fallback > a class-attribute fallback (for third-party
+        widget wrappers with no other identifying attribute at all)
+        > a bare "tag[type=]" selector as an absolute last resort,
+        clearly labelled "type"/"tag-only" so downstream code
+        (DiscoveryRepository) can treat it as low-confidence rather
+        than storing it as if it were unique.
 
         id and name are only trusted when they don't look freshly
         generated (see looks_dynamically_generated() above) — an id
@@ -471,13 +588,29 @@ class URLDiscoveryEngine:
                     "xpath-dynamic-id",
                 )
 
-        if element_name:
-            stable = stable_locator_prefix(element_name)
-            if stable:
-                return (
-                    f"//{tag_name}[starts-with(@name, '{stable}')]",
-                    "xpath-dynamic-name",
-                )
+            if element_name:
+                stable = stable_locator_prefix(element_name)
+                if stable:
+                    return (
+                        f"//{tag_name}[starts-with(@name, '{stable}')]",
+                        "xpath-dynamic-name",
+                    )
+
+        # Still nothing usable — try the element's `class` attribute
+        # as an absolute last resort before falling back to a bare
+        # tag/type guess. Very often the reason nothing above worked
+        # is that this is a third-party widget's wrapper element (a
+        # Kendo/Ant/MUI date picker, a custom dropdown, ...) which
+        # exposes no id/name/data-testid/aria-label/placeholder at
+        # all — its class list is frequently the ONLY identifying
+        # information available. See build_class_based_locator()'s
+        # docstring for why every class token is combined together
+        # rather than trusting a single class name alone.
+        class_attr = attrs.get("class_attr") or ""
+        if class_attr:
+            class_locator = build_class_based_locator(tag_name, class_attr)
+            if class_locator:
+                return class_locator, "class"
 
         if input_type:
             return f"{tag_name}[type='{input_type}']", "type"
@@ -533,6 +666,7 @@ class URLDiscoveryEngine:
             "data_testid": attr("data-testid") or attr("data-cy"),
             "aria_label": attr("aria-label"),
             "placeholder": attr("placeholder"),
+            "class_attr": attr("class"),
             "text": text[:200],
             "required": required,
             "options": options,

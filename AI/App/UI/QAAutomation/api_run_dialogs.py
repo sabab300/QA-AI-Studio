@@ -24,6 +24,8 @@ what was expected, a request that failed outright — it stops and
 asks the operator instead of silently guessing or failing.
 """
 
+import json
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -245,7 +247,7 @@ class ApiRequestResultDialog(QDialog):
 
         self.setWindowTitle(f"{tc_number} — API Result")
 
-        self.resize(640, 560)
+        self.resize(680, 780)
 
         layout = QVBoxLayout(self)
 
@@ -260,6 +262,48 @@ class ApiRequestResultDialog(QDialog):
         header.setStyleSheet("font-weight: bold;")
 
         layout.addWidget(header)
+
+        request_headers = request.get("headers") or {}
+
+        if request_headers:
+
+            request_headers_text = "\n".join(
+                f"{k}: {v}" for k, v in request_headers.items()
+            )
+
+            request_headers_box = QTextEdit()
+
+            request_headers_box.setReadOnly(True)
+
+            request_headers_box.setFontFamily("Consolas, monospace")
+
+            request_headers_box.setPlainText(request_headers_text)
+
+            request_headers_box.setMaximumHeight(90)
+
+            layout.addWidget(QLabel("Request Headers"))
+
+            layout.addWidget(request_headers_box)
+
+        request_body_text = self._decode_request_body(request.get("data"))
+
+        if request_body_text:
+
+            request_body_box = QTextEdit()
+
+            request_body_box.setReadOnly(True)
+
+            request_body_box.setFontFamily("Consolas, monospace")
+
+            request_body_box.setPlainText(
+                self._pretty_json_or_raw(request_body_text)
+            )
+
+            request_body_box.setMaximumHeight(140)
+
+            layout.addWidget(QLabel("Request Body"))
+
+            layout.addWidget(request_body_box)
 
         if result.get("error"):
 
@@ -310,9 +354,11 @@ class ApiRequestResultDialog(QDialog):
         body_box.setFontFamily("Consolas, monospace")
 
         body_box.setPlainText(
-            result.get("response_body_text")
+            self._pretty_json_or_raw(result.get("response_body_text"))
             or "(no response body)"
         )
+
+        layout.addWidget(QLabel("Response Body"))
 
         layout.addWidget(body_box)
 
@@ -398,7 +444,57 @@ class ApiRequestResultDialog(QDialog):
 
             button_row.addWidget(cancel_btn)
 
-        layout.addLayout(button_row)
+            layout.addLayout(button_row)
+
+    @staticmethod
+    def _decode_request_body(data):
+        """
+        `request["data"]` is the raw bytes ApiAutomationRunner
+        actually sent on the wire (see
+        Core/api_automation_runner.py's build_request()) — decode it
+        back to text for display here, tolerating anything that
+        isn't valid UTF-8 rather than crashing the result dialog
+        over it.
+        """
+
+        if not data:
+
+            return ""
+
+        if isinstance(data, bytes):
+
+            try:
+
+                return data.decode("utf-8")
+
+            except Exception:
+
+                return repr(data)
+
+        return str(data)
+
+    @staticmethod
+    def _pretty_json_or_raw(text):
+        """
+        Pretty-prints `text` as indented JSON when it parses as
+        JSON (the common case for PSW's APIs), otherwise returns it
+        completely unchanged — never guesses at reformatting
+        non-JSON text, and never raises on malformed/partial JSON.
+        """
+
+        stripped = (text or "").strip()
+
+        if stripped[:1] not in ("{", "["):
+
+            return text
+
+        try:
+
+            return json.dumps(json.loads(stripped), indent=2)
+
+        except Exception:
+
+            return text
 
     def _mark_pass(self):
 

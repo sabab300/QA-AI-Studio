@@ -1,0 +1,19 @@
+{
+  "base_url": "",
+  "username": "",
+  "password": "",
+  "notes": "",
+  "slow_mo_ms": "",
+  "default_timeout_ms": "",
+  "api_auth_type": "None",
+  "api_auth_token": "",
+  "api_auth_header_name": "",
+  "api_auth_header_value": "",
+  "api_username": "",
+  "api_password": "",
+  "api_extra_headers": {},
+  "api_timeout_seconds": "",
+  "api_verify_ssl": true,
+  "api_base_url_override": "",
+  "api_variables": {}
+}

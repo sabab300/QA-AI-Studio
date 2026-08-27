@@ -71,6 +71,7 @@ from Core.api_collection_repository import (
     ApiCollectionRepository,
     API_COLLECTION_SOURCE_TYPE,
 )
+from Core.logger import Logger
 from PySide6.QtCore import Signal
 
 
@@ -639,6 +640,8 @@ class ManageKnowledgePage(QWidget):
 
         super().__init__()
 
+        self.logger = Logger.get_logger()
+
         self.manager = MetadataManager()
         self.repository = RepositoryManager()
         self.vector_store = VectorStore()
@@ -776,6 +779,12 @@ class ManageKnowledgePage(QWidget):
                 self.rows = self.manager.list_all()
 
         except Exception:
+
+            self.logger.exception(
+                "Manage Knowledge failed to load rows — showing an "
+                "empty list, which may NOT mean nothing has been "
+                "uploaded. Check the log above for the real cause."
+            )
 
             self.rows = []
 

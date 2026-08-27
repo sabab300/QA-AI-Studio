@@ -28,11 +28,18 @@ class DatabaseManager:
 
     def __init__(self):
 
-        db_folder = Path("Database")
-        db_folder.mkdir(exist_ok=True)
+        # Anchored to this file's own folder (AI/Database), not the
+        # process's current working directory — a CWD-relative path
+        # here meant the app could silently create/read a different,
+        # empty metadata.db depending on how it was launched (double
+        # -click vs. shortcut vs. terminal), with uploaded knowledge
+        # appearing to have vanished. See App/main.py's APP_DIR/AI_DIR
+        # for the same fix already applied to import resolution.
+        db_folder = Path(__file__).resolve().parent
+        db_folder.mkdir(exist_ok=True, parents=True)
 
         self.db_path = db_folder / "metadata.db"
-
+        
     def get_connection(self):
 
         conn = sqlite3.connect(self.db_path)

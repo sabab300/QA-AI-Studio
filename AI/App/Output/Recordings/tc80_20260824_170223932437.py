@@ -1,0 +1,56 @@
+import re
+from playwright.sync_api import Playwright, sync_playwright, expect
+
+
+def run(playwright: Playwright) -> None:
+    browser = playwright.chromium.launch(headless=False)
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto("https://qa.psw.gov.pk/")
+    page.locator("#navbarcontainer").get_by_role("button", name="Login").click()
+    page.get_by_role("button", name="Close").click()
+    page.get_by_role("textbox", name="username").click()
+    page.get_by_role("textbox", name="username").fill("un-00-")
+    page.get_by_role("textbox", name="username").click()
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").press("Shift+ArrowLeft")
+    page.get_by_role("textbox", name="username").fill("UN-00-0453600")
+    page.get_by_role("textbox", name="username").press("Tab")
+    page.get_by_role("textbox", name="Min. 8 characters").fill("Test@1234")
+    page.get_by_role("button", name="Login").click()
+    page.get_by_role("link", name="Single Declarations").nth(1).click()
+    page.get_by_text("1498").click()
+    page.get_by_role("row", name="6 0000227-20082026 AWB133").get_by_label("Edit").click()
+    page.get_by_role("button", name="Get IGM Info").click()
+    page.get_by_role("button", name="Try again").click()
+    page.get_by_role("textbox", name="Please enter BL number").click()
+    page.get_by_role("textbox", name="Please enter BL number").fill("AWB134")
+    page.locator(".InputTextComponent_inputButtonStyle__1r-Q4.InputTextComponent_customStyleModal__3uBKm").first.click()
+    page.get_by_role("gridcell", name="KPAF-1386-").click()
+    page.get_by_role("button", name="Get IGM Info").click()
+    page.locator(".k-icon.k-i-arrow-s").first.click()
+    page.get_by_role("option", name="Karachi Air Freight Unit").click()
+    page.get_by_role("button", name="Save & Proceed").click()
+    page.locator(".k-select").first.click()
+    page.get_by_role("option", name="United States of America -").click()
+    page.locator("div:nth-child(5) > .k-form-field > .d-flex.align-item-center > .k-widget > .k-dropdown-wrap > .k-select > .k-icon").click()
+    page.get_by_role("option", name="PK56DUIB0000000167391002").click()
+    page.locator("span > .k-form-field > .d-flex.align-item-center > .k-widget").click()
+    page.get_by_placeholder("Please select Mode of Payment").click()
+
+    # ---------------------
+    context.close()
+    browser.close()
+
+
+with sync_playwright() as playwright:
+    run(playwright)

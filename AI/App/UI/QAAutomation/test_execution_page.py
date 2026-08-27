@@ -523,23 +523,58 @@ class EnvironmentSettingsDialog(QDialog):
 
         api_layout.addLayout(api_header_buttons)
 
-        self.api_variables_label = QLabel()
-
-        self.api_variables_label.setStyleSheet("color: #64748B;")
-
-        self.api_variables_label.setWordWrap(True)
-
-        api_layout.addWidget(self.api_variables_label)
-
-        clear_variables_btn = QPushButton(
-            "Forget Remembered {{variable}} Values"
+        api_layout.addWidget(
+            QLabel(
+                "Remembered {{variable}} Values (same idea as a "
+                "Postman Environment — view, edit, add, or remove "
+                "individual values here; a real API run only asks "
+                "for one the first time it's needed)"
+            )
         )
+
+        self.api_variables_table = QTableWidget(0, 2)
+
+        self.api_variables_table.setHorizontalHeaderLabels(
+            ["Variable Name", "Value"]
+        )
+
+        self.api_variables_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+
+        self.api_variables_table.setMinimumHeight(100)
+
+        api_layout.addWidget(self.api_variables_table)
+
+        api_variable_buttons = QHBoxLayout()
+
+        add_api_variable_btn = QPushButton("Add Variable")
+
+        add_api_variable_btn.clicked.connect(
+            lambda: self._add_api_variable_row()
+        )
+
+        remove_api_variable_btn = QPushButton("Remove Selected")
+
+        remove_api_variable_btn.clicked.connect(
+            self._remove_api_variable_row
+        )
+
+        clear_variables_btn = QPushButton("Remove All")
 
         clear_variables_btn.clicked.connect(
             self._clear_remembered_variables
         )
 
-        api_layout.addWidget(clear_variables_btn)
+        api_variable_buttons.addWidget(add_api_variable_btn)
+
+        api_variable_buttons.addWidget(remove_api_variable_btn)
+
+        api_variable_buttons.addWidget(clear_variables_btn)
+
+        api_variable_buttons.addStretch()
+
+        api_layout.addLayout(api_variable_buttons)
 
         layout.addWidget(api_group)
 
@@ -600,7 +635,7 @@ class EnvironmentSettingsDialog(QDialog):
             self.api_auth_type.currentText()
         )
 
-        self._refresh_api_variables_label(data.get("api_variables") or {})
+        self._load_api_variables_table(data.get("api_variables") or {})
 
 
         buttons = QDialogButtonBox(
@@ -680,28 +715,63 @@ class EnvironmentSettingsDialog(QDialog):
 
         return headers
 
-    def _refresh_api_variables_label(self, variables):
+    def _load_api_variables_table(self, variables):
 
-        if not variables:
+        self.api_variables_table.setRowCount(0)
 
-            self.api_variables_label.setText(
-                "No {{variable}} values remembered yet — you'll be "
-                "asked the first time a real API run needs one."
-            )
+        for name, value in sorted(variables.items()):
 
-        else:
+            self._add_api_variable_row(name, value)
 
-            names = ", ".join(sorted(variables.keys()))
+    def _add_api_variable_row(self, name="", value=""):
 
-            self.api_variables_label.setText(
-                f"Remembered values for: {names}"
-            )
+        row = self.api_variables_table.rowCount()
+
+        self.api_variables_table.insertRow(row)
+
+        self.api_variables_table.setItem(row, 0, QTableWidgetItem(name))
+
+        self.api_variables_table.setItem(row, 1, QTableWidgetItem(value))
+
+    def _remove_api_variable_row(self):
+
+        rows = sorted(
+            {
+                index.row()
+                for index in self.api_variables_table.selectedIndexes()
+            },
+            reverse=True,
+        )
+
+        for row in rows:
+
+            self.api_variables_table.removeRow(row)
+
+    def _collect_api_variables(self):
+
+        variables = {}
+
+        for row in range(self.api_variables_table.rowCount()):
+
+            name_item = self.api_variables_table.item(row, 0)
+
+            value_item = self.api_variables_table.item(row, 1)
+
+            name = name_item.text().strip() if name_item else ""
+
+            if not name:
+
+                continue
+
+            variables[name] = value_item.text() if value_item else ""
+
+        return variables
 
     def _clear_remembered_variables(self):
 
         confirm = QMessageBox.question(
             self,
-            "Forget Remembered Values?",
+            "Remove All Remembered Values?",
             "This clears every {{variable}} value remembered from "
             "past API runs — you'll be asked again the next time "
             "each one is needed. Continue?",
@@ -712,21 +782,7 @@ class EnvironmentSettingsDialog(QDialog):
 
             return
 
-        data = self.config_manager.load()
-
-        data["api_variables"] = {}
-
-        self.config_manager.save(
-            base_url=data.get("base_url", ""),
-            username=data.get("username", ""),
-            password=data.get("password", ""),
-            notes=data.get("notes", ""),
-            slow_mo_ms=data.get("slow_mo_ms", ""),
-            default_timeout_ms=data.get("default_timeout_ms", ""),
-            api_variables={},
-        )
-
-        self._refresh_api_variables_label({})
+        self.api_variables_table.setRowCount(0)
 
     def save(self):
 
@@ -790,6 +846,7 @@ class EnvironmentSettingsDialog(QDialog):
             api_timeout_seconds=api_timeout_text,
             api_verify_ssl=self.api_verify_ssl.isChecked(),
             api_base_url_override=self.api_base_url_override.text().strip(),
+            api_variables=self._collect_api_variables(),
         )
 
         self.accept()
@@ -897,6 +954,36 @@ class ViewScriptDialog(QDialog):
         note.setWordWrap(True)
 
         layout.addWidget(note)
+
+        if self.automation_type == "API":
+
+            api_note = QLabel(
+                "IMPORTANT: this script is for reference / manual "
+                "review only. \"Execute Against Real Server\" does "
+                "NOT run this Python code and does NOT read any edit "
+                "you make here — it always rebuilds the request "
+                "fresh from the ORIGINAL imported endpoint (method, "
+                "URL, headers, body), exactly as captured when the "
+                "API Collection was imported. To change what "
+                "actually gets sent (e.g. a signature, a header, or "
+                "a body value), edit the endpoint itself: Knowledge "
+                "Hub -> Manage Knowledge -> find it under its API "
+                "Collection -> Edit. A value you'll update often "
+                "(like a signature) can be set to {{variableName}} "
+                "there, then updated anytime via Settings -> Test "
+                "Environment Settings -> Remembered {{variable}} "
+                "Values, without re-editing the endpoint each time."
+            )
+
+            api_note.setWordWrap(True)
+
+            api_note.setStyleSheet(
+                "color: #92400E; font-weight: bold; "
+                "background-color: #FEF3C7; padding: 8px; "
+                "border-radius: 4px;"
+            )
+
+            layout.addWidget(api_note)
 
         source_row = QHBoxLayout()
 
