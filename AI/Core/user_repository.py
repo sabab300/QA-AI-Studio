@@ -21,6 +21,7 @@ role do X on screen Y" a single indexed lookup instead of a JSON
 blob that has to be parsed and kept in sync by hand.
 """
 
+import sqlite3
 from datetime import datetime
 
 from Database.db_manager import DatabaseManager
@@ -134,6 +135,23 @@ class UserRepository:
             )
             """
         )
+
+        # Additive, safe-to-repeat migrations for columns introduced
+        # after the tables above first shipped. SQLite can't add these
+        # inline to an existing CREATE TABLE IF NOT EXISTS once a real
+        # database already has the table, so — same pattern as
+        # Database/schema.py's KNOWLEDGE_ITEMS_MIGRATION — each ALTER
+        # is wrapped so "duplicate column" on a database that already
+        # has it is silently ignored.
+        for migration in (
+            "ALTER TABLE users ADD COLUMN contact_number TEXT",
+            "ALTER TABLE users ADD COLUMN is_deleted INTEGER DEFAULT 0",
+            "ALTER TABLE roles ADD COLUMN is_deleted INTEGER DEFAULT 0",
+        ):
+            try:
+                cursor.execute(migration)
+            except sqlite3.OperationalError:
+                pass
 
         cursor.execute(
             """
@@ -310,7 +328,7 @@ class UserRepository:
 
         return row
 
-    def list_users(self):
+    def list_users(self, include_deleted=False):
 
         conn = self.db.get_connection()
 
@@ -320,13 +338,15 @@ class UserRepository:
 
         cursor.execute(
             """
-            SELECT u.id, u.username, u.email, u.full_name, u.is_active,
-                   u.must_change_password, u.created_date,
-                   u.last_login_date, r.id AS role_id, r.name AS role_name
+            SELECT u.id, u.username, u.email, u.full_name, u.contact_number,
+                   u.is_active, u.is_deleted, u.must_change_password,
+                   u.created_date, u.last_login_date,
+                   r.id AS role_id, r.name AS role_name
             FROM users u
             LEFT JOIN roles r ON r.id = u.role_id
-            ORDER BY u.username
             """
+            + ("" if include_deleted else "WHERE COALESCE(u.is_deleted, 0) = 0 ")
+            + "ORDER BY u.username"
         )
 
         rows = cursor.fetchall()
@@ -335,7 +355,10 @@ class UserRepository:
 
         return rows
 
-    def create_user(self, username, email, full_name, password, role_id):
+    def create_user(
+        self, username, email, full_name, password, role_id,
+        contact_number="",
+    ):
 
         from Core.security import hash_password
 
@@ -350,13 +373,13 @@ class UserRepository:
         cursor.execute(
             """
             INSERT INTO users
-            (username, email, full_name, password_hash, password_salt,
-             role_id, is_active, must_change_password, created_date,
-             modified_date)
-            VALUES (?,?,?,?,?,?,1,1,?,?)
+            (username, email, full_name, contact_number, password_hash,
+             password_salt, role_id, is_active, must_change_password,
+             created_date, modified_date)
+            VALUES (?,?,?,?,?,?,?,1,1,?,?)
             """,
             (
-                username, email, full_name, password_hash,
+                username, email, full_name, contact_number, password_hash,
                 password_salt, role_id, now, now,
             ),
         )
@@ -369,6 +392,49 @@ class UserRepository:
 
         return new_id
 
+    def update_user_profile(
+        self, user_id, username=None, email=None, full_name=None,
+        contact_number=None, role_id=None,
+    ):
+        """
+        Partial update — every field is optional so the caller can send
+        only what actually changed. The user's id itself is never
+        editable (it isn't a column that can be targeted here at all).
+        """
+
+        fields = {
+            "username": username,
+            "email": email,
+            "full_name": full_name,
+            "contact_number": contact_number,
+            "role_id": role_id,
+        }
+
+        fields = {k: v for k, v in fields.items() if v is not None}
+
+        if not fields:
+
+            return
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        set_clause = ", ".join(f"{k}=?" for k in fields.keys())
+
+        values = list(fields.values()) + [now, user_id]
+
+        cursor.execute(
+            f"UPDATE users SET {set_clause}, modified_date=? WHERE id=?",
+            values,
+        )
+
+        conn.commit()
+
+        conn.close()
+
     def set_active(self, user_id, is_active):
 
         self._update_field(user_id, "is_active", 1 if is_active else 0)
@@ -376,6 +442,79 @@ class UserRepository:
     def update_role(self, user_id, role_id):
 
         self._update_field(user_id, "role_id", role_id)
+
+    def soft_delete_user(self, user_id):
+        """Marks the user deleted and inactive — hidden from the active
+        grid and immediately unable to authenticate, but the row (and
+        every audit_logs entry that references it) is preserved.
+
+        Also mangles the username so it's freed up for reuse — same
+        reasoning as soft_delete_role: username is UNIQUE at the schema
+        level regardless of is_deleted, so without this a deleted
+        account would permanently block ever creating a new user with
+        that username again. The mangled username never surfaces
+        anywhere (list_users() excludes deleted rows, and it can no
+        longer log in under either name), and audit_logs already has
+        the real username via the caller's lookup before this runs."""
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        cursor.execute("SELECT username FROM users WHERE id=?", (user_id,))
+
+        row = cursor.fetchone()
+
+        mangled_username = f"{row[0]}__deleted_{user_id}" if row else None
+
+        if mangled_username:
+
+            cursor.execute(
+                "UPDATE users SET is_deleted=1, is_active=0, username=?, "
+                "modified_date=? WHERE id=?",
+                (mangled_username, now, user_id),
+            )
+
+        else:
+
+            cursor.execute(
+                "UPDATE users SET is_deleted=1, is_active=0, "
+                "modified_date=? WHERE id=?",
+                (now, user_id),
+            )
+
+        conn.commit()
+
+        conn.close()
+
+    def count_active_admins(self, admin_role_id, exclude_user_id=None):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        query = (
+            "SELECT COUNT(*) FROM users WHERE role_id=? AND is_active=1 "
+            "AND COALESCE(is_deleted,0)=0"
+        )
+
+        params = [admin_role_id]
+
+        if exclude_user_id is not None:
+
+            query += " AND id != ?"
+
+            params.append(exclude_user_id)
+
+        cursor.execute(query, params)
+
+        count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return count
 
     def set_password(self, user_id, password, must_change_password=False):
 
@@ -433,7 +572,7 @@ class UserRepository:
     # Roles / Permissions
     # --------------------------------------------------
 
-    def list_roles(self):
+    def list_roles(self, include_deleted=False):
 
         conn = self.db.get_connection()
 
@@ -443,7 +582,8 @@ class UserRepository:
 
         cursor.execute(
             "SELECT id, name, description, is_system FROM roles "
-            "ORDER BY name"
+            + ("" if include_deleted else "WHERE COALESCE(is_deleted, 0) = 0 ")
+            + "ORDER BY name"
         )
 
         roles = cursor.fetchall()
@@ -457,7 +597,8 @@ class UserRepository:
             )
 
             role["permissions"] = [
-                {"resource": r, "action": a} for r, a in cursor.fetchall()
+                {"resource": row["resource"], "action": row["action"]}
+                for row in cursor.fetchall()
             ]
 
         conn.close()
@@ -505,6 +646,97 @@ class UserRepository:
         conn.close()
 
         return new_id
+
+    def get_role_by_id(self, role_id):
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM roles WHERE id=?", (role_id,))
+
+        row = cursor.fetchone()
+
+        conn.close()
+
+        return row
+
+    def get_role_by_name(self, name):
+        """Only matches an active (non-deleted) role — a soft-deleted
+        role's name is freed up for reuse (see soft_delete_role)."""
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT * FROM roles WHERE name=? AND COALESCE(is_deleted,0)=0",
+            (name,),
+        )
+
+        row = cursor.fetchone()
+
+        conn.close()
+
+        return row
+
+    def count_users_with_role(self, role_id):
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE role_id=? AND "
+            "COALESCE(is_deleted,0)=0",
+            (role_id,),
+        )
+
+        count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return count
+
+    def soft_delete_role(self, role_id):
+        """Also frees up the role's name for reuse — roles.name is
+        UNIQUE at the schema level, and that constraint doesn't know
+        about is_deleted, so a deleted role would otherwise permanently
+        block ever creating a new role with the same name again. The
+        mangled name is never shown anywhere (list_roles() excludes
+        deleted rows), and audit_logs already recorded the real name
+        via the caller's own lookup before this runs."""
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM roles WHERE id=?", (role_id,))
+
+        row = cursor.fetchone()
+
+        mangled_name = f"{row[0]}__deleted_{role_id}" if row else None
+
+        if mangled_name:
+
+            cursor.execute(
+                "UPDATE roles SET is_deleted=1, name=? WHERE id=?",
+                (mangled_name, role_id),
+            )
+
+        else:
+
+            cursor.execute(
+                "UPDATE roles SET is_deleted=1 WHERE id=?", (role_id,)
+            )
+
+        conn.commit()
+
+        conn.close()
 
     def set_role_permissions(self, role_id, permissions):
         """
@@ -580,6 +812,45 @@ class UserRepository:
         conn.close()
 
         return rows
+
+    @staticmethod
+    def summarize_permissions(permissions):
+        """
+        Turns a flat [{"resource":..,"action":..}, ...] list into a
+        human-readable string grouped by resource, e.g.:
+        "knowledge: View, Create; automation: View, Execute" — used to
+        give audit log entries actual content instead of just
+        "Updated permissions for role_id=2".
+        """
+
+        grouped = {}
+
+        for entry in permissions:
+
+            grouped.setdefault(entry["resource"], []).append(entry["action"])
+
+        if not grouped:
+
+            return "no permissions (all access revoked)"
+
+        parts = []
+
+        for resource in RESOURCES:
+
+            if resource not in grouped:
+
+                continue
+
+            actions = sorted(
+                grouped[resource],
+                key=lambda a: ACTIONS.index(a) if a in ACTIONS else 99,
+            )
+
+            actions_label = ", ".join(a.capitalize() for a in actions)
+
+            parts.append(f"{resource}: {actions_label}")
+
+        return "; ".join(parts)
 
     @staticmethod
     def _dict_factory(cursor, row):
