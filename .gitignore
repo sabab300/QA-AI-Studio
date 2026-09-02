@@ -87,3 +87,28 @@ git_objects.txt
 largest_files.txt
 project_tree.txt
 project_tree.zip
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime databases
+AI-Web/Database/*.db
+AI-Web/Database/*.sqlite3
+AI-Web/Database/chroma_db/
+
+# Secrets
+AI-Web/Database/*.key
+
+# Downloaded ML models
+AI-Web/Models/
+AI/Models/
+
+# Runtime repositories/generated documents
+AI-Web/Repository/
+
+# IDE / temporary
+.vscode/
+*.log

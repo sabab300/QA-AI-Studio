@@ -20,41 +20,21 @@ Web/routers/knowledge_router.py — so its placeholder is removed
 from here.
 
 v1.2: Milestone 3 (QA Automation — API Collections/Git/Test Cases/
-Execute) is real now — see Web/routers/automation_router.py.
-Milestone 4 (AI Assistant backend) is real now — see
-Web/routers/ai_assistant_router.py. Both placeholders removed from
-here. QA Engineering (AI-generated test case creation) and Dashboard/
-Settings remain placeholders.
+Execute), Milestone 4 (AI Assistant), Milestone 5 (Dashboard), and
+Milestone 2 (QA Engineering) are real routers. Settings remains a
+placeholder.
 """
 
 from fastapi import APIRouter, Depends
 
 from Web.deps import require_permission
 
-qa_engineering_router = APIRouter(prefix="/api/qa-engineering", tags=["qa-engineering"])
-dashboard_router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 def _not_implemented(milestone: str):
 
     return {"status": "not_implemented", "milestone": milestone}
-
-
-@qa_engineering_router.get("/status")
-def qa_engineering_status(
-    current_user=Depends(require_permission("qa_engineering", "view"))
-):
-
-    return _not_implemented("Milestone 2 - QA Engineering")
-
-
-@dashboard_router.get("/status")
-def dashboard_status(
-    current_user=Depends(require_permission("dashboard", "view"))
-):
-
-    return _not_implemented("Milestone 5 - Dashboard")
 
 
 @settings_router.get("/status")

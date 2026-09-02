@@ -56,6 +56,14 @@ class CompareVersionsRequest(BaseModel):
     knowledge_id_b: int
 
 
+class CreateDomainRequest(BaseModel):
+    name: str
+
+
+class CreateModuleRequest(BaseModel):
+    name: str
+
+
 def _audit(current_user, action, detail):
 
     UserRepository().write_audit_log(
@@ -79,12 +87,41 @@ def list_domains(current_user=Depends(require_permission("knowledge", "view"))):
     return {"domains": KnowledgeRepository().list_domains()}
 
 
+@router.post("/domains")
+def create_domain(
+    payload: CreateDomainRequest,
+    current_user=Depends(require_permission("knowledge", "create")),
+):
+    try:
+        domain_id = KnowledgeRepository().create_domain(payload.name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    _audit(current_user, "CREATE_DOMAIN", f"Created domain '{payload.name}'")
+    return {"status": "success", "domain": payload.name, "domain_id": domain_id}
+
+
 @router.get("/domains/{domain}/modules")
 def list_modules(
     domain: str, current_user=Depends(require_permission("knowledge", "view"))
 ):
 
     return {"modules": KnowledgeRepository().list_modules(domain)}
+
+
+@router.post("/domains/{domain}/modules")
+def create_module(
+    domain: str,
+    payload: CreateModuleRequest,
+    current_user=Depends(require_permission("knowledge", "create")),
+):
+    try:
+        module_id = KnowledgeRepository().create_module(domain, payload.name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    _audit(current_user, "CREATE_MODULE", f"Created module '{payload.name}' under domain '{domain}'")
+    return {"status": "success", "domain": domain, "module": payload.name, "module_id": module_id}
 
 
 @router.get("/items")

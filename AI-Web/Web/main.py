@@ -32,8 +32,11 @@ CORSMiddleware's allow_origins must be locked down to the real
 frontend origin(s) — flagged again in the roadmap document.
 """
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from Core.user_repository import UserRepository
 from Database.db_manager import DatabaseManager
@@ -46,9 +49,9 @@ from Web.routers.users_router import (
 from Web.routers.knowledge_router import router as knowledge_router
 from Web.routers.automation_router import router as automation_router
 from Web.routers.ai_assistant_router import router as ai_assistant_router
+from Web.routers.dashboard_router import router as dashboard_router
+from Web.routers.qa_engineering_router import router as qa_engineering_router
 from Web.routers.placeholder_routers import (
-    qa_engineering_router,
-    dashboard_router,
     settings_router,
 )
 
@@ -104,3 +107,9 @@ app.include_router(automation_router)
 app.include_router(ai_assistant_router)
 app.include_router(dashboard_router)
 app.include_router(settings_router)
+
+# The redesign frontend is deliberately served by the same local process as
+# the API.  Keeping this mount last ensures every /api/... route wins first.
+frontend_dir = Path(__file__).resolve().parents[1] / "Frontend"
+if frontend_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")

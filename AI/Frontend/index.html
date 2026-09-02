@@ -1,0 +1,2750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA AI Studio Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ---------- Tokens ---------- */
+  :root{
+    --ink:#12181F; --ink-muted:#5B6472; --ink-faint:#8A93A3;
+    --canvas:#F5F6F9; --surface:#FFFFFF; --surface-sunken:#EEF0F4;
+    --border:#DFE3EA; --border-strong:#C7CDD9;
+    --accent:#2455D9; --accent-deep:#17399E; --accent-soft:#E8EEFC;
+    --success:#157F53; --success-soft:#E4F5EC;
+    --danger:#C22E2E; --danger-soft:#FBE7E7;
+    --warning:#B5720B; --warning-soft:#FCF0DA;
+    --focus:#8AAAF0;
+    --chrome-bg:#0D1420; --chrome-bg-active:#172033; --chrome-text:#C9D2E0;
+    --chrome-text-strong:#FFFFFF; --chrome-text-muted:#7C8AA3; --chrome-border:#1D2636;
+    --chrome-accent:#5B8DEF;
+    --shadow-1: 0 1px 2px rgba(18,24,31,0.06);
+    --shadow-2: 0 8px 24px rgba(18,24,31,0.14);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#E8EBF1; --ink-muted:#A8B0BE; --ink-faint:#6B7280;
+      --canvas:#0B0F17; --surface:#131A26; --surface-sunken:#0F1520;
+      --border:#232C3B; --border-strong:#2E3A4D;
+      --accent:#5B8DEF; --accent-deep:#7FA6F5; --accent-soft:#1B2740;
+      --success:#35B583; --success-soft:#10301F;
+      --danger:#E5605A; --danger-soft:#3A1414;
+      --warning:#E0A83E; --warning-soft:#3A2A0C;
+      --focus:#5B8DEF;
+      --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+      --shadow-2: 0 12px 32px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#E8EBF1; --ink-muted:#A8B0BE; --ink-faint:#6B7280;
+    --canvas:#0B0F17; --surface:#131A26; --surface-sunken:#0F1520;
+    --border:#232C3B; --border-strong:#2E3A4D;
+    --accent:#5B8DEF; --accent-deep:#7FA6F5; --accent-soft:#1B2740;
+    --success:#35B583; --success-soft:#10301F;
+    --danger:#E5605A; --danger-soft:#3A1414;
+    --warning:#E0A83E; --warning-soft:#3A2A0C;
+    --focus:#5B8DEF;
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+    --shadow-2: 0 12px 32px rgba(0,0,0,0.5);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--canvas); color:var(--ink);
+    font-family:"Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.font-display{ font-family:"Sora","Public Sans",sans-serif; text-wrap:balance; }
+  .mono, code, .num{ font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, monospace; font-variant-numeric:tabular-nums; }
+  button{ font-family:inherit; }
+  a{ color:var(--accent); }
+  ::selection{ background:var(--accent-soft); }
+  :focus-visible{ outline:2px solid var(--focus); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){ *{ animation-duration:0.001ms !important; transition-duration:0.001ms !important; } }
+
+  /* ---------- Shell ---------- */
+  .shell{ display:flex; height:100vh; overflow:hidden; }
+
+  /* ---------- Sidebar (dark chrome, fixed across themes) ---------- */
+  .sidebar{
+    width:236px; flex-shrink:0; background:var(--chrome-bg); color:var(--chrome-text);
+    display:flex; flex-direction:column; border-right:1px solid var(--chrome-border);
+    transition:width .18s ease;
+  }
+  .shell.collapsed .sidebar{ width:72px; }
+  .brand{ display:flex; align-items:center; gap:10px; padding:18px 16px; border-bottom:1px solid var(--chrome-border); }
+  .brand-mark{
+    width:32px; height:32px; border-radius:8px; flex-shrink:0;
+    background:linear-gradient(135deg, var(--chrome-accent), var(--accent-deep));
+    display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-family:"Sora",sans-serif; font-size:15px;
+  }
+  .brand-text{ overflow:hidden; white-space:nowrap; }
+  .brand-text .name{ font-family:"Sora",sans-serif; font-weight:700; font-size:14.5px; color:var(--chrome-text-strong); }
+  .brand-text .tag{ font-size:11px; color:var(--chrome-text-muted); }
+  .shell.collapsed .brand-text{ display:none; }
+
+  .nav{ flex:1; padding:10px 10px; overflow-y:auto; }
+  .nav-item{
+    display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:8px;
+    color:var(--chrome-text); text-decoration:none; cursor:pointer; margin-bottom:2px;
+    border:1px solid transparent; white-space:nowrap; overflow:hidden;
+  }
+  .nav-item svg{ flex-shrink:0; width:18px; height:18px; }
+  .nav-item span.label{ font-size:13.5px; font-weight:500; overflow:hidden; text-overflow:ellipsis; }
+  .shell.collapsed .nav-item span.label{ display:none; }
+  .shell.collapsed .nav-item{ justify-content:center; }
+  .nav-item:hover{ background:var(--chrome-bg-active); }
+  .nav-item.active{ background:var(--chrome-bg-active); color:var(--chrome-text-strong); border-color:var(--chrome-border); }
+  .nav-item.active svg{ color:var(--chrome-accent); }
+  .nav-group-label{ font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--chrome-text-muted); padding:14px 12px 6px; }
+  .shell.collapsed .nav-group-label{ display:none; }
+
+  .sidebar-foot{ border-top:1px solid var(--chrome-border); padding:10px; display:flex; flex-direction:column; gap:4px; }
+  .foot-btn{
+    display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:8px; color:var(--chrome-text);
+    background:transparent; border:none; cursor:pointer; text-align:left; font-size:13px; white-space:nowrap; overflow:hidden;
+  }
+  .foot-btn:hover{ background:var(--chrome-bg-active); }
+  .foot-btn svg{ width:17px; height:17px; flex-shrink:0; }
+  .shell.collapsed .foot-btn span{ display:none; }
+  .shell.collapsed .foot-btn{ justify-content:center; }
+  .profile{ display:flex; align-items:center; gap:10px; padding:10px 12px; }
+  .avatar{ width:28px; height:28px; border-radius:50%; background:var(--accent-deep); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex-shrink:0; }
+  .profile-text{ overflow:hidden; }
+  .profile-text .pname{ font-size:12.5px; font-weight:600; color:var(--chrome-text-strong); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .profile-text .prole{ font-size:11px; color:var(--chrome-text-muted); }
+  .shell.collapsed .profile-text{ display:none; }
+
+  /* ---------- Main ---------- */
+  .main{ flex:1; min-width:0; display:flex; flex-direction:column; height:100vh; }
+
+  .topbar{
+    display:flex; align-items:center; gap:14px; padding:14px 24px; border-bottom:1px solid var(--border);
+    background:var(--surface); flex-shrink:0;
+  }
+  .collapse-btn{
+    width:32px; height:32px; border-radius:7px; border:1px solid var(--border); background:var(--surface);
+    color:var(--ink-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
+  }
+  .collapse-btn:hover{ background:var(--surface-sunken); }
+  .page-title{ font-size:19px; font-weight:700; margin:0; }
+  .page-sub{ font-size:12.5px; color:var(--ink-muted); margin-top:1px; }
+  .topbar-spacer{ flex:1; }
+  .search{
+    display:flex; align-items:center; gap:8px; background:var(--surface-sunken); border:1px solid var(--border);
+    border-radius:8px; padding:7px 12px; width:260px; color:var(--ink-faint);
+  }
+  .search input{ border:none; background:transparent; outline:none; font-size:13px; color:var(--ink); width:100%; }
+  .env-chip{
+    display:flex; align-items:center; gap:7px; background:var(--accent-soft); color:var(--accent-deep);
+    border-radius:999px; padding:6px 12px; font-size:12.5px; font-weight:600;
+  }
+  .env-dot{ width:7px; height:7px; border-radius:50%; background:var(--success); }
+  .icon-btn{
+    width:34px; height:34px; border-radius:8px; border:1px solid var(--border); background:var(--surface);
+    color:var(--ink-muted); display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .icon-btn:hover{ background:var(--surface-sunken); color:var(--ink); }
+
+  .tabstrip{
+    display:flex; gap:2px; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0;
+    overflow-x:auto;
+  }
+  .tab{
+    padding:11px 16px; font-size:13.5px; font-weight:600; color:var(--ink-muted); cursor:pointer; border:none; background:none;
+    border-bottom:2px solid transparent; white-space:nowrap;
+  }
+  .tab:hover{ color:var(--ink); }
+  .tab.active{ color:var(--accent); border-bottom-color:var(--accent); }
+
+  .workspace{ flex:1; overflow:hidden; padding:0; display:flex; flex-direction:column; min-height:0; }
+  .panel{ display:none; flex:1; min-height:0; flex-direction:column; gap:16px; padding:16px; }
+  .panel.active{ display:flex; }
+  /* Panels holding exactly one full-bleed grid card get zero inner
+     padding too, so that card's own border sits flush against the
+     tabstrip above, the sidebar, and the window edges — no surrounding
+     margin at all, per the "grid borders should attach to section
+     borders" requirement. Panels with more than one card/section (KPI
+     rows, side-by-side layouts) keep the 16px above for breathing room
+     between them and the chrome. */
+  .panel.flush{ padding:0; gap:0; }
+  .panel.flush .card{ border-radius:0; border:none; box-shadow:none; flex:1; }
+
+  /* ---------- Nested (in-panel) tab strips ----------
+     Same visual language as the page-level .tabstrip, used when a single
+     tab's content is itself made of more than one feature/grid — each
+     gets its own sub-tab instead of sharing the screen, so nothing
+     competes for space or gets clipped at normal zoom. */
+  .tabstrip.nested{ margin:0; }
+  .subworkspace{ flex:1; overflow:hidden; display:flex; flex-direction:column; min-height:0; }
+
+  /* ---------- Cards / KPIs ---------- */
+  .kpi-row{ display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; }
+  .kpi{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px;
+    box-shadow:var(--shadow-1); min-width:0;
+  }
+  .kpi .kpi-label{ font-size:11.5px; color:var(--ink-muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  .kpi .kpi-value{ font-family:"Sora",sans-serif; font-size:22px; font-weight:700; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .kpi .kpi-delta{ font-size:11.5px; margin-top:4px; color:var(--success); }
+  .kpi .kpi-delta.flat{ color:var(--ink-faint); }
+
+  .grid-2{ display:grid; grid-template-columns:1.1fr .9fr; gap:14px; flex:1; min-height:0; }
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow-1);
+    display:flex; flex-direction:column; min-height:0; overflow:hidden;
+  }
+  .card-head{ padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; gap:12px; flex-wrap:wrap; }
+  .card-head h3{ margin:0; font-size:13.5px; font-weight:650; }
+  .card-body{ padding:14px 16px; overflow:auto; flex:1; min-height:0; }
+  .link-btn{ font-size:12.5px; font-weight:600; color:var(--accent); background:none; border:none; cursor:pointer; }
+
+  /* donut */
+  .donut-wrap{ display:flex; align-items:center; gap:22px; }
+  .donut-legend{ display:flex; flex-direction:column; gap:10px; }
+  .legend-row{ display:flex; align-items:center; gap:8px; font-size:12.5px; }
+  .legend-dot{ width:9px; height:9px; border-radius:2px; }
+  .legend-row .num{ margin-left:auto; font-weight:600; padding-left:14px; }
+
+  .bar-list{ display:flex; flex-direction:column; gap:12px; }
+  .bar-row .bar-top{ display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px; }
+  .bar-row .bar-top .num{ color:var(--ink-muted); }
+  .bar-track{ height:7px; border-radius:4px; background:var(--surface-sunken); overflow:hidden; }
+  .bar-fill{ height:100%; background:var(--accent); border-radius:4px; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{
+    text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-muted);
+    font-weight:650; padding:7px 10px; border-bottom:1px solid var(--border); background:var(--surface); position:sticky; top:0;
+  }
+  tbody td{ padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  th.col-check, td.col-check{ width:34px; padding-left:12px; padding-right:0; }
+  input[type="checkbox"].row-check, input[type="checkbox"].row-check-all{ width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
+
+  /* ---------- Pagination bar (shared by every data grid) ---------- */
+  .pg-bar{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    padding:8px 14px; border-top:1px solid var(--border); background:var(--surface); flex-shrink:0; font-size:12px;
+  }
+  .pg-info{ color:var(--ink-muted); white-space:nowrap; }
+  .pg-controls{ display:flex; align-items:center; gap:4px; }
+  .pg-btn{
+    min-width:26px; height:26px; padding:0 6px; border:1px solid var(--border); background:var(--surface);
+    border-radius:6px; font-size:12px; cursor:pointer; color:var(--ink-muted);
+  }
+  .pg-btn:hover:not(:disabled){ background:var(--surface-sunken); color:var(--ink); }
+  .pg-btn.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .pg-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .pg-size{
+    font-size:12px; border:1px solid var(--border); border-radius:6px; padding:5px 7px;
+    background:var(--surface); color:var(--ink); margin-left:6px;
+  }
+  tbody tr:hover{ background:var(--surface-sunken); }
+  tbody tr.selected{ background:var(--accent-soft); }
+  .cell-ellipsis{ max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px; font-size:11.5px; font-weight:600; white-space:nowrap; }
+  .pill-pass{ background:var(--success-soft); color:var(--success); }
+  .pill-fail{ background:var(--danger-soft); color:var(--danger); }
+  .pill-notrun{ background:var(--surface-sunken); color:var(--ink-muted); }
+  .pill-blocked{ background:var(--warning-soft); color:var(--warning); }
+  .pill-neutral{ background:var(--accent-soft); color:var(--accent-deep); }
+  .pill-dot{ width:6px; height:6px; border-radius:50%; background:currentColor; }
+  /* Solid, fully-colored status pills (Active/Disabled) — more visible at a
+     glance than the soft/pastel pills used for Pass/Fail/Blocked. */
+  .pill-status-active{ background:var(--success); color:#fff; }
+  .pill-status-inactive{ background:var(--danger); color:#fff; }
+
+  .row-actions{ display:flex; gap:4px; justify-content:flex-end; }
+  .row-actions button{
+    width:28px; height:28px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink-muted);
+    cursor:pointer; display:flex; align-items:center; justify-content:center; position:relative;
+  }
+  .row-actions button:hover{ background:var(--surface-sunken); border-color:var(--border); color:var(--accent); }
+  .row-actions button[data-tip]:hover::after{
+    content:attr(data-tip); position:absolute; bottom:130%; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:var(--canvas); font-size:11px; padding:4px 7px; border-radius:5px; white-space:nowrap; box-shadow:var(--shadow-2);
+  }
+
+  /* Filter bar */
+  .filterbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; flex-shrink:0; }
+  select, .btn, .fbar-search{
+    font-size:12.5px; border:1px solid var(--border); background:var(--surface); border-radius:7px; padding:7px 10px; color:var(--ink);
+  }
+  .btn{ font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .btn:hover{ background:var(--surface-sunken); }
+  .btn-primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn-primary:hover{ background:var(--accent-deep); border-color:var(--accent-deep); }
+  .chip-filter{ display:flex; gap:6px; }
+  .chip{ padding:6px 12px; border-radius:999px; border:1px solid var(--border); font-size:12px; font-weight:600; color:var(--ink-muted); cursor:pointer; background:var(--surface); }
+  .chip.active{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-deep); }
+  .fbar-spacer{ flex:1; }
+  .fbar-search{ display:flex; align-items:center; gap:6px; width:200px; }
+  .fbar-search input{ border:none; outline:none; background:none; width:100%; font-size:12.5px; color:var(--ink); }
+
+  /* Master-detail split for Test Cases */
+  .split{ display:grid; grid-template-columns:1fr 380px; gap:14px; flex:1; min-height:0; }
+  .split .card{ min-height:0; }
+  .table-scroll{ overflow:auto; flex:1; min-height:0; }
+
+  .detail-head{ padding:14px 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .detail-head .tc-id{ font-family:"JetBrains Mono",monospace; font-size:11.5px; color:var(--accent); font-weight:600; }
+  .detail-head h3{ margin:4px 0 6px; font-size:15px; }
+  .detail-tabs{ display:flex; gap:14px; padding:0 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .dtab{ padding:9px 0; font-size:12.5px; font-weight:600; color:var(--ink-muted); border-bottom:2px solid transparent; cursor:pointer; background:none; border-top:none; border-left:none; border-right:none; }
+  .dtab.active{ color:var(--accent); border-bottom-color:var(--accent); }
+  .detail-body{ padding:14px 16px; overflow:auto; flex:1; min-height:0; }
+  .detail-panel-view{ display:none; flex-direction:column; gap:12px; }
+  .detail-panel-view.active{ display:flex; }
+
+  .notice{ border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.5; display:flex; gap:8px; }
+  .notice-warn{ background:var(--warning-soft); color:#7A4E08; border:1px solid #EBD190; }
+  :root[data-theme="dark"] .notice-warn, @media (prefers-color-scheme: dark){ }
+  .notice svg{ flex-shrink:0; margin-top:1px; width:15px; height:15px; }
+
+  .kv{ display:grid; grid-template-columns:110px 1fr; gap:6px 10px; font-size:12.5px; }
+  .kv dt{ color:var(--ink-muted); }
+  .kv dd{ margin:0; }
+
+  pre.code-block{
+    background:var(--surface-sunken); border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+    font-family:"JetBrains Mono",monospace; font-size:11.5px; line-height:1.6; overflow:auto; max-height:160px; margin:0; white-space:pre-wrap; word-break:break-word;
+  }
+  .field-label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-muted); margin-bottom:5px; }
+
+  .btn-row{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  /* Execution log */
+  .log-shell{ display:grid; grid-template-rows:auto 1fr auto; flex:1; min-height:0; gap:10px; }
+  .log-table-wrap{ overflow:auto; border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:var(--shadow-1); }
+  .console-drawer{ border:1px solid var(--border); border-radius:12px; background:var(--ink); color:#D7E1F0; box-shadow:var(--shadow-1); overflow:hidden; }
+  :root[data-theme="light"] .console-drawer, .console-drawer{ background:#0D1420; color:#D7E1F0; }
+  .console-head{ display:flex; align-items:center; justify-content:space-between; padding:8px 14px; border-bottom:1px solid #202A3B; }
+  .console-head span{ font-size:11.5px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#8B96AC; }
+  .console-body{ font-family:"JetBrains Mono",monospace; font-size:12px; padding:10px 14px; max-height:130px; overflow:auto; line-height:1.7; }
+  .console-body .ok{ color:#5FD59A; } .console-body .err{ color:#F0796F; } .console-body .dim{ color:#6B7A93; }
+
+  /* Environment settings */
+  .env-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; flex:1; min-height:0; }
+  .var-table-wrap{ overflow:auto; flex:1; min-height:0; border-top:1px solid var(--border); }
+  .var-table-wrap table{ font-size:12.5px; }
+  .var-name{ font-family:"JetBrains Mono",monospace; font-weight:600; color:var(--accent-deep); font-size:12px; }
+  input.cell-input{
+    width:100%; border:1px solid transparent; background:transparent; font-family:"JetBrains Mono",monospace; font-size:12px;
+    padding:4px 6px; border-radius:5px; color:var(--ink);
+  }
+  input.cell-input:hover, input.cell-input:focus{ border-color:var(--border); background:var(--surface-sunken); outline:none; }
+
+  .placeholder-card{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    background:var(--surface); border:1px dashed var(--border-strong); border-radius:14px; color:var(--ink-muted); text-align:center; padding:40px;
+  }
+  .placeholder-card svg{ width:34px; height:34px; color:var(--ink-faint); }
+  .placeholder-card h3{ color:var(--ink); margin:0; font-size:15px; }
+  .placeholder-card p{ max-width:420px; font-size:12.5px; margin:0; }
+
+  @media (max-width:1180px){
+    .kpi-row{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .grid-2{ grid-template-columns:1fr; }
+    .split{ grid-template-columns:1fr; }
+    .env-grid{ grid-template-columns:1fr; }
+  }
+
+  /* ---------- Auth screen ---------- */
+  .auth-screen{
+    position:fixed; inset:0; background:var(--canvas); display:flex; align-items:center; justify-content:center;
+    z-index:500; padding:20px;
+  }
+  .auth-card{
+    width:100%; max-width:380px; background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:28px 26px; box-shadow:var(--shadow-2);
+  }
+  .auth-brand{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .auth-card h2{ margin:0 0 4px; font-size:18px; }
+  .auth-card .auth-sub{ font-size:12.5px; color:var(--ink-muted); margin-bottom:18px; }
+  .field{ display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+  .field label{ font-size:12px; font-weight:600; color:var(--ink-muted); }
+  .field input{
+    font-size:13.5px; border:1px solid var(--border); background:var(--surface); border-radius:8px;
+    padding:9px 11px; color:var(--ink); width:100%;
+  }
+  .field input:focus{ border-color:var(--accent); outline:none; }
+  .auth-error{
+    background:var(--danger-soft); color:var(--danger); border-radius:8px; padding:8px 10px;
+    font-size:12.5px; margin-bottom:14px; display:none;
+  }
+  .auth-error.show{ display:block; }
+  .auth-hint{ font-size:11.5px; color:var(--ink-faint); margin-top:16px; line-height:1.5; }
+  .btn-block{ width:100%; justify-content:center; padding:10px; }
+
+  /* ---------- Modal ---------- */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(10,14,20,0.5); display:none; align-items:center; justify-content:center; z-index:600;
+  }
+  .modal-overlay.show{ display:flex; }
+  .modal-card{
+    width:100%; max-width:420px; background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:22px; box-shadow:var(--shadow-2);
+  }
+  .modal-card h3{ margin:0 0 4px; font-size:16px; }
+  .modal-card .modal-sub{ font-size:12.5px; color:var(--ink-muted); margin-bottom:16px; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+
+  /* ---------- Permission-aware sidebar ---------- */
+  .nav-item.disabled{ opacity:.38; pointer-events:none; cursor:not-allowed; }
+
+  /* ---------- Inline forms / users & access ---------- */
+  .inline-form{ display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; padding:12px 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .field-inline{ display:flex; flex-direction:column; gap:4px; }
+  .field-inline label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-muted); }
+  .field-inline input, .field-inline select{
+    font-size:12.5px; border:1px solid var(--border); background:var(--surface); border-radius:7px;
+    padding:7px 10px; color:var(--ink); min-width:120px;
+  }
+  /* Plain-text 24-hour time box (HH:MM) — deliberately not a native
+     type="time" input, since browsers render that with an AM/PM segment
+     under a 12-hour OS locale with no way for the page to override it. */
+  .field-inline input.time24{ min-width:64px; width:64px; text-align:center; font-variant-numeric:tabular-nums; }
+  .temp-pass-banner{
+    display:flex; align-items:center; gap:8px;
+    background:var(--accent-soft); color:var(--accent-deep); border:1px solid var(--accent); border-radius:8px;
+    padding:10px 12px; font-size:12px; margin:12px 16px 0;
+  }
+  .temp-pass-banner > span{ flex:1; font-family:"Public Sans",sans-serif; word-break:break-word; }
+  .temp-pass-banner strong{ font-family:"JetBrains Mono",monospace; }
+  .banner-icon-btn{
+    background:none; border:none; color:inherit; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    padding:5px; border-radius:6px; flex-shrink:0;
+  }
+  .banner-icon-btn:hover{ background:rgba(0,0,0,0.08); }
+  .toast{
+    position:fixed; bottom:20px; right:20px; background:var(--ink); color:var(--canvas); padding:10px 12px 10px 16px;
+    border-radius:8px; font-size:13px; box-shadow:var(--shadow-2); z-index:999; opacity:0; transition:opacity .2s ease;
+    pointer-events:none; display:flex; align-items:center; gap:10px; max-width:420px;
+  }
+  .toast.show{ opacity:1; pointer-events:auto; }
+  .toast.error{ background:var(--danger); color:#fff; }
+  .toast-msg{ flex:1; }
+  .toast-close{
+    background:none; border:none; color:inherit; opacity:.75; cursor:pointer; font-size:15px; line-height:1;
+    padding:2px 4px; flex-shrink:0; border-radius:4px;
+  }
+  .toast-close:hover{ opacity:1; background:rgba(255,255,255,0.12); }
+  .perm-table{ font-size:12px; }
+  .perm-table th, .perm-table td{ text-align:center; padding:6px 8px; }
+  .perm-table th:first-child, .perm-table td:first-child{ text-align:left; }
+  .perm-table input[type="checkbox"]{ width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
+  .role-block{ border-bottom:1px solid var(--border); padding:14px 16px; }
+  .role-block:last-child{ border-bottom:none; }
+  .role-block-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .role-block-head h4{ margin:0; font-size:13.5px; }
+  .muted-small{ font-size:11.5px; color:var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN SCREEN ============ -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="brand-mark" style="background:linear-gradient(135deg, var(--accent), var(--accent-deep));">Q</div>
+      <div>
+        <div style="font-family:'Sora',sans-serif; font-weight:700; font-size:15px;">QA AI Studio</div>
+        <div style="font-size:11px; color:var(--ink-muted);">QA Intelligence Platform</div>
+      </div>
+    </div>
+    <h2>Sign in</h2>
+    <div class="auth-sub">Use your QA AI Studio account to continue.</div>
+    <div class="auth-error" id="loginError"></div>
+    <form id="loginForm">
+      <div class="field">
+        <label for="loginUsername">Username</label>
+        <input id="loginUsername" name="username" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block" id="loginSubmit">Sign in</button>
+    </form>
+    <div class="auth-hint">Connects to the QA AI Studio API at <code class="mono" id="apiBaseLabel"></code>. Change API_BASE at the top of this page's script if your server runs elsewhere.</div>
+  </div>
+</div>
+
+<!-- ============ CHANGE PASSWORD MODAL ============ -->
+<div class="modal-overlay" id="changePasswordModal">
+  <div class="modal-card">
+    <h3>Change your password</h3>
+    <div class="modal-sub">You're signed in with a temporary password. Set a new one to continue.</div>
+    <div class="auth-error" id="changePasswordError"></div>
+    <form id="changePasswordForm">
+      <div class="field">
+        <label for="cpCurrent">Current password</label>
+        <input id="cpCurrent" type="password" required>
+      </div>
+      <div class="field">
+        <label for="cpNew">New password</label>
+        <input id="cpNew" type="password" required minlength="6">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="cpCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save new password</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ PERMISSIONS MODAL (edit a role, or create a new one) ============ -->
+<div class="modal-overlay" id="permissionsModal">
+  <div class="modal-card" style="max-width:640px;">
+    <h3 id="permModalTitle">Role permissions</h3>
+    <div class="modal-sub" id="permModalSub">Select what this role can view, create, edit, delete, or run.</div>
+    <div class="field" id="permRoleNameField" style="display:none;">
+      <label for="permRoleName">Role name</label>
+      <input id="permRoleName" placeholder="e.g. Release Manager">
+    </div>
+    <div class="field" id="permRoleDescField" style="display:none;">
+      <label for="permRoleDesc">Description</label>
+      <input id="permRoleDesc" placeholder="What this role is for">
+    </div>
+    <div class="table-scroll" style="max-height:320px; border:1px solid var(--border); border-radius:8px;">
+      <table class="perm-table">
+        <thead><tr><th>Resource</th><th><label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-weight:inherit; text-transform:inherit; letter-spacing:inherit;"><input type="checkbox" id="permSelectAllRights" title="Select all rights — every resource, every action">All</label></th><th>View</th><th>Create</th><th>Edit</th><th>Delete</th><th>Execute</th></tr></thead>
+        <tbody id="permTableBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="permCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="permSave">Save permissions</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="toast-msg" id="toastMsg"></span><button type="button" class="toast-close" id="toastClose" aria-label="Dismiss">&times;</button></div>
+
+<!-- ============ CONFIRM DELETE MODAL (Yes / No) ============ -->
+<div class="modal-overlay" id="confirmDeleteModal">
+  <div class="modal-card" style="max-width:400px;">
+    <h3 id="confirmDeleteTitle">Delete?</h3>
+    <div class="modal-sub" id="confirmDeleteSub">This can't be undone from here.</div>
+    <div class="auth-error" id="confirmDeleteError"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="confirmDeleteNo">No</button>
+      <button type="button" class="btn" style="background:var(--danger); color:#fff; border-color:var(--danger);" id="confirmDeleteYes">Yes, delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EDIT USER PROFILE MODAL ============ -->
+<div class="modal-overlay" id="editUserModal">
+  <div class="modal-card" style="max-width:420px;">
+    <h3>Edit user</h3>
+    <div class="modal-sub">Everything but the user ID can change here. Permissions aren't set per-user — they come from the role.</div>
+    <div class="auth-error" id="editUserError"></div>
+    <div class="field"><label for="editUserId">User ID</label><input id="editUserId" disabled></div>
+    <div class="field"><label for="editUserUsername">Username</label><input id="editUserUsername"></div>
+    <div class="field"><label for="editUserFullName">Full name</label><input id="editUserFullName"></div>
+    <div class="field"><label for="editUserEmail">Email</label><input id="editUserEmail" type="email"></div>
+    <div class="field"><label for="editUserContact">Contact number</label><input id="editUserContact" placeholder="e.g. 0300-1234567"></div>
+    <div class="field"><label for="editUserRole">Role</label><select id="editUserRole"></select></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="editUserCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="editUserSave">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EDIT KNOWLEDGE ITEM MODAL ============ -->
+<div class="modal-overlay" id="khEditModal">
+  <div class="modal-card" style="max-width:460px;">
+    <h3>Edit knowledge item</h3>
+    <div class="modal-sub">Domain, module, knowledge name and version are set at upload time and shown here for reference only.</div>
+    <div class="auth-error" id="khEditError"></div>
+    <div class="field"><label>Knowledge name</label><input id="khEditName" disabled></div>
+    <div style="display:flex; gap:10px;">
+      <div class="field" style="flex:1;"><label>Domain</label><input id="khEditDomain" disabled></div>
+      <div class="field" style="flex:1;"><label>Module</label><input id="khEditModule" disabled></div>
+      <div class="field" style="flex:0 0 80px;"><label>Version</label><input id="khEditVersion" disabled></div>
+    </div>
+    <div class="field"><label for="khEditDocType">Document type</label><input id="khEditDocType" placeholder="e.g. SRS, CRF, API Spec"></div>
+    <div class="field"><label for="khEditSummary">Summary</label><input id="khEditSummary" placeholder="Short summary"></div>
+    <div class="field"><label for="khEditTags">Tags (comma-separated)</label><input id="khEditTags" placeholder="e.g. payments, gateway, srs"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="khEditCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="khEditSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ NEW USER MODAL ============ -->
+<div class="modal-overlay" id="newUserModal">
+  <div class="modal-card" style="max-width:420px;">
+    <h3>Add user</h3>
+    <div class="modal-sub">A temporary password is generated automatically and shown once after saving.</div>
+    <div class="auth-error" id="newUserError"></div>
+    <div class="field"><label for="newUserUsername">Username</label><input id="newUserUsername" placeholder="e.g. abasit"></div>
+    <div class="field"><label for="newUserFullName">Full name</label><input id="newUserFullName" placeholder="Abdul Basit"></div>
+    <div class="field"><label for="newUserEmail">Email</label><input id="newUserEmail" type="email" placeholder="optional"></div>
+    <div class="field"><label for="newUserContact">Contact number</label><input id="newUserContact" placeholder="optional"></div>
+    <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"></select></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="newUserCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="createUserBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell" id="shell" style="display:none;">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">Q</div>
+      <div class="brand-text">
+        <div class="name">QA AI Studio</div>
+        <div class="tag">QA Intelligence Platform</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-group-label">Workspace</div>
+      <a class="nav-item active" data-page="dashboard" data-resource="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span class="label">Dashboard</span>
+      </a>
+      <a class="nav-item" data-page="knowledge" data-resource="knowledge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5C4 4.67 4.67 4 5.5 4H12v16H5.5A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M20 5.5c0-.83-.67-1.5-1.5-1.5H12v16h6.5a1.5 1.5 0 0 0 1.5-1.5v-13Z"/></svg>
+        <span class="label">Knowledge Hub</span>
+      </a>
+      <a class="nav-item" data-page="automation" data-resource="automation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3h6M10 3v4.2a2 2 0 0 1-.4 1.2L5.9 13.8A3 3 0 0 0 5 15.9V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.1a3 3 0 0 0-.9-2.1L13.4 8.4A2 2 0 0 1 13 7.2V3"/><path d="M7.5 14.5h9"/></svg>
+        <span class="label">QA Automation</span>
+      </a>
+      <a class="nav-item" data-page="api" data-resource="automation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 8V6a2 2 0 0 1 2-2h1M7 16v2a2 2 0 0 0 2 2h1M17 8V6a2 2 0 0 0-2-2h-1M17 16v2a2 2 0 0 1-2 2h-1"/><rect x="8" y="9" width="8" height="6" rx="1.2"/></svg>
+        <span class="label">API Automation</span>
+      </a>
+      <a class="nav-item" data-page="reports" data-resource="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M12 20V4M20 20v-7"/></svg>
+        <span class="label">Reports &amp; Analytics</span>
+      </a>
+      <a class="nav-item" data-page="ai_assistant" data-resource="ai_assistant">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a2 2 0 0 1 2 2v1h1a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h1V4a2 2 0 0 1 2-2Z"/><path d="M8 13v2a4 4 0 0 0 4 4h0a4 4 0 0 0 4-4v-2"/><path d="M12 19v3"/><circle cx="9.5" cy="8.5" r=".8" fill="currentColor" stroke="none"/><circle cx="14.5" cy="8.5" r=".8" fill="currentColor" stroke="none"/></svg>
+        <span class="label">AI Assistant</span>
+      </a>
+      <div class="nav-group-label">Configuration</div>
+      <a class="nav-item" data-page="usermgmt" data-resource="users">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span class="label">User Management</span>
+      </a>
+      <a class="nav-item" data-page="settings" data-resource="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"/></svg>
+        <span class="label">Settings</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button class="foot-btn" id="themeToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+        <span id="themeLabel">Light theme</span>
+      </button>
+      <button class="foot-btn" id="changePasswordBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        <span>Change password</span>
+      </button>
+      <button class="foot-btn" id="logoutBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+        <span>Log out</span>
+      </button>
+      <div class="profile">
+        <div class="avatar" id="profileAvatar">--</div>
+        <div class="profile-text">
+          <div class="pname" id="profileName">Not signed in</div>
+          <div class="prole" id="profileRole">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- ============ DASHBOARD PAGE ============ -->
+    <div class="page active" data-page-content="dashboard">
+      <div class="topbar">
+        <button class="collapse-btn" id="collapseBtn" title="Collapse navigation">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <div class="page-sub">Organization-wide QA knowledge &amp; execution overview</div>
+        </div>
+        <div class="topbar-spacer"></div>
+        <div class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input placeholder="Search knowledge, test cases…"></div>
+        <div class="env-chip"><span class="env-dot"></span>QA-UAT</div>
+        <button class="icon-btn" title="Notifications"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
+      </div>
+
+      <div class="tabstrip">
+        <button class="tab active" data-tab="dash-overview">Overview</button>
+        <button class="tab" data-tab="dash-exec">Test Execution</button>
+        <button class="tab" data-tab="dash-coverage">Knowledge Coverage</button>
+        <button class="tab" data-tab="dash-runs" id="tabDashRuns">Recent Runs</button>
+        <button class="tab" data-tab="dash-activity">Recent Activity</button>
+      </div>
+
+      <div class="workspace">
+        <div class="panel active" id="dash-overview">
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-label">Knowledge Items</div><div class="kpi-value num" id="dashKnowledgeItems">—</div><div class="kpi-delta flat">Current database</div></div>
+            <div class="kpi"><div class="kpi-label">Domains</div><div class="kpi-value num" id="dashDomains">—</div><div class="kpi-delta flat">Current database</div></div>
+            <div class="kpi"><div class="kpi-label">Modules</div><div class="kpi-value num" id="dashModules">—</div><div class="kpi-delta flat">Current database</div></div>
+            <div class="kpi"><div class="kpi-label">Versions Tracked</div><div class="kpi-value num" id="dashVersions">—</div><div class="kpi-delta flat">Current database</div></div>
+            <div class="kpi"><div class="kpi-label">AI Mode</div><div class="kpi-value" id="dashAiMode" style="font-size:16px;">—</div><div class="kpi-delta flat">Configured provider mode</div></div>
+            <div class="kpi"><div class="kpi-label">LLM Model</div><div class="kpi-value" id="dashLlmModel" style="font-size:16px;">—</div><div class="kpi-delta flat">Configured model</div></div>
+          </div>
+          <div class="placeholder-card" style="flex:1;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20V10M12 20V4M20 20v-7"/></svg>
+            <h3>Snapshot above, detail in its own tab</h3>
+            <p>The organization-wide numbers stay here for a quick glance. Test Execution, Knowledge Coverage, and Recent Runs each now have their own tab at full size instead of sharing this screen — nothing gets clipped, whatever your zoom level.</p>
+          </div>
+        </div>
+
+        <div class="panel flush" id="dash-exec">
+          <div class="card" style="flex:1;">
+            <div class="card-head"><h3>Test Execution Summary</h3><button class="link-btn" id="viewAllRunsBtn">View all runs</button></div>
+            <div class="card-body">
+              <div class="donut-wrap">
+                <svg width="180" height="180" viewBox="0 0 42 42">
+                  <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="var(--surface-sunken)" stroke-width="5"></circle>
+                  <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="var(--success)" stroke-width="5" stroke-dasharray="62 100" stroke-dashoffset="25" stroke-linecap="round"></circle>
+                  <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="var(--danger)" stroke-width="5" stroke-dasharray="14 100" stroke-dashoffset="-37" stroke-linecap="round"></circle>
+                  <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="var(--warning)" stroke-width="5" stroke-dasharray="8 100" stroke-dashoffset="-51" stroke-linecap="round"></circle>
+                  <text x="21" y="19.5" text-anchor="middle" font-size="6.2" font-weight="700" fill="var(--ink)" font-family="Sora, sans-serif">312</text>
+                  <text x="21" y="25.5" text-anchor="middle" font-size="3.1" fill="var(--ink-muted)">total runs</text>
+                </svg>
+                <div class="donut-legend">
+                  <div class="legend-row"><span class="legend-dot" style="background:var(--success)"></span>Pass<span class="num">193</span></div>
+                  <div class="legend-row"><span class="legend-dot" style="background:var(--danger)"></span>Fail<span class="num">44</span></div>
+                  <div class="legend-row"><span class="legend-dot" style="background:var(--warning)"></span>Blocked<span class="num">25</span></div>
+                  <div class="legend-row"><span class="legend-dot" style="background:var(--surface-sunken); border:1px solid var(--border)"></span>Not Run<span class="num">50</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel flush" id="dash-coverage">
+          <div class="card" style="flex:1;">
+            <div class="card-head"><h3>Knowledge Coverage by Domain</h3></div>
+            <div class="card-body">
+              <div class="bar-list">
+                <div class="bar-row"><div class="bar-top"><span>Declaration Management</span><span class="num">82%</span></div><div class="bar-track"><div class="bar-fill" style="width:82%"></div></div></div>
+                <div class="bar-row"><div class="bar-top"><span>Payment Gateway</span><span class="num">71%</span></div><div class="bar-track"><div class="bar-fill" style="width:71%"></div></div></div>
+                <div class="bar-row"><div class="bar-top"><span>Cargo Manifest</span><span class="num">64%</span></div><div class="bar-track"><div class="bar-fill" style="width:64%"></div></div></div>
+                <div class="bar-row"><div class="bar-top"><span>Tariff Calculation</span><span class="num">58%</span></div><div class="bar-track"><div class="bar-fill" style="width:58%"></div></div></div>
+                <div class="bar-row"><div class="bar-top"><span>User Authentication</span><span class="num">45%</span></div><div class="bar-track"><div class="bar-fill" style="width:45%"></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel flush" id="dash-runs">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Recent Test Runs</h3>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="fbar-search" style="width:200px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="dashRunsSearch" placeholder="Search runs…"></div>
+                <button class="link-btn" id="openExecLogBtn">Open Execution Log</button>
+              </div>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <table>
+                <thead><tr><th>TC #</th><th>Module</th><th>Result</th><th>Duration</th><th>Run By</th><th>When</th></tr></thead>
+                <tbody id="dashRunsTableBody">
+                  <tr><td class="mono">TC003</td><td>Payment Gateway</td><td><span class="pill pill-fail"><span class="pill-dot"></span>Fail</span></td><td class="num">4.2s</td><td>Automation Bot</td><td class="num">2 min ago</td></tr>
+                  <tr><td class="mono">TC001</td><td>Declaration Management</td><td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td><td class="num">8.9s</td><td>Automation Bot</td><td class="num">17 min ago</td></tr>
+                  <tr><td class="mono">TC012</td><td>Cargo Manifest</td><td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td><td class="num">6.1s</td><td>Automation Bot</td><td class="num">41 min ago</td></tr>
+                  <tr><td class="mono">TC007</td><td>User Authentication</td><td><span class="pill pill-blocked"><span class="pill-dot"></span>Blocked</span></td><td class="num">—</td><td>A. Basit</td><td class="num">1 hr ago</td></tr>
+                  <tr><td class="mono">TC019</td><td>Tariff Calculation</td><td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td><td class="num">3.4s</td><td>Automation Bot</td><td class="num">2 hr ago</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="dashRunsPager"></div>
+          </div>
+        </div>
+
+        <div class="panel flush" id="dash-activity">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Recent Activity</h3>
+              <div class="fbar-search" style="width:200px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="dashActivitySearch" placeholder="Search activity…"></div>
+            </div>
+            <div class="card-body">
+              <table>
+                <thead><tr><th>When</th><th>Actor</th><th>Event</th></tr></thead>
+                <tbody id="dashActivityTableBody">
+                  <tr><td class="num">3 min ago</td><td>Automation Bot</td><td>Executed TC003 against QA-UAT — Fail (signature mismatch)</td></tr>
+                  <tr><td class="num">28 min ago</td><td>A. Basit</td><td>Updated endpoint <span class="mono">POST /payments/initiate</span> in API Collection "Payments v2"</td></tr>
+                  <tr><td class="num">1 hr ago</td><td>Naveed R.</td><td>Imported SRS "Cargo Manifest Module v3.4" into Knowledge Hub</td></tr>
+                  <tr><td class="num">2 hr ago</td><td>System</td><td>Auto-repaired locator for TC001 Step 4 (dynamic ID detected)</td></tr>
+                  <tr><td class="num">Yesterday</td><td>Automation Bot</td><td>Recorded manual script for TC021 "Tariff override approval"</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="dashActivityPager"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ QA AUTOMATION PAGE ============ -->
+    <div class="page" data-page-content="automation" style="display:none;">
+      <div class="topbar">
+        <button class="collapse-btn" id="collapseBtn2" title="Collapse navigation">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title">QA Automation</h1>
+          <div class="page-sub">Declaration Management &middot; Trade Single Window</div>
+        </div>
+        <div class="topbar-spacer"></div>
+        <div class="env-chip"><span class="env-dot"></span>QA-UAT</div>
+        <button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5v14"/></svg>New Test Case</button>
+      </div>
+
+      <div class="tabstrip">
+        <button class="tab active" data-tab="auto-cases">Test Cases</button>
+        <button class="tab" data-tab="auto-log" id="tabAutoLog">Execution Log</button>
+        <button class="tab" data-tab="auto-env">Environment Settings</button>
+      </div>
+
+      <div class="workspace">
+        <!-- Test Cases -->
+        <div class="panel active" id="auto-cases" style="gap:12px;">
+          <div class="filterbar">
+            <select><option>Domain: Trade Facilitation</option></select>
+            <select><option>Module: All Modules</option></select>
+            <div class="chip-filter">
+              <span class="chip active" data-chip="all">All (24)</span>
+              <span class="chip" data-chip="pass">Pass 12</span>
+              <span class="chip" data-chip="fail">Fail 3</span>
+              <span class="chip" data-chip="notrun">Not Run 9</span>
+            </div>
+            <div class="fbar-spacer"></div>
+            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="tcSearch" placeholder="Filter test cases…"></div>
+            <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Run Selected</button>
+          </div>
+
+          <div class="split">
+            <div class="card">
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th style="width:70px;">TC #</th><th>Scenario</th><th style="width:100px;">Type</th><th style="width:90px;">Result</th><th style="width:110px;">Script Source</th><th style="width:96px;text-align:right;">Actions</th></tr></thead>
+                  <tbody id="tcTable">
+                    <tr class="tc-row" data-tc="tc001">
+                      <td class="mono">TC001</td>
+                      <td class="cell-ellipsis" title="Submit a new goods declaration with valid HS code and duty auto-calculation">Submit new goods declaration, HS code valid</td>
+                      <td><span class="pill pill-neutral">Playwright</span></td>
+                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
+                      <td><span class="pill pill-notrun">AUTO</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr class="tc-row selected" data-tc="tc003">
+                      <td class="mono">TC003</td>
+                      <td class="cell-ellipsis" title="Initiate payment for an assessed declaration via the Payment Gateway API">Initiate payment for assessed declaration</td>
+                      <td><span class="pill pill-neutral">API</span></td>
+                      <td><span class="pill pill-fail"><span class="pill-dot"></span>Fail</span></td>
+                      <td><span class="pill pill-notrun">AUTO</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr class="tc-row" data-tc="tc007">
+                      <td class="mono">TC007</td>
+                      <td class="cell-ellipsis" title="Attempt login with an expired session token and confirm redirect to sign-in">Login with expired session token</td>
+                      <td><span class="pill pill-neutral">Playwright</span></td>
+                      <td><span class="pill pill-blocked"><span class="pill-dot"></span>Blocked</span></td>
+                      <td><span class="pill pill-notrun">MANUAL</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr class="tc-row" data-tc="tc012">
+                      <td class="mono">TC012</td>
+                      <td class="cell-ellipsis" title="Upload cargo manifest CSV and verify line-item count matches header total">Upload cargo manifest, verify totals</td>
+                      <td><span class="pill pill-neutral">Playwright</span></td>
+                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
+                      <td><span class="pill pill-notrun">AUTO</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr class="tc-row" data-tc="tc019">
+                      <td class="mono">TC019</td>
+                      <td class="cell-ellipsis" title="Verify tariff auto-calculation for a mixed-category shipment">Tariff auto-calculation, mixed category</td>
+                      <td><span class="pill pill-neutral">Playwright</span></td>
+                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
+                      <td><span class="pill pill-notrun">AUTO</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr class="tc-row" data-tc="tc021">
+                      <td class="mono">TC021</td>
+                      <td class="cell-ellipsis" title="Tariff override requires supervisor approval before submission">Tariff override approval flow</td>
+                      <td><span class="pill pill-neutral">Playwright</span></td>
+                      <td><span class="pill pill-notrun">Not Run</span></td>
+                      <td><span class="pill pill-notrun">MANUAL</span></td>
+                      <td><div class="row-actions">
+                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
+                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
+                      </div></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pg-bar" id="tcPager"></div>
+            </div>
+
+            <!-- Detail panel -->
+            <div class="card">
+              <div class="detail-head">
+                <div class="tc-id" id="detailId">TC003</div>
+                <h3 id="detailTitle">Initiate payment for assessed declaration</h3>
+                <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">API</span><span class="pill pill-fail" id="detailResult"><span class="pill-dot"></span>Fail</span></div>
+              </div>
+              <div class="detail-tabs">
+                <button class="dtab active" data-dtab="d-script">Script</button>
+                <button class="dtab" data-dtab="d-request">Request / Response</button>
+                <button class="dtab" data-dtab="d-history">History</button>
+              </div>
+              <div class="detail-body">
+                <div class="detail-panel-view active" id="d-script">
+                  <div class="notice notice-warn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+                    <div><strong>Reference only.</strong> "Execute Against Real Server" always rebuilds this request from the original imported endpoint — it does not read this script. Edit the endpoint in <a href="#">Knowledge Hub → API Collection</a>, or use a <code>{{variable}}</code> for values you change often.</div>
+                  </div>
+                  <div class="field-label">Automation Script</div>
+                  <pre class="code-block">def test_tc003_initiate_payment(session, env):
+    payload = {
+        "declaration_id": env["declaration_id"],
+        "amount": 15420.00,
+        "currency": "USD",
+        "signature": "{{payment_signature}}",
+    }
+    resp = session.post(env["base_url"] + "/payments/initiate", json=payload)
+    assert resp.status_code == 200, resp.text</pre>
+                  <div class="btn-row">
+                    <button class="btn">Edit Script</button>
+                    <button class="btn btn-primary">Execute Against Real Server</button>
+                  </div>
+                </div>
+
+                <div class="detail-panel-view" id="d-request">
+                  <div class="field-label">Request</div>
+                  <div class="kv"><dt>Method</dt><dd class="mono">POST</dd><dt>URL</dt><dd class="mono">https://api-uat.example-tsw.gov/payments/initiate</dd></div>
+                  <div class="field-label" style="margin-top:6px;">Headers</div>
+                  <pre class="code-block">Content-Type: application/json
+X-Signature: 8f2a1c9e4b7d0f3a6c5e...(stale)
+X-Client-Id: qa-automation-bot</pre>
+                  <div class="field-label">Body</div>
+                  <pre class="code-block">{
+  "declaration_id": "DCL-88213",
+  "amount": 15420.00,
+  "currency": "USD"
+}</pre>
+                  <div class="field-label" style="color:var(--danger);">Response — 400 Bad Request</div>
+                  <pre class="code-block">{
+  "error": "SIGNATURE_VALIDATION_FAILED",
+  "message": "Signature does not match computed value"
+}</pre>
+                </div>
+
+                <div class="detail-panel-view" id="d-history">
+                  <table>
+                    <thead><tr><th>When</th><th>Result</th><th>By</th></tr></thead>
+                    <tbody>
+                      <tr><td class="num">2 min ago</td><td><span class="pill pill-fail">Fail</span></td><td>Automation Bot</td></tr>
+                      <tr><td class="num">Yesterday</td><td><span class="pill pill-fail">Fail</span></td><td>Automation Bot</td></tr>
+                      <tr><td class="num">3 days ago</td><td><span class="pill pill-pass">Pass</span></td><td>A. Basit</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Execution Log -->
+        <div class="panel" id="auto-log">
+          <div class="log-shell">
+            <div class="fbar-search" style="width:260px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="execLogSearch" placeholder="Search execution log…"></div>
+            <div class="log-table-wrap">
+              <table>
+                <thead><tr><th style="width:150px;">Time</th><th style="width:70px;">TC #</th><th>Step</th><th style="width:110px;">Status</th></tr></thead>
+                <tbody id="execLogTableBody">
+                  <tr><td class="num">10:42:03.221</td><td class="mono">TC003</td><td>POST /payments/initiate</td><td><span class="pill pill-fail">Fail — 400</span></td></tr>
+                  <tr><td class="num">10:41:58.100</td><td class="mono">TC003</td><td>Resolve {{payment_signature}} from environment</td><td><span class="pill pill-pass">OK</span></td></tr>
+                  <tr><td class="num">10:38:12.884</td><td class="mono">TC001</td><td>Click "Submit Declaration" (data-testid)</td><td><span class="pill pill-pass">OK</span></td></tr>
+                  <tr><td class="num">10:38:10.045</td><td class="mono">TC001</td><td>Fill HS Code field (class fallback locator)</td><td><span class="pill pill-pass">OK</span></td></tr>
+                  <tr><td class="num">10:22:41.510</td><td class="mono">TC012</td><td>Upload manifest.csv</td><td><span class="pill pill-pass">OK</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="console-drawer">
+              <div class="console-head"><span>Live Console</span><button class="icon-btn" style="width:26px;height:26px;border-color:#233049;color:#8B96AC;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></button></div>
+              <div class="console-body">
+<div class="dim">[10:42:03] starting step 6/6…</div>
+<div class="err">[10:42:03] AssertionError: expected 200, got 400 — SIGNATURE_VALIDATION_FAILED</div>
+<div class="dim">[10:42:03] run finished — 1 fail</div>
+<div class="ok">[10:38:13] run finished — 6/6 pass</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Environment Settings -->
+        <div class="panel" id="auto-env">
+          <div class="filterbar">
+            <div class="chip-filter">
+              <span class="chip active">QA-UAT</span>
+              <span class="chip">Staging</span>
+              <span class="chip">Production</span>
+            </div>
+            <div class="fbar-spacer"></div>
+            <button class="btn btn-primary"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5v14"/></svg>Add Variable</button>
+          </div>
+          <div class="env-grid">
+            <div class="card">
+              <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
+              <div class="var-table-wrap">
+                <table>
+                  <thead><tr><th>Variable</th><th>Value</th><th style="width:40px;"></th></tr></thead>
+                  <tbody>
+                    <tr><td class="var-name">base_url</td><td><input class="cell-input" value="https://api-uat.example-tsw.gov"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
+                    <tr><td class="var-name">declaration_id</td><td><input class="cell-input" value="DCL-88213"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
+                    <tr><td class="var-name">payment_signature</td><td><input class="cell-input" value="8f2a1c9e4b7d0f3a6c5e… (stale)" style="color:var(--danger);"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
+                    <tr><td class="var-name">client_id</td><td><input class="cell-input" value="qa-automation-bot"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Environment Details</h3></div>
+              <div class="card-body">
+                <div class="kv">
+                  <dt>Name</dt><dd>QA-UAT</dd>
+                  <dt>Base URL</dt><dd class="mono">api-uat.example-tsw.gov</dd>
+                  <dt>Auth Mode</dt><dd>Signed request (HMAC)</dd>
+                  <dt>Browser</dt><dd>Chromium (headless)</dd>
+                  <dt>Retry Policy</dt><dd>2 attempts, 1.5s backoff</dd>
+                  <dt>Last Verified</dt><dd class="num">Today, 09:14</dd>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ PLACEHOLDER PAGES ============ -->
+    <div class="page" data-page-content="knowledge" style="display:none;">
+      <div class="topbar">
+        <button class="collapse-btn generic-collapse" title="Collapse navigation">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title">Knowledge Hub</h1>
+          <div class="page-sub">Domains, modules, versions &amp; imported source documents</div>
+        </div>
+      </div>
+      <div class="tabstrip">
+        <button class="tab active" data-tab="kh-browse">Browse</button>
+        <button class="tab" data-tab="kh-upload">Upload</button>
+      </div>
+      <div class="workspace">
+        <div class="panel flush active" id="kh-browse">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Knowledge Items</h3>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="fbar-search" style="width:200px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="khSearch" placeholder="Search knowledge…"></div>
+                <button class="link-btn" id="khUploadTabBtn">+ Upload document</button>
+                <span class="muted-small" id="khCount"></span>
+              </div>
+            </div>
+            <div class="filterbar" style="border-bottom:1px solid var(--border); flex-shrink:0;">
+              <div class="field-inline"><label>Domain</label><select id="khDomainFilter"><option value="">All domains</option></select></div>
+              <div class="field-inline"><label>Module</label><select id="khModuleFilter"><option value="">All modules</option></select></div>
+              <button type="button" class="btn" id="khClearFilters">Clear filters</button>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Knowledge Name</th><th style="width:120px;">Domain</th><th style="width:120px;">Module</th><th style="width:64px;">Version</th><th style="width:100px;">Type</th><th>Summary</th><th style="width:86px;">Confidence</th><th style="width:112px;">Uploaded</th><th style="width:90px;text-align:right;">Actions</th></tr></thead>
+                <tbody id="khTableBody"><tr><td colspan="9" class="muted-small">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="khPager"></div>
+          </div>
+        </div>
+
+        <div class="panel" id="kh-upload">
+          <div class="card" style="max-width:640px;">
+            <div class="card-head"><h3>Upload a document</h3></div>
+            <div class="card-body">
+              <div class="auth-error" id="khUploadError"></div>
+              <div class="field"><label for="khUpDomain">Domain</label><input id="khUpDomain" list="khDomainList" placeholder="e.g. Payments"></div>
+              <datalist id="khDomainList"></datalist>
+              <div class="field"><label for="khUpModule">Module</label><input id="khUpModule" list="khModuleList" placeholder="e.g. Gateway"></div>
+              <datalist id="khModuleList"></datalist>
+              <div class="field"><label for="khUpName">Knowledge Name</label><input id="khUpName" placeholder="e.g. Payment Gateway SRS"></div>
+              <div class="field"><label for="khUpVersion">Version</label><input id="khUpVersion" placeholder="1.0" value="1.0"></div>
+              <div class="field"><label for="khUpDocType">Document Type (optional)</label><input id="khUpDocType" placeholder="e.g. SRS, CRF, API Spec"></div>
+              <div class="field"><label for="khUpFile">File</label><input id="khUpFile" type="file"></div>
+              <div class="modal-actions">
+                <button type="button" class="btn btn-primary" id="khUploadBtn">Upload</button>
+              </div>
+              <div id="khUploadResult"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="page" data-page-content="api" style="display:none;">
+      <div class="topbar"><button class="collapse-btn generic-collapse"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button><div><h1 class="page-title">API Automation</h1><div class="page-sub">Collections, endpoints &amp; real-server execution</div></div></div>
+      <div class="tabstrip"><button class="tab active">Collections</button><button class="tab">Endpoints</button><button class="tab">Run History</button></div>
+      <div class="workspace"><div class="placeholder-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg><h3>Same shell, same pattern</h3><p>API Automation reuses the identical layout primitives already shown under QA Automation → Test Cases (master-detail, request/response viewer, variables table).</p></div></div>
+    </div>
+    <div class="page" data-page-content="reports" style="display:none;">
+      <div class="topbar"><button class="collapse-btn generic-collapse"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button><div><h1 class="page-title">Reports &amp; Analytics</h1><div class="page-sub">Traceability, coverage &amp; trend reporting</div></div></div>
+      <div class="tabstrip"><button class="tab active">Coverage</button><button class="tab">Traceability</button><button class="tab">Trends</button></div>
+      <div class="workspace"><div class="placeholder-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20V10M12 20V4M20 20v-7"/></svg><h3>Same shell, same pattern</h3><p>Reports reuses the KPI-row + chart-card layout already shown on the Dashboard, scoped to requirement-to-test traceability and automation coverage.</p></div></div>
+    </div>
+    <div class="page" data-page-content="ai_assistant" style="display:none;">
+      <div class="topbar">
+        <button class="collapse-btn generic-collapse" title="Collapse navigation">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title">AI Assistant</h1>
+          <div class="page-sub">Ask about anything filed in Knowledge Hub — answers cite the source document</div>
+        </div>
+      </div>
+      <div class="workspace">
+        <div class="panel flush active" id="ai-chat">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Conversation</h3>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="fbar-search" style="width:150px;"><input id="aiDomainScope" placeholder="Domain (optional)"></div>
+                <div class="fbar-search" style="width:150px;"><input id="aiModuleScope" placeholder="Module (optional)"></div>
+                <button class="link-btn" id="aiClearBtn">Clear conversation</button>
+              </div>
+            </div>
+            <div class="card-body" id="aiMessages" style="display:flex; flex-direction:column; gap:14px;">
+              <div class="muted-small">Ask a question below — for example, "What does the Payment Gateway SRS say about the checkout flow?" Narrow it to a Domain/Module above if you want the search scoped.</div>
+            </div>
+            <div style="border-top:1px solid var(--border); padding:12px 16px; display:flex; gap:10px; flex-shrink:0;">
+              <input id="aiPromptInput" placeholder="Ask a question…" style="flex:1; padding:9px 12px; border:1px solid var(--border); border-radius:8px; font:inherit; background:var(--surface); color:var(--ink);">
+              <button type="button" class="btn btn-primary" id="aiSendBtn">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="page" data-page-content="settings" style="display:none;">
+      <div class="topbar"><button class="collapse-btn generic-collapse"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button><div><h1 class="page-title">Settings</h1><div class="page-sub">Environments, models &amp; team access</div></div></div>
+      <div class="tabstrip">
+        <button class="tab active" data-tab="set-env">Environments</button>
+        <button class="tab" data-tab="set-ai">AI &amp; Models</button>
+      </div>
+      <div class="workspace">
+        <div class="panel active" id="set-env">
+          <div class="placeholder-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M4 4h16v16H4z" opacity="0"/></svg><h3>Same shell, same pattern</h3><p>Global Environment Settings (shown under QA Automation) live here permanently — Environments tab is the canonical home; QA Automation links to it rather than duplicating it.</p></div>
+        </div>
+        <div class="panel" id="set-ai">
+          <div class="placeholder-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M4 4h16v16H4z" opacity="0"/></svg><h3>Same shell, same pattern</h3><p>AI provider, model, and embedding settings live here once Milestone 4/0's remaining configuration screens are built.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ USER MANAGEMENT PAGE (own left-nav item, not under Settings) ============ -->
+    <div class="page" data-page-content="usermgmt" style="display:none;">
+      <div class="topbar">
+        <button class="collapse-btn generic-collapse" title="Collapse navigation">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title">User Management</h1>
+          <div class="page-sub">Users, roles &amp; permissions, and the activity audit log</div>
+        </div>
+      </div>
+      <div class="tabstrip">
+        <button class="tab active" data-tab="ua-team">Users</button>
+        <button class="tab" data-tab="ua-roles">Roles &amp; Permissions</button>
+        <button class="tab" data-tab="ua-audit">Audit Log</button>
+      </div>
+      <div class="workspace">
+        <div class="panel flush active" id="ua-team">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Users</h3>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="fbar-search" style="width:210px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="usersSearch" placeholder="Search users…"></div>
+                <button class="btn" id="deleteSelectedUsersBtn" style="display:none; color:var(--danger); border-color:var(--danger);">Delete selected</button>
+                <button class="link-btn" id="newUserBtn">+ Add user</button>
+                <span class="muted-small" id="usersCount"></span>
+              </div>
+            </div>
+            <div id="tempPasswordBanner"></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th class="col-check"><input type="checkbox" class="row-check-all" id="usersSelectAll" title="Select all on this page"></th><th style="width:46px;">ID</th><th>Full Name</th><th>Email</th><th style="width:130px;">Role</th><th style="width:80px;">Status</th><th style="width:90px;text-align:right;">Actions</th></tr></thead>
+                <tbody id="usersTableBody"><tr><td colspan="7" class="muted-small">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="usersPager"></div>
+          </div>
+        </div>
+
+        <div class="panel flush" id="ua-roles">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Roles &amp; Permissions</h3>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="fbar-search" style="width:180px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="rolesSearch" placeholder="Search roles…"></div>
+                <button class="btn" id="deleteSelectedRolesBtn" style="display:none; color:var(--danger); border-color:var(--danger);">Delete selected</button>
+                <button class="link-btn" id="newRoleBtn">+ New role</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th class="col-check"><input type="checkbox" class="row-check-all" id="rolesSelectAll" title="Select all on this page"></th><th>Role</th><th>Description</th><th style="width:90px;">Grants</th><th style="width:50px;"></th></tr></thead>
+                <tbody id="rolesTableBody"><tr><td colspan="5" class="muted-small">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="rolesPager"></div>
+          </div>
+        </div>
+
+        <div class="panel flush" id="ua-audit">
+          <div class="card" style="flex:1;">
+            <div class="card-head">
+              <h3>Audit Log</h3>
+              <div style="display:flex; align-items:center; gap:14px;">
+                <div class="fbar-search" style="width:170px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="auditSearch" placeholder="Search…"></div>
+                <span class="muted-small">Auto-refreshes</span>
+                <button class="link-btn" id="refreshAuditBtn">Refresh</button>
+              </div>
+            </div>
+            <div class="filterbar" style="border-bottom:1px solid var(--border); flex-shrink:0;">
+              <div class="field-inline"><label>From date</label><input type="date" id="auditFromDate"></div>
+              <div class="field-inline"><label>From time (24-hr)</label><input type="text" id="auditFromTime" class="time24" placeholder="00:00" maxlength="5" inputmode="numeric"></div>
+              <div class="field-inline"><label>To date</label><input type="date" id="auditToDate"></div>
+              <div class="field-inline"><label>To time (24-hr)</label><input type="text" id="auditToTime" class="time24" placeholder="23:59" maxlength="5" inputmode="numeric"></div>
+              <button type="button" class="btn" id="auditClearRange">Clear range</button>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th style="width:180px;">When</th><th>User</th><th style="width:170px;">Action</th><th>Detail</th></tr></thead>
+                <tbody id="auditTableBody"><tr><td colspan="4" class="muted-small" style="padding:12px 10px;">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pg-bar" id="auditPager"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var shell = document.getElementById('shell');
+  var root = document.documentElement;
+
+  function safeGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function safeSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+
+  // Theme
+  var themeLabel = document.getElementById('themeLabel');
+  function applyTheme(t){
+    if(t === 'dark'){ root.setAttribute('data-theme','dark'); themeLabel.textContent = 'Dark theme'; }
+    else if(t === 'light'){ root.setAttribute('data-theme','light'); themeLabel.textContent = 'Light theme'; }
+    else { root.removeAttribute('data-theme'); themeLabel.textContent = 'System theme'; }
+  }
+  var savedTheme = safeGet('qaais_theme') || 'light';
+  applyTheme(savedTheme);
+  document.getElementById('themeToggle').addEventListener('click', function(){
+    var cur = root.getAttribute('data-theme') || 'light';
+    var next = cur === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    safeSet('qaais_theme', next);
+  });
+
+  // Sidebar collapse
+  var collapsed = safeGet('qaais_collapsed') === '1';
+  if(collapsed) shell.classList.add('collapsed');
+  function toggleCollapse(){
+    shell.classList.toggle('collapsed');
+    safeSet('qaais_collapsed', shell.classList.contains('collapsed') ? '1' : '0');
+  }
+  document.querySelectorAll('#collapseBtn, #collapseBtn2, .generic-collapse').forEach(function(b){ b.addEventListener('click', toggleCollapse); });
+
+  // Sidebar nav
+  var navItems = document.querySelectorAll('.nav-item');
+  var pages = document.querySelectorAll('[data-page-content]');
+  navItems.forEach(function(item){
+    item.addEventListener('click', function(){
+      navItems.forEach(function(n){ n.classList.remove('active'); });
+      item.classList.add('active');
+      var target = item.getAttribute('data-page');
+      pages.forEach(function(p){ p.style.display = (p.getAttribute('data-page-content') === target) ? 'flex' : 'none'; p.style.flexDirection='column'; p.style.height='100%'; });
+    });
+  });
+  pages.forEach(function(p){ p.style.flexDirection='column'; p.style.height='100%'; });
+
+  // Tab strips — page-level (Dashboard, QA Automation, Settings, User
+  // Management…). Each strip only ever controls the panel container
+  // immediately after it, and only
+  // that container's own DIRECT-child panels — never panels belonging to
+  // a tabstrip nested further inside one of those panels — so multiple
+  // tab levels can sit on the same page without cross-wiring each other.
+  document.querySelectorAll('.tabstrip').forEach(function(strip){
+    var container = strip.nextElementSibling;
+    if(!container) return;
+    strip.querySelectorAll(':scope > .tab').forEach(function(tabBtn){
+      tabBtn.addEventListener('click', function(){
+        strip.querySelectorAll(':scope > .tab').forEach(function(t){ t.classList.remove('active'); });
+        tabBtn.classList.add('active');
+        var target = tabBtn.getAttribute('data-tab');
+        if(!target) return;
+        container.querySelectorAll(':scope > .panel').forEach(function(p){ p.classList.toggle('active', p.id === target); });
+      });
+    });
+  });
+
+  // Cross-tab shortcuts: a few buttons jump straight to a specific tab
+  // (possibly on a different page) instead of duplicating that tab's
+  // content in two places.
+  var viewAllRunsBtn = document.getElementById('viewAllRunsBtn');
+  if(viewAllRunsBtn){ viewAllRunsBtn.addEventListener('click', function(){ var t = document.getElementById('tabDashRuns'); if(t) t.click(); }); }
+  var openExecLogBtn = document.getElementById('openExecLogBtn');
+  if(openExecLogBtn){
+    openExecLogBtn.addEventListener('click', function(){
+      var navAutomation = document.querySelector('.nav-item[data-page="automation"]');
+      if(navAutomation) navAutomation.click();
+      var t = document.getElementById('tabAutoLog');
+      if(t) t.click();
+    });
+  }
+
+  // Filter chips (visual only)
+  document.querySelectorAll('.chip-filter').forEach(function(group){
+    group.querySelectorAll('.chip').forEach(function(chip){
+      chip.addEventListener('click', function(){
+        group.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('active'); });
+        chip.classList.add('active');
+      });
+    });
+  });
+
+  // Test case row -> detail panel (demo data for 3 rows, others reuse TC003 shape)
+  var demo = {
+    tc001: { id:'TC001', title:'Submit new goods declaration, HS code valid', type:'Playwright', result:'pass', resultLabel:'Pass' },
+    tc003: { id:'TC003', title:'Initiate payment for assessed declaration', type:'API', result:'fail', resultLabel:'Fail' },
+    tc007: { id:'TC007', title:'Login with expired session token', type:'Playwright', result:'blocked', resultLabel:'Blocked' }
+  };
+  var detailId = document.getElementById('detailId');
+  var detailTitle = document.getElementById('detailTitle');
+  var detailType = document.getElementById('detailType');
+  var detailResult = document.getElementById('detailResult');
+
+  // Named so pagination can re-wire these clicks after every re-render —
+  // Test Cases is a "static" grid whose rows still get replaced in the
+  // DOM on each page turn, same as a live grid.
+  function wireTcRowClicks(){
+    document.querySelectorAll('.tc-row').forEach(function(row){
+      row.addEventListener('click', function(){
+        document.querySelectorAll('.tc-row').forEach(function(r){ r.classList.remove('selected'); });
+        row.classList.add('selected');
+        var key = row.getAttribute('data-tc');
+        var d = demo[key];
+        if(!d) return;
+        detailId.textContent = d.id;
+        detailTitle.textContent = d.title;
+        detailType.textContent = d.type;
+        detailResult.className = 'pill pill-' + d.result;
+        detailResult.innerHTML = '<span class="pill-dot"></span>' + d.resultLabel;
+      });
+    });
+  }
+  wireTcRowClicks();
+
+  // Detail sub-tabs
+  document.querySelectorAll('.dtab').forEach(function(dt){
+    dt.addEventListener('click', function(){
+      var group = dt.closest('.detail-body') ? dt.parentElement.parentElement : null;
+      var parent = dt.parentElement.parentElement;
+      parent.querySelectorAll('.dtab').forEach(function(t){ t.classList.remove('active'); });
+      dt.classList.add('active');
+      var target = dt.getAttribute('data-dtab');
+      parent.querySelectorAll('.detail-panel-view').forEach(function(v){ v.classList.toggle('active', v.id === target); });
+    });
+  });
+
+  // ================================================================
+  // LIVE BACKEND WIRING (Milestone 6 — Login / Roles / Permissions /
+  // Audit Log). Everything below talks to the real FastAPI server
+  // instead of the static demo data used above for Dashboard/QA
+  // Automation, which still belong to milestones that aren't built
+  // yet. Change API_BASE if your server isn't on localhost:8000.
+  // ================================================================
+  var API_BASE = 'http://localhost:8000';
+  var apiBaseLabelEl = document.getElementById('apiBaseLabel');
+  if(apiBaseLabelEl) apiBaseLabelEl.textContent = API_BASE;
+
+  var authState = { token: null, user: null, permissions: {} };
+
+  function toast(msg, isError){
+    var t = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    t.className = 'toast show' + (isError ? ' error' : '');
+    clearTimeout(t._hideTimer);
+    t._hideTimer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
+  }
+  document.getElementById('toastClose').addEventListener('click', function(){
+    var t = document.getElementById('toast');
+    clearTimeout(t._hideTimer);
+    t.classList.remove('show');
+  });
+
+  // ---- Copy-to-clipboard (used by the temporary-password banner) ----
+  function copyToClipboard(text){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).catch(function(){ fallbackCopy(text); });
+    } else {
+      fallbackCopy(text);
+    }
+  }
+  function fallbackCopy(text){
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try { document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  // ---- Temporary-password banner: dismissible ('X') + one-click copy ----
+  function showTempPasswordBanner(messageHtml, password){
+    var container = document.getElementById('tempPasswordBanner');
+    container.innerHTML =
+      '<div class="temp-pass-banner">' +
+        '<span>' + messageHtml + ' <strong>' + escapeHtml(password) + '</strong> — share this with the user directly; it will not be shown again.</span>' +
+        '<button type="button" class="banner-icon-btn" id="tempPassCopyBtn" data-tip="Copy password" title="Copy password"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' +
+        '<button type="button" class="banner-icon-btn" id="tempPassCloseBtn" data-tip="Dismiss" title="Dismiss"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+      '</div>';
+    document.getElementById('tempPassCopyBtn').addEventListener('click', function(){
+      copyToClipboard(password);
+      toast('Password copied to clipboard.');
+    });
+    document.getElementById('tempPassCloseBtn').addEventListener('click', function(){
+      container.innerHTML = '';
+    });
+  }
+
+  // ---- Timestamp formatting: 'DD-MMM-YYYY, HH:MM:SS', used everywhere a
+  // stored ISO date is shown to the user (audit log, etc.). ----
+  var MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function formatDateTime(isoString){
+    if(!isoString) return '—';
+    var d = new Date(isoString);
+    if(isNaN(d.getTime())) return String(isoString);
+    function pad(n){ return n < 10 ? '0' + n : '' + n; }
+    return pad(d.getDate()) + '-' + MONTH_ABBR[d.getMonth()] + '-' + d.getFullYear() + ', ' +
+      pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    if(authState.token) headers['Authorization'] = 'Bearer ' + authState.token;
+    return fetch(API_BASE + path, Object.assign({}, opts, { headers: headers }))
+      .then(function(res){
+        if(res.status === 401){
+          var wasLoggedIn = !!authState.token;
+          doLogout(true);
+          if(wasLoggedIn) toast('Session expired — please sign in again.', true);
+          throw new Error('Session expired or invalid.');
+        }
+        return res.json().catch(function(){ return {}; }).then(function(data){
+          if(!res.ok){ throw new Error((data && data.detail) || ('Request failed (' + res.status + ')')); }
+          return data;
+        });
+      });
+  }
+
+  function hasPermission(resource, action){
+    var actions = authState.permissions[resource];
+    return !!(actions && actions.indexOf(action) !== -1);
+  }
+
+  function applyPermissions(){
+    document.querySelectorAll('.nav-item[data-resource]').forEach(function(item){
+      var resource = item.getAttribute('data-resource');
+      item.classList.toggle('disabled', !hasPermission(resource, 'view'));
+    });
+  }
+
+  function showShell(){
+    document.getElementById('authScreen').style.display = 'none';
+    shell.style.display = 'flex';
+  }
+  function showAuthScreen(){
+    shell.style.display = 'none';
+    document.getElementById('authScreen').style.display = 'flex';
+  }
+
+  function setProfile(user){
+    var initials = (user.full_name || user.username || '?').trim().split(/\s+/).map(function(s){ return s[0]; }).slice(0,2).join('').toUpperCase();
+    document.getElementById('profileAvatar').textContent = initials || '?';
+    document.getElementById('profileName').textContent = user.full_name || user.username;
+    document.getElementById('profileRole').textContent = user.role_name || '';
+  }
+
+  function afterAuthenticated(me, justLoggedInMustChange){
+    authState.user = me;
+    authState.permissions = me.permissions || {};
+    setProfile(me);
+    applyPermissions();
+    showShell();
+    if(justLoggedInMustChange || me.must_change_password) openChangePasswordModal();
+    if(hasPermission('users', 'view')) loadUsersAndAccess();
+    if(hasPermission('knowledge', 'view')) loadKnowledgeHub();
+    if(hasPermission('ai_assistant', 'view')) loadAiHistory();
+    if(hasPermission('dashboard', 'view')) loadDashboard();
+  }
+
+  function loadSession(){
+    var savedToken = safeGet('qaais_token');
+    if(!savedToken){ showAuthScreen(); return; }
+    authState.token = savedToken;
+    apiFetch('/api/auth/me').then(function(me){ afterAuthenticated(me, false); })
+      .catch(function(){ safeSet('qaais_token', ''); showAuthScreen(); });
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var username = document.getElementById('loginUsername').value.trim();
+    var password = document.getElementById('loginPassword').value;
+    var errBox = document.getElementById('loginError');
+    errBox.classList.remove('show');
+    var btn = document.getElementById('loginSubmit');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    fetch(API_BASE + '/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    }).then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ return { ok: res.ok, data: data }; }); })
+      .then(function(result){
+        btn.disabled = false; btn.textContent = 'Sign in';
+        if(!result.ok){
+          errBox.textContent = (result.data && result.data.detail) || 'Login failed.';
+          errBox.classList.add('show');
+          return;
+        }
+        authState.token = result.data.token;
+        safeSet('qaais_token', authState.token);
+        apiFetch('/api/auth/me').then(function(me){ afterAuthenticated(me, result.data.must_change_password); });
+      }).catch(function(){
+        btn.disabled = false; btn.textContent = 'Sign in';
+        errBox.textContent = 'Could not reach the QA AI Studio API at ' + API_BASE + ' — is uvicorn running?';
+        errBox.classList.add('show');
+      });
+  });
+
+  function doLogout(silent){
+    if(authState.token && !silent){ apiFetch('/api/auth/logout', { method: 'POST' }).catch(function(){}); }
+    authState.token = null; authState.user = null; authState.permissions = {};
+    safeSet('qaais_token', '');
+    stopAuditPolling();
+    showAuthScreen();
+    document.getElementById('loginPassword').value = '';
+  }
+  document.getElementById('logoutBtn').addEventListener('click', function(){ doLogout(false); });
+
+  function openChangePasswordModal(){ document.getElementById('changePasswordModal').classList.add('show'); }
+  document.getElementById('changePasswordBtn').addEventListener('click', openChangePasswordModal);
+  document.getElementById('cpCancel').addEventListener('click', function(){
+    document.getElementById('changePasswordModal').classList.remove('show');
+  });
+  document.getElementById('changePasswordForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var errBox = document.getElementById('changePasswordError');
+    errBox.classList.remove('show');
+    apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: document.getElementById('cpCurrent').value, new_password: document.getElementById('cpNew').value })
+    }).then(function(){
+      document.getElementById('changePasswordModal').classList.remove('show');
+      document.getElementById('cpCurrent').value = '';
+      document.getElementById('cpNew').value = '';
+      toast('Password changed.');
+    }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); });
+  });
+
+  // ---- Search + pagination, shared by every data grid in the app ----
+  // One component handles both: search matches the WHOLE record (every
+  // meaningful field, not one column — rows carry a data-search string
+  // built from real field values so a <select>'s hidden, unselected
+  // <option> text can never cause a false match), and pagination pages
+  // through whatever the search left visible, with a rows-per-page
+  // choice of 10/50/100/500 remembered per grid.
+  //
+  // setRows([{html, search}, ...]) feeds it data — called once for a
+  // static/demo grid (captured from the table's original markup) or
+  // every time fresh data loads for a live grid (Users, Roles, Audit).
+  function createGridController(cfg){
+    var tbody = cfg.tbody;
+    var footer = cfg.footer;
+    var searchInput = cfg.searchInput;
+    var pageSizeKey = 'qaais_pgsize_' + cfg.name;
+    var allRows = [];
+    var query = '';
+    var extraFilter = null; // optional fn(row) -> bool, e.g. audit date range
+    var page = 1;
+    var pageSize = parseInt(safeGet(pageSizeKey) || '10', 10) || 10;
+
+    function visibleRows(){
+      return allRows.filter(function(r){
+        if(query && r.search.indexOf(query) === -1) return false;
+        if(extraFilter && !extraFilter(r)) return false;
+        return true;
+      });
+    }
+
+    function render(){
+      var rows = visibleRows();
+      var totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+      if(page > totalPages) page = totalPages;
+      var start = (page - 1) * pageSize;
+      var pageRows = rows.slice(start, start + pageSize);
+      tbody.innerHTML = pageRows.length
+        ? pageRows.map(function(r){ return r.html; }).join('')
+        : '<tr><td colspan="' + cfg.colSpan + '" class="muted-small" style="padding:12px 10px;">' + (cfg.emptyText || 'No records found.') + '</td></tr>';
+      if(cfg.onRendered) cfg.onRendered(tbody);
+      renderFooter(rows.length, start, pageRows.length, totalPages);
+    }
+
+    function renderFooter(total, start, count, totalPages){
+      if(!footer) return;
+      if(!total){ footer.innerHTML = ''; return; }
+      var from = start + 1;
+      var to = start + count;
+      footer.innerHTML =
+        '<div class="pg-info">Showing ' + from + '–' + to + ' of ' + total + '</div>' +
+        '<div class="pg-controls">' +
+          '<button class="pg-btn" data-pg="prev"' + (page <= 1 ? ' disabled' : '') + '>‹</button>' +
+          buildPageButtons(page, totalPages) +
+          '<button class="pg-btn" data-pg="next"' + (page >= totalPages ? ' disabled' : '') + '>›</button>' +
+          '<select class="pg-size" id="' + footer.id + '-size">' +
+            [10, 50, 100, 500].map(function(n){ return '<option value="' + n + '"' + (n === pageSize ? ' selected' : '') + '>' + n + ' / page</option>'; }).join('') +
+          '</select>' +
+        '</div>';
+      footer.querySelectorAll('[data-pg]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          if(btn.disabled) return;
+          var dir = btn.getAttribute('data-pg');
+          if(dir === 'prev') page = Math.max(1, page - 1);
+          else if(dir === 'next') page = page + 1;
+          else page = parseInt(dir, 10);
+          render();
+        });
+      });
+      var sizeSel = document.getElementById(footer.id + '-size');
+      if(sizeSel){
+        sizeSel.addEventListener('change', function(){
+          pageSize = parseInt(sizeSel.value, 10);
+          safeSet(pageSizeKey, String(pageSize));
+          page = 1;
+          render();
+        });
+      }
+    }
+
+    function buildPageButtons(current, total){
+      var windowSize = 5;
+      var startPage = Math.max(1, current - Math.floor(windowSize / 2));
+      var endPage = Math.min(total, startPage + windowSize - 1);
+      startPage = Math.max(1, endPage - windowSize + 1);
+      var html = '';
+      for(var p = startPage; p <= endPage; p++){
+        html += '<button class="pg-btn pg-num' + (p === current ? ' active' : '') + '" data-pg="' + p + '">' + p + '</button>';
+      }
+      return html;
+    }
+
+    if(searchInput){
+      searchInput.addEventListener('input', function(){
+        query = searchInput.value.trim().toLowerCase();
+        page = 1;
+        render();
+      });
+    }
+
+    return {
+      setRows: function(rows){ allRows = rows; page = 1; render(); },
+      setExtraFilter: function(fn){ extraFilter = fn; page = 1; render(); },
+      render: render,
+      getAllRows: function(){ return allRows; },
+    };
+  }
+
+  // Turns a static/demo table's existing hardcoded <tr> markup into the
+  // {html, search} array the controller needs, captured once at page
+  // load — the table's own current rows are the "data".
+  function captureStaticRows(tbody){
+    return Array.prototype.slice.call(tbody.querySelectorAll(':scope > tr')).map(function(tr){
+      return {
+        html: tr.outerHTML,
+        search: (tr.hasAttribute('data-search') ? tr.getAttribute('data-search') : tr.textContent).toLowerCase(),
+      };
+    });
+  }
+
+  function initStaticGrid(tbodyId, searchInputId, footerId, colSpan, onRendered){
+    var tbody = document.getElementById(tbodyId);
+    if(!tbody) return null;
+    var rows = captureStaticRows(tbody);
+    var controller = createGridController({
+      name: tbodyId,
+      tbody: tbody,
+      searchInput: document.getElementById(searchInputId),
+      footer: document.getElementById(footerId),
+      colSpan: colSpan,
+      onRendered: onRendered,
+    });
+    controller.setRows(rows);
+    return controller;
+  }
+
+  // Static/demo grids — data captured once, pagination + search apply
+  // exactly like the live grids below. Test Cases re-wires its
+  // row-click-to-detail-panel behavior after every re-render, since
+  // pagination replaces the row DOM nodes just like a live grid would.
+  initStaticGrid('tcTable', 'tcSearch', 'tcPager', 6, wireTcRowClicks);
+  initStaticGrid('execLogTableBody', 'execLogSearch', null, 4);
+
+  // ---- Users & Access (Settings) ----
+  var RESOURCES = ['knowledge','qa_engineering','automation','ai_assistant','dashboard','settings','users'];
+  var ACTIONS = ['view','create','edit','delete','execute'];
+  var TOTAL_GRANTS = RESOURCES.length * ACTIONS.length;
+  var rolesCache = [];
+  var usersCache = [];
+  var auditPollTimer = null;
+  var AUDIT_POLL_MS = 15000;
+
+  function isAdmin(){
+    return !!(authState.user && authState.user.role_name === 'Admin');
+  }
+
+  // ---- Generic Yes/No delete confirmation, reused for single-row and
+  // bulk delete of both Users and Roles ----
+  function confirmDelete(title, sub, onConfirm){
+    var modal = document.getElementById('confirmDeleteModal');
+    document.getElementById('confirmDeleteTitle').textContent = title;
+    document.getElementById('confirmDeleteSub').textContent = sub;
+    var errBox = document.getElementById('confirmDeleteError');
+    errBox.classList.remove('show');
+    modal.classList.add('show');
+    var yesBtn = document.getElementById('confirmDeleteYes');
+    function cleanup(){
+      modal.classList.remove('show');
+      yesBtn.removeEventListener('click', onYes);
+    }
+    function onYes(){
+      yesBtn.disabled = true;
+      Promise.resolve(onConfirm()).then(function(){
+        yesBtn.disabled = false;
+        cleanup();
+      }).catch(function(err){
+        yesBtn.disabled = false;
+        errBox.textContent = err.message;
+        errBox.classList.add('show');
+      });
+    }
+    yesBtn.addEventListener('click', onYes);
+    document.getElementById('confirmDeleteNo').onclick = cleanup;
+  }
+
+  var usersController = createGridController({
+    name: 'users', tbody: document.getElementById('usersTableBody'),
+    searchInput: document.getElementById('usersSearch'),
+    footer: document.getElementById('usersPager'), colSpan: 7,
+    emptyText: 'No users yet.', onRendered: wireUserRowActions,
+  });
+  var rolesController = createGridController({
+    name: 'roles', tbody: document.getElementById('rolesTableBody'),
+    searchInput: document.getElementById('rolesSearch'),
+    footer: document.getElementById('rolesPager'), colSpan: 5,
+    emptyText: 'No roles yet.', onRendered: wireRoleRowActions,
+  });
+  var khController = createGridController({
+    name: 'knowledge', tbody: document.getElementById('khTableBody'),
+    searchInput: document.getElementById('khSearch'),
+    footer: document.getElementById('khPager'), colSpan: 9,
+    emptyText: 'No knowledge items yet — upload the first document to get started.',
+    onRendered: wireKhRowActions,
+  });
+
+  // ---- Knowledge Hub (Milestone 1) ----
+  var khCache = [];
+  var khModulesByDomain = {};
+
+  function loadKnowledgeHub(){
+    Promise.all([
+      apiFetch('/api/knowledge/items'),
+      apiFetch('/api/knowledge/domains'),
+    ]).then(function(results){
+      khCache = results[0].items;
+      renderKnowledgeItems(khCache);
+      populateKhDomainFilter(results[1].domains);
+      populateKhDomainList(results[1].domains);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function populateKhDomainFilter(domains){
+    var sel = document.getElementById('khDomainFilter');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">All domains</option>' +
+      domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+    sel.value = current;
+    refreshKhModuleFilterOptions();
+  }
+
+  function populateKhDomainList(domains){
+    document.getElementById('khDomainList').innerHTML =
+      domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">'; }).join('');
+  }
+
+  function refreshKhModuleFilterOptions(){
+    var domain = document.getElementById('khDomainFilter').value;
+    var modSel = document.getElementById('khModuleFilter');
+    var current = modSel.value;
+    var modules = domain
+      ? Array.from(new Set(khCache.filter(function(i){ return i.domain === domain; }).map(function(i){ return i.module; })))
+      : Array.from(new Set(khCache.map(function(i){ return i.module; })));
+    modules.sort();
+    modSel.innerHTML = '<option value="">All modules</option>' +
+      modules.map(function(m){ return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('');
+    if(modules.indexOf(current) !== -1) modSel.value = current;
+  }
+
+  function fetchKhModuleDatalist(domain){
+    if(!domain){ document.getElementById('khModuleList').innerHTML = ''; return; }
+    apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules')
+      .then(function(r){
+        document.getElementById('khModuleList').innerHTML =
+          r.modules.map(function(m){ return '<option value="' + escapeHtml(m) + '">'; }).join('');
+      }).catch(function(){ /* datalist is a convenience, not required */ });
+  }
+
+  function applyKhFilters(){
+    var domain = document.getElementById('khDomainFilter').value;
+    var module = document.getElementById('khModuleFilter').value;
+    khController.setExtraFilter(function(row){
+      var item = row._item;
+      if(domain && item.domain !== domain) return false;
+      if(module && item.module !== module) return false;
+      return true;
+    });
+  }
+
+  function fmtDate(iso){
+    if(!iso) return '—';
+    return String(iso).slice(0, 10);
+  }
+
+  function confidencePill(c){
+    var pct = Math.round((c || 0) * 100);
+    var cls = pct >= 60 ? 'pill-pass' : (pct >= 30 ? 'pill-notrun' : 'pill-fail');
+    return '<span class="pill ' + cls + '">' + pct + '%</span>';
+  }
+
+  function renderKnowledgeItems(items){
+    document.getElementById('khCount').textContent = items.length + ' item' + (items.length === 1 ? '' : 's');
+    var canEdit = hasPermission('knowledge', 'edit');
+    var canDelete = hasPermission('knowledge', 'delete');
+    var rows = items.map(function(item){
+      var tags = (item.tags || []).join(', ');
+      var searchText = [item.knowledge_name, item.domain, item.module, item.version, item.document_type, item.summary, tags].join(' ').toLowerCase();
+      var html = '<tr data-search="' + escapeHtml(searchText) + '" data-kh-id="' + item.id + '">' +
+        '<td><div style="font-weight:600;">' + escapeHtml(item.knowledge_name) + '</div>' + (tags ? '<div class="muted-small">' + escapeHtml(tags) + '</div>' : '') + '</td>' +
+        '<td class="muted-small">' + escapeHtml(item.domain) + '</td>' +
+        '<td class="muted-small">' + escapeHtml(item.module) + '</td>' +
+        '<td class="muted-small mono">' + escapeHtml(item.version) + '</td>' +
+        '<td class="muted-small">' + escapeHtml(item.document_type || '—') + '</td>' +
+        '<td class="muted-small">' + escapeHtml(item.summary || '—') + '</td>' +
+        '<td>' + confidencePill(item.confidence) + '</td>' +
+        '<td class="muted-small">' + fmtDate(item.created_date) + '</td>' +
+        '<td><div class="row-actions" style="justify-content:flex-end;">' +
+          (canEdit ? '<button data-tip="Edit" data-action="kh-edit" data-kh-id="' + item.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' : '') +
+          (canDelete ? '<button data-tip="Delete" data-action="kh-delete" data-kh-id="' + item.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>' : '') +
+        '</div></td>' +
+      '</tr>';
+      return { html: html, search: searchText, _item: item };
+    });
+    khController.setRows(rows);
+    applyKhFilters();
+  }
+
+  function wireKhRowActions(body){
+    body.querySelectorAll('[data-action="kh-edit"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = parseInt(btn.getAttribute('data-kh-id'), 10);
+        var item = khCache.filter(function(i){ return i.id === id; })[0];
+        if(item) openKhEditModal(item);
+      });
+    });
+    body.querySelectorAll('[data-action="kh-delete"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = parseInt(btn.getAttribute('data-kh-id'), 10);
+        var item = khCache.filter(function(i){ return i.id === id; })[0];
+        if(!item) return;
+        confirmDelete(
+          'Delete "' + item.knowledge_name + '" v' + item.version + '?',
+          'This removes this version\'s stored file and its indexed content. Other versions of the same knowledge item are not affected. This cannot be undone from here.',
+          function(){
+            return apiFetch('/api/knowledge/items/' + id, { method: 'DELETE' })
+              .then(function(){ toast('Deleted.'); loadKnowledgeHub(); });
+          }
+        );
+      });
+    });
+  }
+
+  function openKhEditModal(item){
+    document.getElementById('khEditError').classList.remove('show');
+    document.getElementById('khEditName').value = item.knowledge_name;
+    document.getElementById('khEditDomain').value = item.domain;
+    document.getElementById('khEditModule').value = item.module;
+    document.getElementById('khEditVersion').value = item.version;
+    document.getElementById('khEditDocType').value = item.document_type || '';
+    document.getElementById('khEditSummary').value = item.summary || '';
+    document.getElementById('khEditTags').value = (item.tags || []).join(', ');
+    document.getElementById('khEditModal').setAttribute('data-kh-id', item.id);
+    document.getElementById('khEditModal').classList.add('show');
+  }
+
+  document.getElementById('khEditCancel').addEventListener('click', function(){
+    document.getElementById('khEditModal').classList.remove('show');
+  });
+  document.getElementById('khEditSave').addEventListener('click', function(){
+    var errBox = document.getElementById('khEditError');
+    errBox.classList.remove('show');
+    var id = parseInt(document.getElementById('khEditModal').getAttribute('data-kh-id'), 10);
+    var tags = document.getElementById('khEditTags').value.split(',').map(function(t){ return t.trim(); }).filter(Boolean);
+    var payload = {
+      document_type: document.getElementById('khEditDocType').value.trim(),
+      summary: document.getElementById('khEditSummary').value.trim(),
+      tags: tags,
+    };
+    apiFetch('/api/knowledge/items/' + id, { method: 'PATCH', body: JSON.stringify(payload) })
+      .then(function(){
+        document.getElementById('khEditModal').classList.remove('show');
+        toast('Saved.');
+        loadKnowledgeHub();
+      }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); });
+  });
+
+  document.getElementById('khDomainFilter').addEventListener('change', function(){
+    refreshKhModuleFilterOptions();
+    applyKhFilters();
+  });
+  document.getElementById('khModuleFilter').addEventListener('change', applyKhFilters);
+  document.getElementById('khClearFilters').addEventListener('click', function(){
+    document.getElementById('khDomainFilter').value = '';
+    refreshKhModuleFilterOptions();
+    document.getElementById('khModuleFilter').value = '';
+    applyKhFilters();
+  });
+  document.getElementById('khUpDomain').addEventListener('change', function(){
+    fetchKhModuleDatalist(this.value.trim());
+  });
+
+  function switchToKhTab(tabName){
+    var strip = document.querySelector('[data-page-content="knowledge"] .tabstrip');
+    var btn = strip && strip.querySelector('[data-tab="' + tabName + '"]');
+    if(btn) btn.click();
+  }
+
+  document.getElementById('khUploadTabBtn').addEventListener('click', function(){
+    switchToKhTab('kh-upload');
+  });
+
+  document.getElementById('khUploadBtn').addEventListener('click', function(){
+    var errBox = document.getElementById('khUploadError');
+    errBox.classList.remove('show');
+    var domain = document.getElementById('khUpDomain').value.trim();
+    var module = document.getElementById('khUpModule').value.trim();
+    var name = document.getElementById('khUpName').value.trim();
+    var version = document.getElementById('khUpVersion').value.trim() || '1.0';
+    var docType = document.getElementById('khUpDocType').value.trim();
+    var fileInput = document.getElementById('khUpFile');
+    var file = fileInput.files && fileInput.files[0];
+    if(!domain || !module || !name || !file){
+      errBox.textContent = 'Domain, Module, Knowledge Name and a file are all required.';
+      errBox.classList.add('show');
+      return;
+    }
+    var uploadBtn = document.getElementById('khUploadBtn');
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading…';
+    var formData = new FormData();
+    formData.append('file', file);
+    formData.append('domain', domain);
+    formData.append('module', module);
+    formData.append('knowledge_name', name);
+    formData.append('version', version);
+    formData.append('document_type', docType);
+    var headers = {};
+    if(authState.token) headers['Authorization'] = 'Bearer ' + authState.token;
+    fetch(API_BASE + '/api/knowledge/upload', { method: 'POST', headers: headers, body: formData })
+      .then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(data){
+          if(!res.ok) throw new Error((data && data.detail) || ('Upload failed (' + res.status + ')'));
+          return data;
+        });
+      })
+      .then(function(result){
+        toast('Uploaded "' + name + '" v' + version + '.');
+        document.getElementById('khUploadResult').innerHTML =
+          '<div class="card-body" style="border:1px solid var(--border); border-radius:8px; margin-top:14px; padding:12px;">' +
+          '<div style="font-weight:600; margin-bottom:6px;">Analysis result</div>' +
+          '<div class="kv"><dt>Platform</dt><dd>' + escapeHtml(result.platform || '—') + '</dd>' +
+          '<dt>Category</dt><dd>' + escapeHtml(result.category || '—') + '</dd>' +
+          '<dt>Summary</dt><dd>' + escapeHtml(result.summary || '—') + '</dd>' +
+          '<dt>Tags</dt><dd>' + escapeHtml((result.tags || []).join(', ') || '—') + '</dd>' +
+          '<dt>Confidence</dt><dd>' + confidencePill(result.confidence) + '</dd>' +
+          '<dt>Chunks / Vectors saved</dt><dd>' + (result.total_chunks || 0) + ' / ' + (result.vectors_saved || 0) + '</dd></div>' +
+          '<button type="button" class="btn" style="margin-top:10px;" id="khViewInBrowseBtn">View in Browse</button>' +
+          '</div>';
+        document.getElementById('khViewInBrowseBtn').addEventListener('click', function(){
+          document.getElementById('khSearch').value = name;
+          switchToKhTab('kh-browse');
+          loadKnowledgeHub();
+        });
+        fileInput.value = '';
+        loadKnowledgeHub();
+      })
+      .catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); })
+      .finally(function(){
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload';
+      });
+  });
+
+  function updateBulkDeleteButton(tbodyId, btnId){
+    var body = document.getElementById(tbodyId);
+    var btn = document.getElementById(btnId);
+    if(!body || !btn) return;
+    var anyChecked = !!body.querySelector('.row-check:checked');
+    btn.style.display = (isAdmin() && anyChecked) ? '' : 'none';
+  }
+
+  function loadUsersAndAccess(){
+    Promise.all([
+      apiFetch('/api/users'),
+      apiFetch('/api/roles'),
+      apiFetch('/api/audit-logs?limit=300')
+    ]).then(function(results){
+      rolesCache = results[1].roles;
+      usersCache = results[0].users;
+      renderUsers(usersCache, rolesCache);
+      renderRoles(rolesCache);
+      renderAuditLog(results[2].audit_logs);
+      populateRoleSelect(rolesCache);
+      startAuditPolling();
+      document.getElementById('usersSelectAll').closest('th').style.display = isAdmin() ? '' : 'none';
+      document.getElementById('rolesSelectAll').closest('th').style.display = isAdmin() ? '' : 'none';
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function startAuditPolling(){
+    stopAuditPolling();
+    auditPollTimer = setInterval(refreshAuditLog, AUDIT_POLL_MS);
+  }
+  function stopAuditPolling(){
+    if(auditPollTimer){ clearInterval(auditPollTimer); auditPollTimer = null; }
+  }
+  function refreshAuditLog(){
+    apiFetch('/api/audit-logs?limit=300').then(function(r){ renderAuditLog(r.audit_logs); }).catch(function(){ /* silent — polling shouldn't spam toasts */ });
+  }
+
+  function populateRoleSelect(roles){
+    document.getElementById('newUserRole').innerHTML =
+      roles.map(function(r){ return '<option value="' + r.id + '">' + escapeHtml(r.name) + '</option>'; }).join('');
+  }
+
+  function escapeHtml(str){
+    return String(str == null ? '' : str).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+
+  function renderUsers(users, roles){
+    document.getElementById('usersCount').textContent = users.length + ' user' + (users.length === 1 ? '' : 's');
+    var rows = users.map(function(u){
+      var roleName = (roles.filter(function(r){ return r.id === u.role_id; })[0] || {}).name || '—';
+      var statusWord = u.is_active ? 'active' : 'disabled inactive';
+      var searchText = [u.id, u.full_name, u.username, u.email, u.contact_number, roleName, statusWord].join(' ').toLowerCase();
+      var html = '<tr data-search="' + escapeHtml(searchText) + '" data-user-id="' + u.id + '">' +
+        '<td class="col-check" style="display:' + (isAdmin() ? '' : 'none') + '"><input type="checkbox" class="row-check" data-user-id="' + u.id + '"></td>' +
+        '<td class="muted-small num">' + u.id + '</td>' +
+        '<td><div style="font-weight:600;">' + escapeHtml(u.full_name || u.username) + '</div><div class="muted-small mono">' + escapeHtml(u.username) + '</div></td>' +
+        '<td class="muted-small">' + escapeHtml(u.email || '—') + '</td>' +
+        '<td>' + escapeHtml(roleName) + '</td>' +
+        '<td>' + (u.is_active ? '<span class="pill pill-status-active">Active</span>' : '<span class="pill pill-status-inactive">Disabled</span>') + '</td>' +
+        '<td><div class="row-actions" style="justify-content:flex-end;">' +
+          '<button data-tip="Edit user" data-action="edit-user" data-user-id="' + u.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+          '<button data-tip="Reset password" data-action="reset" data-user-id="' + u.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>' +
+          '<button data-tip="' + (u.is_active ? 'Disable' : 'Enable') + '" data-action="toggle-active" data-user-id="' + u.id + '" data-active="' + (u.is_active ? 'true' : 'false') + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v10"/><path d="M6.5 6.5a7 7 0 1 0 11 0"/></svg></button>' +
+        '</div></td>' +
+      '</tr>';
+      return { html: html, search: searchText };
+    });
+    usersController.setRows(rows);
+  }
+
+  function wireUserRowActions(body){
+    document.getElementById('usersSelectAll').checked = false;
+    document.getElementById('usersSelectAll').style.display = isAdmin() ? '' : 'none';
+    body.querySelectorAll('[data-action="toggle-active"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var makeActive = btn.getAttribute('data-active') !== 'true';
+        apiFetch('/api/users/' + btn.getAttribute('data-user-id') + '/active', {
+          method: 'PUT', body: JSON.stringify({ is_active: makeActive })
+        }).then(function(){ toast(makeActive ? 'User enabled.' : 'User disabled.'); loadUsersAndAccess(); })
+          .catch(function(err){ toast(err.message, true); });
+      });
+    });
+    body.querySelectorAll('[data-action="reset"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        apiFetch('/api/users/' + btn.getAttribute('data-user-id') + '/reset-password', { method: 'POST' })
+          .then(function(result){
+            showTempPasswordBanner('New temporary password:', result.temporary_password);
+          }).catch(function(err){ toast(err.message, true); });
+      });
+    });
+    body.querySelectorAll('[data-action="edit-user"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var userId = parseInt(btn.getAttribute('data-user-id'), 10);
+        var user = usersCache.filter(function(u){ return u.id === userId; })[0];
+        if(user) openEditUserModal(user);
+      });
+    });
+    body.querySelectorAll('.row-check').forEach(function(cb){
+      cb.addEventListener('change', function(){ updateBulkDeleteButton('usersTableBody', 'deleteSelectedUsersBtn'); });
+    });
+    updateBulkDeleteButton('usersTableBody', 'deleteSelectedUsersBtn');
+  }
+
+  document.getElementById('usersSelectAll').addEventListener('change', function(){
+    var checked = this.checked;
+    document.querySelectorAll('#usersTableBody .row-check').forEach(function(cb){ cb.checked = checked; });
+    updateBulkDeleteButton('usersTableBody', 'deleteSelectedUsersBtn');
+  });
+
+  document.getElementById('deleteSelectedUsersBtn').addEventListener('click', function(){
+    var ids = Array.prototype.slice.call(document.querySelectorAll('#usersTableBody .row-check:checked'))
+      .map(function(cb){ return parseInt(cb.getAttribute('data-user-id'), 10); });
+    if(!ids.length) return;
+    confirmDelete(
+      ids.length === 1 ? 'Delete this user?' : 'Delete ' + ids.length + ' users?',
+      'This deactivates and hides the account(s) — their history is kept for the audit log. This cannot be undone from here.',
+      function(){
+        return Promise.all(ids.map(function(id){ return apiFetch('/api/users/' + id, { method: 'DELETE' }); }))
+          .then(function(){ toast('Deleted.'); loadUsersAndAccess(); });
+      }
+    );
+  });
+
+  // ---- Edit user profile modal ----
+  function openEditUserModal(user){
+    document.getElementById('editUserError').classList.remove('show');
+    document.getElementById('editUserId').value = user.id;
+    document.getElementById('editUserUsername').value = user.username || '';
+    document.getElementById('editUserFullName').value = user.full_name || '';
+    document.getElementById('editUserEmail').value = user.email || '';
+    document.getElementById('editUserContact').value = user.contact_number || '';
+    var roleSel = document.getElementById('editUserRole');
+    roleSel.innerHTML = rolesCache.map(function(r){
+      return '<option value="' + r.id + '"' + (r.id === user.role_id ? ' selected' : '') + '>' + escapeHtml(r.name) + '</option>';
+    }).join('');
+    document.getElementById('editUserModal').dataset.userId = user.id;
+    document.getElementById('editUserModal').classList.add('show');
+  }
+  document.getElementById('editUserCancel').addEventListener('click', function(){
+    document.getElementById('editUserModal').classList.remove('show');
+  });
+  document.getElementById('editUserSave').addEventListener('click', function(){
+    var modal = document.getElementById('editUserModal');
+    var userId = modal.dataset.userId;
+    var errBox = document.getElementById('editUserError');
+    errBox.classList.remove('show');
+    var payload = {
+      username: document.getElementById('editUserUsername').value.trim(),
+      full_name: document.getElementById('editUserFullName').value.trim(),
+      email: document.getElementById('editUserEmail').value.trim(),
+      contact_number: document.getElementById('editUserContact').value.trim(),
+      role_id: parseInt(document.getElementById('editUserRole').value, 10),
+    };
+    if(!payload.username){ errBox.textContent = 'Username is required.'; errBox.classList.add('show'); return; }
+    apiFetch('/api/users/' + userId, { method: 'PUT', body: JSON.stringify(payload) })
+      .then(function(){
+        toast('User updated.');
+        modal.classList.remove('show');
+        loadUsersAndAccess();
+        if(authState.user && String(authState.user.id) === String(userId)){
+          apiFetch('/api/auth/me').then(function(me){ authState.user = me; setProfile(me); });
+        }
+      }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); });
+  });
+
+  function renderRoles(roles){
+    var rows = roles.map(function(role){
+      var grants = (role.permissions || []).length;
+      var searchText = [role.name, role.description, grants + '/' + TOTAL_GRANTS].join(' ').toLowerCase();
+      var canDelete = isAdmin() && !role.is_system;
+      var html = '<tr data-search="' + escapeHtml(searchText) + '" data-role-id="' + role.id + '">' +
+        '<td class="col-check" style="display:' + (canDelete ? '' : 'none') + '"><input type="checkbox" class="row-check" data-role-id="' + role.id + '"></td>' +
+        '<td style="font-weight:600;">' + escapeHtml(role.name) + '</td>' +
+        '<td class="muted-small">' + escapeHtml(role.description || '—') + '</td>' +
+        '<td class="muted-small num">' + grants + ' / ' + TOTAL_GRANTS + '</td>' +
+        '<td><div class="row-actions" style="justify-content:flex-end;">' +
+          '<button data-tip="View / edit permissions" data-action="edit-role-perms" data-role-id="' + role.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+        '</div></td>' +
+      '</tr>';
+      return { html: html, search: searchText };
+    });
+    rolesController.setRows(rows);
+  }
+
+  function wireRoleRowActions(body){
+    document.getElementById('rolesSelectAll').checked = false;
+    document.getElementById('rolesSelectAll').style.display = isAdmin() ? '' : 'none';
+    body.querySelectorAll('[data-action="edit-role-perms"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var roleId = parseInt(btn.getAttribute('data-role-id'), 10);
+        var role = rolesCache.filter(function(r){ return r.id === roleId; })[0];
+        if(role) openPermissionsModal('edit', role, false);
+      });
+    });
+    body.querySelectorAll('.row-check').forEach(function(cb){
+      cb.addEventListener('change', function(){ updateBulkDeleteButton('rolesTableBody', 'deleteSelectedRolesBtn'); });
+    });
+    updateBulkDeleteButton('rolesTableBody', 'deleteSelectedRolesBtn');
+  }
+
+  document.getElementById('rolesSelectAll').addEventListener('change', function(){
+    var checked = this.checked;
+    document.querySelectorAll('#rolesTableBody .row-check').forEach(function(cb){ cb.checked = checked; });
+    updateBulkDeleteButton('rolesTableBody', 'deleteSelectedRolesBtn');
+  });
+
+  document.getElementById('deleteSelectedRolesBtn').addEventListener('click', function(){
+    var ids = Array.prototype.slice.call(document.querySelectorAll('#rolesTableBody .row-check:checked'))
+      .map(function(cb){ return parseInt(cb.getAttribute('data-role-id'), 10); });
+    if(!ids.length) return;
+    confirmDelete(
+      ids.length === 1 ? 'Delete this role?' : 'Delete ' + ids.length + ' roles?',
+      'Roles with users still assigned can\'t be deleted — move those users to a different role first. This cannot be undone from here.',
+      function(){
+        return Promise.all(ids.map(function(id){ return apiFetch('/api/roles/' + id, { method: 'DELETE' }); }))
+          .then(function(){ toast('Deleted.'); loadUsersAndAccess(); });
+      }
+    );
+  });
+
+  // ---- Shared permissions modal (used for: editing a role from the Roles
+  // table, viewing/editing a user's permissions via their role, and
+  // creating a brand-new role with permissions picked up front) ----
+  function buildPermTableRows(permSet){
+    return RESOURCES.map(function(res){
+      var allChecked = ACTIONS.every(function(act){ return permSet[res + ':' + act]; });
+      var cells = ACTIONS.map(function(act){
+        var checked = permSet[res + ':' + act] ? ' checked' : '';
+        return '<td><input type="checkbox" data-resource="' + res + '" data-action="' + act + '"' + checked + '></td>';
+      }).join('');
+      return '<tr data-resource-row="' + res + '"><td>' + res.replace(/_/g, ' ') + '</td>' +
+        '<td><input type="checkbox" class="perm-row-all" data-resource-all="' + res + '"' + (allChecked ? ' checked' : '') + ' title="Select all rights for ' + res.replace(/_/g, ' ') + '"></td>' +
+        cells + '</tr>';
+    }).join('');
+  }
+
+  // Wires each row's "All" checkbox to toggle every action checkbox in
+  // that row, and keeps "All" in sync when individual boxes change —
+  // makes it obvious at a glance which resources are fully granted.
+  // Keeps the modal's master "All" checkbox (header) in sync with the
+  // per-resource "All" checkboxes below it: fully checked when every
+  // resource is fully granted, indeterminate when some but not all are,
+  // unchecked when none are.
+  function updateMasterPermCheckbox(modal){
+    var masterCb = document.getElementById('permSelectAllRights');
+    var rowAllCbs = Array.prototype.slice.call(modal.querySelectorAll('.perm-row-all'));
+    var checkedCount = rowAllCbs.filter(function(cb){ return cb.checked; }).length;
+    masterCb.checked = rowAllCbs.length > 0 && checkedCount === rowAllCbs.length;
+    masterCb.indeterminate = checkedCount > 0 && checkedCount < rowAllCbs.length;
+  }
+
+  function wirePermRowSelectAll(modal){
+    modal.querySelectorAll('.perm-row-all').forEach(function(allCb){
+      allCb.addEventListener('change', function(){
+        var res = allCb.getAttribute('data-resource-all');
+        modal.querySelectorAll('#permTableBody input[data-resource="' + res + '"]').forEach(function(cb){
+          if(!cb.disabled) cb.checked = allCb.checked;
+        });
+        updateMasterPermCheckbox(modal);
+      });
+    });
+    modal.querySelectorAll('#permTableBody tr[data-resource-row]').forEach(function(row){
+      var res = row.getAttribute('data-resource-row');
+      var allCb = row.querySelector('.perm-row-all');
+      row.querySelectorAll('input[data-resource="' + res + '"]').forEach(function(cb){
+        cb.addEventListener('change', function(){
+          var allChecked = ACTIONS.every(function(act){
+            var box = row.querySelector('input[data-resource="' + res + '"][data-action="' + act + '"]');
+            return box && box.checked;
+          });
+          allCb.checked = allChecked;
+          updateMasterPermCheckbox(modal);
+        });
+      });
+    });
+    // Master "All" checkbox in the table header — one click grants (or
+    // revokes) every resource's every action at once. Respects the
+    // same disabled/locked cells the per-resource "All" boxes respect
+    // (Admin's fully-locked grid, or the logged-in user's own protected
+    // users:view/edit), so it can never be used to bypass those guards.
+    var masterCb = document.getElementById('permSelectAllRights');
+    masterCb.onchange = function(){
+      modal.querySelectorAll('#permTableBody input[type="checkbox"][data-resource]').forEach(function(cb){
+        if(!cb.disabled) cb.checked = masterCb.checked;
+      });
+      modal.querySelectorAll('.perm-row-all').forEach(function(allCb){
+        if(!allCb.disabled) allCb.checked = masterCb.checked;
+      });
+      updateMasterPermCheckbox(modal);
+    };
+    updateMasterPermCheckbox(modal);
+  }
+
+  // Two levels of protection against locking someone out of the app by
+  // accident while editing permissions — this is exactly the scenario
+  // that happened live: only "knowledge" was left checked on Admin, which
+  // wiped users:view/edit (and everything else) in one save.
+  //   'full'    — the built-in Admin role. It's meant to always have every
+  //               grant, so its whole grid is locked on and read-only;
+  //               make a new role (or edit a non-Admin one) for anything
+  //               narrower than full access.
+  //   'partial' — any OTHER role the CURRENTLY LOGGED-IN user happens to
+  //               be in. Everything stays editable except users:view/edit,
+  //               which stay locked on so this account can't save away its
+  //               own ability to manage users and permissions.
+  //   null      — unprotected, fully editable.
+  function protectionLevelFor(role){
+    if(!role) return null;
+    if(role.is_system && role.name === 'Admin') return 'full';
+    if(authState.user && String(role.id) === String(authState.user.role_id)) return 'partial';
+    return null;
+  }
+
+  function openPermissionsModal(mode, role, viaUser){
+    var modal = document.getElementById('permissionsModal');
+    var nameField = document.getElementById('permRoleNameField');
+    var nameInput = document.getElementById('permRoleName');
+    var descField = document.getElementById('permRoleDescField');
+    var descInput = document.getElementById('permRoleDesc');
+    var permSet = {};
+    (role && role.permissions || []).forEach(function(p){ permSet[p.resource + ':' + p.action] = true; });
+    document.getElementById('permTableBody').innerHTML = buildPermTableRows(permSet);
+    wirePermRowSelectAll(modal);
+
+    var level = mode !== 'create' ? protectionLevelFor(role) : null;
+    modal.dataset.protectionLevel = level || '';
+    var masterCb = document.getElementById('permSelectAllRights');
+    masterCb.disabled = (level === 'full');
+    masterCb.title = (level === 'full')
+      ? "Admin always has full access — this can't be changed here."
+      : "Select all rights — every resource, every action.";
+    if(level === 'full'){
+      modal.querySelectorAll('#permTableBody input[type="checkbox"]').forEach(function(cb){
+        cb.checked = true; cb.disabled = true;
+        cb.title = "Admin always has full access — create or edit a different role for anything narrower.";
+      });
+    } else if(level === 'partial'){
+      ['view', 'edit'].forEach(function(act){
+        var cb = modal.querySelector('#permTableBody input[data-resource="users"][data-action="' + act + '"]');
+        if(cb){ cb.checked = true; cb.disabled = true; cb.title = "Kept on — otherwise this role (and whoever's in it, including you) could lose the ability to manage users and permissions."; }
+      });
+      var usersAllCb = modal.querySelector('#permTableBody .perm-row-all[data-resource-all="users"]');
+      if(usersAllCb) usersAllCb.title = "View and Edit are locked on for this role — Create/Delete/Execute can still be toggled.";
+    }
+    updateMasterPermCheckbox(modal);
+
+    if(mode === 'create'){
+      document.getElementById('permModalTitle').textContent = 'New role';
+      document.getElementById('permModalSub').textContent = 'Name the role, add an optional description, then select everything it should be able to do.';
+      nameField.style.display = '';
+      nameInput.value = '';
+      descField.style.display = '';
+      descInput.value = '';
+      modal.dataset.mode = 'create';
+      modal.dataset.roleId = '';
+    } else {
+      document.getElementById('permModalTitle').textContent = escapeHtml(role.name) + ' — permissions';
+      var sub = viaUser
+        ? 'Editing the "' + escapeHtml(role.name) + '" role — this affects every user with that role, not just this one.'
+        : 'Select what this role can view, create, edit, delete, or run.';
+      if(level === 'full') sub = 'Admin always has every permission — this grid is locked. Create a new role, or edit a non-Admin one, for narrower access.';
+      else if(level === 'partial') sub += ' Users → View and Edit are locked on so this role can\'t be saved without the ability to manage users.';
+      document.getElementById('permModalSub').textContent = sub;
+      nameField.style.display = 'none';
+      descField.style.display = 'none';
+      modal.dataset.mode = 'edit';
+      modal.dataset.roleId = role.id;
+    }
+    modal.classList.add('show');
+  }
+
+  document.getElementById('permCancel').addEventListener('click', function(){
+    document.getElementById('permissionsModal').classList.remove('show');
+  });
+
+  document.getElementById('permSave').addEventListener('click', function(){
+    var modal = document.getElementById('permissionsModal');
+    var permissions = [];
+    modal.querySelectorAll('#permTableBody input[type="checkbox"][data-resource]:checked').forEach(function(cb){
+      permissions.push({ resource: cb.getAttribute('data-resource'), action: cb.getAttribute('data-action') });
+    });
+    // Defensive re-check, independent of the disabled checkboxes above —
+    // whatever was actually ticked, a protected role is never saved
+    // without its required grants.
+    if(modal.dataset.protectionLevel === 'full'){
+      permissions = [];
+      RESOURCES.forEach(function(res){
+        ACTIONS.forEach(function(act){ permissions.push({ resource: res, action: act }); });
+      });
+    } else if(modal.dataset.protectionLevel === 'partial'){
+      ['view', 'edit'].forEach(function(act){
+        var already = permissions.some(function(p){ return p.resource === 'users' && p.action === act; });
+        if(!already) permissions.push({ resource: 'users', action: act });
+      });
+    }
+
+    function savePermissionsFor(roleId){
+      apiFetch('/api/roles/' + roleId + '/permissions', { method: 'PUT', body: JSON.stringify({ permissions: permissions }) })
+        .then(function(){
+          toast('Permissions saved.');
+          modal.classList.remove('show');
+          if(authState.user && String(authState.user.role_id) === String(roleId)){
+            apiFetch('/api/auth/me').then(function(me){ authState.permissions = me.permissions || {}; applyPermissions(); });
+          }
+          loadUsersAndAccess();
+        }).catch(function(err){ toast(err.message, true); });
+    }
+
+    if(modal.dataset.mode === 'create'){
+      var name = document.getElementById('permRoleName').value.trim();
+      var description = document.getElementById('permRoleDesc').value.trim();
+      if(!name){ toast('Role name is required.', true); return; }
+      apiFetch('/api/roles', { method: 'POST', body: JSON.stringify({ name: name, description: description }) })
+        .then(function(result){ savePermissionsFor(result.id); })
+        .catch(function(err){ toast(err.message, true); });
+    } else {
+      savePermissionsFor(modal.dataset.roleId);
+    }
+  });
+
+  // ---- Audit log: one grid (search + From/To date-range + pagination),
+  // no separate "view all" popup — the grid itself already shows
+  // everything (up to the last 300 events) a page at a time. ----
+  // Timestamps render as 'DD-MMM-YYYY, HH:MM:SS'; the raw ISO string is
+  // kept alongside for the From/To date-range filter to compare against.
+  function renderAuditRow(l){
+    var when = formatDateTime(l.created_date);
+    var searchText = [when, l.username, l.action, l.detail].join(' ').toLowerCase();
+    var html = '<tr data-search="' + escapeHtml(searchText) + '">' +
+      '<td class="muted-small num">' + when + '</td>' +
+      '<td>' + escapeHtml(l.username || '—') + '</td>' +
+      '<td><span class="pill pill-neutral">' + escapeHtml(l.action) + '</span></td>' +
+      '<td class="muted-small">' + escapeHtml(l.detail || '') + '</td>' +
+    '</tr>';
+    return { html: html, search: searchText, created_date: l.created_date };
+  }
+
+  var auditController = createGridController({
+    name: 'audit', tbody: document.getElementById('auditTableBody'),
+    searchInput: document.getElementById('auditSearch'),
+    footer: document.getElementById('auditPager'),
+    colSpan: 4, emptyText: 'No activity matches your filters.',
+  });
+
+  function renderAuditLog(logs){
+    auditController.setRows(logs.map(renderAuditRow));
+  }
+
+  // Plain-text 24-hour time box: digits-only, auto-inserts the colon,
+  // and clamps to a valid HH:MM on blur — deliberately not a native
+  // type="time" input (see the .time24 CSS comment for why).
+  function wire24hTimeInput(el){
+    el.addEventListener('input', function(){
+      var digits = el.value.replace(/[^0-9]/g, '').slice(0, 4);
+      if(digits.length <= 2) el.value = digits;
+      else el.value = digits.slice(0, 2) + ':' + digits.slice(2);
+    });
+    el.addEventListener('blur', function(){
+      if(!el.value) return;
+      var m = el.value.match(/^(\d{1,2}):?(\d{0,2})$/);
+      var h = m ? Math.min(23, parseInt(m[1], 10) || 0) : 0;
+      var mi = m ? Math.min(59, parseInt(m[2], 10) || 0) : 0;
+      el.value = (h < 10 ? '0' : '') + h + ':' + (mi < 10 ? '0' : '') + mi;
+    });
+  }
+  ['auditFromTime', 'auditToTime'].forEach(function(id){ wire24hTimeInput(document.getElementById(id)); });
+
+  function applyAuditDateRange(){
+    var fromDate = document.getElementById('auditFromDate').value;
+    var toDate = document.getElementById('auditToDate').value;
+    var fromTime = document.getElementById('auditFromTime').value || '00:00';
+    var toTime = document.getElementById('auditToTime').value || '23:59';
+    var fromMs = fromDate ? new Date(fromDate + 'T' + fromTime + ':00').getTime() : null;
+    var toMs = toDate ? new Date(toDate + 'T' + toTime + ':59').getTime() : null;
+    auditController.setExtraFilter(function(row){
+      if(!fromMs && !toMs) return true;
+      var t = new Date(row.created_date).getTime();
+      if(fromMs && t < fromMs) return false;
+      if(toMs && t > toMs) return false;
+      return true;
+    });
+  }
+
+  ['auditFromDate', 'auditFromTime', 'auditToDate', 'auditToTime'].forEach(function(id){
+    var el = document.getElementById(id);
+    el.addEventListener('change', applyAuditDateRange);
+  });
+  document.getElementById('auditClearRange').addEventListener('click', function(){
+    document.getElementById('auditFromDate').value = '';
+    document.getElementById('auditFromTime').value = '';
+    document.getElementById('auditToDate').value = '';
+    document.getElementById('auditToTime').value = '';
+    applyAuditDateRange();
+  });
+
+  // ---- Add-user modal (opens on "+ Add user", same Cancel/Save pattern
+  // as the New Role modal) ----
+  document.getElementById('newUserBtn').addEventListener('click', function(){
+    document.getElementById('newUserError').classList.remove('show');
+    document.getElementById('newUserUsername').value = '';
+    document.getElementById('newUserFullName').value = '';
+    document.getElementById('newUserEmail').value = '';
+    document.getElementById('newUserContact').value = '';
+    populateRoleSelect(rolesCache);
+    document.getElementById('newUserModal').classList.add('show');
+  });
+  document.getElementById('newUserCancel').addEventListener('click', function(){
+    document.getElementById('newUserModal').classList.remove('show');
+  });
+  document.getElementById('createUserBtn').addEventListener('click', function(){
+    var errBox = document.getElementById('newUserError');
+    errBox.classList.remove('show');
+    var username = document.getElementById('newUserUsername').value.trim();
+    var fullName = document.getElementById('newUserFullName').value.trim();
+    var email = document.getElementById('newUserEmail').value.trim();
+    var contact = document.getElementById('newUserContact').value.trim();
+    var roleId = parseInt(document.getElementById('newUserRole').value, 10);
+    if(!username || !roleId){ errBox.textContent = 'Username and role are required.'; errBox.classList.add('show'); return; }
+    apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username: username, full_name: fullName, email: email, contact_number: contact, role_id: roleId }) })
+      .then(function(result){
+        document.getElementById('newUserModal').classList.remove('show');
+        showTempPasswordBanner('User "' + escapeHtml(username) + '" created. Temporary password:', result.temporary_password);
+        loadUsersAndAccess();
+      }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); });
+  });
+
+  document.getElementById('newRoleBtn').addEventListener('click', function(){
+    openPermissionsModal('create', null, false);
+  });
+
+  document.getElementById('refreshAuditBtn').addEventListener('click', function(){
+    refreshAuditLog();
+    toast('Audit log refreshed.');
+  });
+
+  // Reload User Management whenever its nav item is opened, in case
+  // another admin changed something in the meantime.
+  navItems.forEach(function(item){
+    item.addEventListener('click', function(){
+      if(item.getAttribute('data-page') === 'usermgmt' && hasPermission('users', 'view')) loadUsersAndAccess();
+      if(item.getAttribute('data-page') === 'knowledge' && hasPermission('knowledge', 'view')) loadKnowledgeHub();
+      if(item.getAttribute('data-page') === 'ai_assistant' && hasPermission('ai_assistant', 'view')) loadAiHistory();
+      if(item.getAttribute('data-page') === 'dashboard' && hasPermission('dashboard', 'view')) loadDashboard();
+    });
+  });
+
+  // ---- Dashboard ----
+  function dashboardCell(value){
+    var cell = document.createElement('td');
+    cell.textContent = value == null || value === '' ? '—' : value;
+    return cell;
+  }
+
+  function dashboardResultCell(result){
+    var cell = document.createElement('td');
+    var normalized = String(result || 'Not Run').toLowerCase().replace(/\s+/g, '');
+    var cls = normalized === 'pass' ? 'pill-pass' : normalized === 'fail' ? 'pill-fail' : normalized === 'blocked' ? 'pill-blocked' : 'pill-notrun';
+    var pill = document.createElement('span'); pill.className = 'pill ' + cls;
+    var dot = document.createElement('span'); dot.className = 'pill-dot';
+    pill.appendChild(dot); pill.appendChild(document.createTextNode(String(result || 'Not Run')));
+    cell.appendChild(pill);
+    return cell;
+  }
+
+  function replaceDashboardRows(bodyId, rows, makeRow, emptyText){
+    var body = document.getElementById(bodyId);
+    body.innerHTML = '';
+    if(!rows || !rows.length){
+      var row = document.createElement('tr');
+      var cell = document.createElement('td');
+      cell.colSpan = bodyId === 'dashActivityTableBody' ? 3 : 6; cell.className = 'muted-small'; cell.textContent = emptyText;
+      row.appendChild(cell); body.appendChild(row); return;
+    }
+    rows.forEach(function(item){ body.appendChild(makeRow(item)); });
+  }
+
+  function loadDashboard(){
+    apiFetch('/api/dashboard/snapshot?recent_limit=20&activity_limit=20').then(function(data){
+      var m = data.metrics || {};
+      document.getElementById('dashKnowledgeItems').textContent = m.knowledge_items != null ? m.knowledge_items : '—';
+      document.getElementById('dashDomains').textContent = m.domains != null ? m.domains : '—';
+      document.getElementById('dashModules').textContent = m.modules != null ? m.modules : '—';
+      document.getElementById('dashVersions').textContent = m.versions != null ? m.versions : '—';
+      document.getElementById('dashAiMode').textContent = m.ai_mode || '—';
+      document.getElementById('dashLlmModel').textContent = m.llm_model || '—';
+      replaceDashboardRows('dashRunsTableBody', data.recent_runs, function(run){
+        var row = document.createElement('tr');
+        row.appendChild(dashboardCell(run.tc_number)); row.appendChild(dashboardCell(run.module || run.domain));
+        row.appendChild(dashboardResultCell(run.result)); row.appendChild(dashboardCell('—'));
+        row.appendChild(dashboardCell('Automation')); row.appendChild(dashboardCell(formatDateTime(run.run_at)));
+        return row;
+      }, 'No completed test runs yet.');
+      replaceDashboardRows('dashActivityTableBody', data.recent_activity, function(activity){
+        var row = document.createElement('tr');
+        row.appendChild(dashboardCell(formatDateTime(activity.created_date)));
+        row.appendChild(dashboardCell(activity.username || 'System'));
+        row.appendChild(dashboardCell(activity.detail || activity.action));
+        return row;
+      }, 'No activity recorded yet.');
+    }).catch(function(err){ toast('Dashboard: ' + err.message, true); });
+  }
+
+  // ---- AI Assistant ----
+  function aiAppendMessage(role, text, meta){
+    var wrap = document.getElementById('aiMessages');
+    var isUser = role === 'user';
+    var bubble = document.createElement('div');
+    bubble.style.cssText = 'max-width:80%; align-self:' + (isUser ? 'flex-end' : 'flex-start') + ';';
+    var inner = document.createElement('div');
+    inner.style.cssText = 'padding:10px 13px; border-radius:10px; font-size:13px; white-space:pre-wrap; ' +
+      (isUser
+        ? 'background:var(--accent); color:#fff;'
+        : 'background:var(--surface-sunken); color:var(--ink); border:1px solid var(--border);');
+    inner.textContent = text;
+    bubble.appendChild(inner);
+    if(meta){
+      var metaEl = document.createElement('div');
+      metaEl.className = 'muted-small';
+      metaEl.style.cssText = 'margin-top:4px; text-align:' + (isUser ? 'right' : 'left') + ';';
+      metaEl.textContent = meta;
+      bubble.appendChild(metaEl);
+    }
+    wrap.appendChild(bubble);
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  function loadAiHistory(){
+    apiFetch('/api/ai-assistant/history?limit=20').then(function(r){
+      var wrap = document.getElementById('aiMessages');
+      wrap.innerHTML = '';
+      if(!r.history || !r.history.length){
+        wrap.innerHTML = '<div class="muted-small">Ask a question below — for example, "What does the Payment Gateway SRS say about the checkout flow?" Narrow it to a Domain/Module above if you want the search scoped.</div>';
+        return;
+      }
+      r.history.forEach(function(row){
+        // MemoryManager.get_recent() row shape: [prompt, response, intent, confidence, created_at]
+        aiAppendMessage('user', row[0]);
+        aiAppendMessage('assistant', row[1], 'intent=' + row[2]);
+      });
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function aiSend(){
+    var input = document.getElementById('aiPromptInput');
+    var prompt = input.value.trim();
+    if(!prompt) return;
+    var sendBtn = document.getElementById('aiSendBtn');
+    aiAppendMessage('user', prompt);
+    input.value = '';
+    sendBtn.disabled = true;
+    var domain = document.getElementById('aiDomainScope').value.trim();
+    var module = document.getElementById('aiModuleScope').value.trim();
+    apiFetch('/api/ai-assistant/ask', {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: prompt,
+        domain: domain || null,
+        module: module || null,
+      }),
+    }).then(function(result){
+      var meta = 'confidence=' + (result.confidence != null ? result.confidence + '%' : '—') +
+        (result.sources && result.sources.length ? ' · ' + result.sources.length + ' source(s)' : '');
+      aiAppendMessage('assistant', result.answer || '(no answer)', meta);
+    }).catch(function(err){
+      aiAppendMessage('assistant', 'Error: ' + err.message);
+    }).finally(function(){
+      sendBtn.disabled = false;
+    });
+  }
+
+  document.getElementById('aiSendBtn').addEventListener('click', aiSend);
+  document.getElementById('aiPromptInput').addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); aiSend(); }
+  });
+  document.getElementById('aiClearBtn').addEventListener('click', function(){
+    apiFetch('/api/ai-assistant/history', { method: 'DELETE' }).then(function(){
+      document.getElementById('aiMessages').innerHTML = '<div class="muted-small">Conversation cleared.</div>';
+      toast('Conversation cleared.');
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  loadSession();
+})();
+</script>
+</body>
+</html>

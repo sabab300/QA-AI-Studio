@@ -87,9 +87,22 @@ class KnowledgeRepository:
 
         return self.metadata.list_domains()
 
+    def create_domain(self, name):
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Domain name is required.")
+        return self.metadata.create_domain(name)
+
     def list_modules(self, domain):
 
         return self.metadata.list_modules(domain)
+
+    def create_module(self, domain, name):
+        domain = (domain or "").strip()
+        name = (name or "").strip()
+        if not domain or not name:
+            raise ValueError("Domain and module name are required.")
+        return self.metadata.get_or_create_module(domain, name)
 
     def list_items(self, search=None):
 
