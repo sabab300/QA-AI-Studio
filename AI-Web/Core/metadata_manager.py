@@ -511,26 +511,51 @@ class MetadataManager:
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute(
-            "DELETE FROM embedding_queue WHERE knowledge_id=?",
-            (knowledge_id,)
-        )
-        queue_deleted = cursor.rowcount
+        try:
+            cursor.execute(
+                "UPDATE api_collections SET linked_knowledge_item_id=NULL WHERE linked_knowledge_item_id=?",
+                (knowledge_id,),
+            )
+            api_links_cleared = cursor.rowcount
 
-        cursor.execute(
-            "DELETE FROM knowledge_versions WHERE knowledge_item_id=?",
-            (knowledge_id,)
-        )
-        versions_deleted = cursor.rowcount
+            cursor.execute(
+                "UPDATE discovery_variants SET linked_knowledge_item_id=NULL WHERE linked_knowledge_item_id=?",
+                (knowledge_id,),
+            )
+            discovery_links_cleared = cursor.rowcount
 
-        cursor.execute(
-            "DELETE FROM knowledge_items WHERE id=?",
-            (knowledge_id,)
-        )
-        knowledge_deleted = cursor.rowcount
+            cursor.execute(
+                "DELETE FROM knowledge_tags WHERE knowledge_id=?",
+                (knowledge_id,),
+            )
+            tags_deleted = cursor.rowcount
 
-        conn.commit()
-        conn.close()
+            cursor.execute(
+                "DELETE FROM embedding_queue WHERE knowledge_id=?",
+                (knowledge_id,)
+            )
+            queue_deleted = cursor.rowcount
+
+            cursor.execute(
+                "DELETE FROM knowledge_versions WHERE knowledge_item_id=?",
+                (knowledge_id,)
+            )
+            versions_deleted = cursor.rowcount
+
+            cursor.execute(
+                "DELETE FROM knowledge_items WHERE id=?",
+                (knowledge_id,)
+            )
+            knowledge_deleted = cursor.rowcount
+
+            conn.commit()
+
+        except Exception:
+            conn.rollback()
+            raise
+
+        finally:
+            conn.close()
 
         return {
 
@@ -538,7 +563,13 @@ class MetadataManager:
 
             "versions": versions_deleted,
 
-            "queue": queue_deleted
+            "queue": queue_deleted,
+
+            "tags": tags_deleted,
+
+            "api_links_cleared": api_links_cleared,
+
+            "discovery_links_cleared": discovery_links_cleared
 
         }
 
@@ -1267,52 +1298,57 @@ class MetadataManager:
 
             return False
 
-        # Keep domain_id/module_id in sync if the editable text
-        # fields changed - every write path re-resolves them, so
-        # they never silently drift from the domain/module text.
+        current = self.get(knowledge_id)
+
+        if current is None:
+            return False
+
+        resolved_domain = updates.get("domain", current["domain"])
+        resolved_module = updates.get("module", current["module"])
+        resolved_name = updates.get("knowledge_name", current["knowledge_name"])
+        resolved_version = updates.get("version", current["version"])
+
+        # Physical repository_path is intentionally immutable. The logical
+        # hierarchy is maintained separately and is safe to edit.
+        updates["knowledge_path"] = "/".join(
+            [resolved_domain, resolved_module, resolved_name, resolved_version]
+        )
+
         if "domain" in updates or "module" in updates:
-
-            resolved_domain = updates.get(
-                "domain", self._get_current_domain(knowledge_id)
-            )
-
-            resolved_module = updates.get(
-                "module", self._get_current_module(knowledge_id)
-            )
-
-            updates["domain_id"] = self.get_or_create_domain(
-                resolved_domain
-            )
-
+            updates["domain_id"] = self.get_or_create_domain(resolved_domain)
             updates["module_id"] = self.get_or_create_module(
                 resolved_domain, resolved_module
             )
 
         conn = self.db.get_connection()
- 
         cursor = conn.cursor()
- 
-        set_clause = ", ".join(
-            f"{key}=?" for key in updates.keys()
-        )
- 
-        values = list(updates.values())
- 
-        values.append(datetime.now().isoformat())
- 
-        values.append(knowledge_id)
- 
-        cursor.execute(
-            f"""
-            UPDATE knowledge_items
-            SET {set_clause}, modified_date=?
-            WHERE id=?
-            """,
-            values,
-        )
- 
-        conn.commit()
- 
-        conn.close()
- 
-        return True
+
+        try:
+            set_clause = ", ".join(f"{key}=?" for key in updates.keys())
+            values = list(updates.values())
+            values.extend([datetime.now().isoformat(), knowledge_id])
+
+            cursor.execute(
+                f"""
+                UPDATE knowledge_items
+                SET {set_clause}, modified_date=?
+                WHERE id=?
+                """,
+                values,
+            )
+
+            if "version" in updates:
+                cursor.execute(
+                    "UPDATE knowledge_versions SET version=? WHERE knowledge_item_id=?",
+                    (resolved_version, knowledge_id),
+                )
+
+            conn.commit()
+            return cursor.rowcount >= 0
+
+        except Exception:
+            conn.rollback()
+            raise
+
+        finally:
+            conn.close()

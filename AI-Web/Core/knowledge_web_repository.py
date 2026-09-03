@@ -33,6 +33,7 @@ What's genuinely new here (not just a passthrough):
 import json
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 from Core.metadata_manager import MetadataManager
@@ -124,13 +125,63 @@ class KnowledgeRepository:
 
         return [
             {
+                "knowledge_id": knowledge_id,
                 "version": row[0],
                 "sha256": row[1],
-                "repository_path": row[2],
+                "storage_location": self._managed_storage_location(row[2]),
                 "created_date": row[3],
             }
             for row in rows
         ]
+
+    def get_item_details(self, knowledge_id):
+
+        item = self.get_item(knowledge_id)
+
+        if item is None:
+            return None
+
+        vector_ids = self._vector_ids_for_item(item)
+        item["storage_location"] = self._managed_storage_location(
+            item.get("repository_path")
+        )
+        item["chunks"] = len(vector_ids)
+        item["vectors"] = len(vector_ids)
+
+        return item
+
+    def _managed_storage_location(self, path):
+
+        if not path:
+            return ""
+
+        try:
+            resolved = Path(path).resolve()
+            return str(resolved.relative_to(self.repository.repository_root.resolve()))
+        except (OSError, ValueError):
+            return "External or unavailable"
+
+    def _vector_ids_for_item(self, item):
+
+        data = VectorStore().get_all() or {}
+        sha256 = str(item.get("sha256") or "")
+        ids = []
+
+        for doc_id, metadata in zip(
+            data.get("ids", []), data.get("metadatas", [])
+        ):
+            metadata = metadata or {}
+            if (
+                metadata.get("domain") == item.get("domain")
+                and metadata.get("module") == item.get("module")
+                and metadata.get("knowledge_name") == item.get("knowledge_name")
+                and metadata.get("version") == item.get("version")
+                and metadata.get("file_name") == item.get("file_name")
+                and (not sha256 or sha256 in str(doc_id))
+            ):
+                ids.append(str(doc_id))
+
+        return ids
 
     # --------------------------------------------------
     # Edit
@@ -138,15 +189,69 @@ class KnowledgeRepository:
 
     def update_item(self, knowledge_id, **fields):
 
+        existing = self.get_item(knowledge_id)
+
+        if existing is None:
+            raise ValueError("Knowledge item not found.")
+
+        for key in ("domain", "module", "knowledge_name", "version", "document_type"):
+            if key in fields:
+                fields[key] = str(fields[key] or "").strip()
+
+        required = {
+            "domain": fields.get("domain", existing.get("domain")),
+            "module": fields.get("module", existing.get("module")),
+            "knowledge_name": fields.get(
+                "knowledge_name", existing.get("knowledge_name")
+            ),
+            "version": fields.get("version", existing.get("version")),
+            "document_type": fields.get(
+                "document_type", existing.get("document_type")
+            ),
+        }
+
+        missing = [name for name, value in required.items() if not value]
+
+        if missing:
+            raise ValueError("Required and missing: " + ", ".join(missing) + ".")
+
+        vector_updates = {
+            key: fields[key]
+            for key in (
+                "domain", "module", "knowledge_name", "version",
+                "document_type", "summary", "tags"
+            )
+            if key in fields
+        }
+
+        if isinstance(vector_updates.get("tags"), list):
+            vector_updates["tags"] = ", ".join(vector_updates["tags"])
+
+        store = VectorStore()
+        vector_ids = self._vector_ids_for_item(existing)
+        vector_snapshot = store.update_metadata(vector_ids, vector_updates)
+
         # Tags arrive from the web as a list; the column stores JSON
         # text, same encoding save_knowledge_item() already uses.
         if "tags" in fields and isinstance(fields["tags"], list):
 
             fields["tags"] = json.dumps(fields["tags"])
 
-        self.metadata.update_knowledge_item(knowledge_id, **fields)
+        try:
+            updated = self.metadata.update_knowledge_item(knowledge_id, **fields)
 
-        return self.get_item(knowledge_id)
+            if not updated:
+                raise ValueError("Knowledge item no longer exists.")
+
+        except Exception:
+            store.restore_metadata(vector_snapshot)
+            raise
+
+        result = self.get_item_details(knowledge_id)
+        result["vectors_updated"] = len(vector_ids)
+        result["storage_strategy"] = "immutable_managed_path"
+
+        return result
 
     # --------------------------------------------------
     # Delete (one version, not the whole knowledge name)
@@ -160,36 +265,82 @@ class KnowledgeRepository:
 
             return None
 
-        version_folder = (
-            self.repository.repository_root
-            / item["domain"]
-            / item["module"]
-            / item["knowledge_name"]
-            / item["version"]
-        )
+        managed_file = self._managed_file(item.get("repository_path"))
+        other_references = [
+            row for row in self.list_items()
+            if row["id"] != knowledge_id
+            and row.get("repository_path") == item.get("repository_path")
+        ]
+        staged_file = None
+
+        if managed_file and managed_file.is_file() and not other_references:
+            staged_file = managed_file.with_name(
+                f".{managed_file.name}.deleting-{uuid.uuid4().hex}"
+            )
+            managed_file.replace(staged_file)
+
+        store = VectorStore()
+        vector_ids = [] if other_references else self._vector_ids_for_item(item)
+        vector_snapshot = None
+
+        try:
+            vector_snapshot = store.delete_with_snapshot(vector_ids)
+            db_summary = self.metadata.delete(knowledge_id)
+
+            if db_summary.get("knowledge") != 1:
+                raise RuntimeError("Metadata record was not deleted.")
+
+        except Exception:
+            if vector_snapshot:
+                store.restore_snapshot(vector_snapshot)
+            if staged_file and staged_file.exists():
+                staged_file.replace(managed_file)
+            raise
 
         files_removed = 0
+        storage_cleanup_error = ""
 
-        if version_folder.exists():
+        if staged_file and staged_file.exists():
+            try:
+                staged_file.unlink()
+                files_removed = 1
+                self._prune_empty_managed_folders(managed_file.parent)
+            except OSError as error:
+                storage_cleanup_error = str(error)
 
-            files_removed = sum(
-                1 for f in version_folder.rglob("*") if f.is_file()
-            )
-
-            shutil.rmtree(version_folder, ignore_errors=True)
-
-        vectors_removed = self._delete_vectors_for_version(
-            item["domain"], item["module"], item["knowledge_name"], item["version"]
-        )
-
-        db_summary = self.metadata.delete(knowledge_id)
+        vectors_removed = len(vector_ids)
 
         return {
             "item": item,
             "files_removed": files_removed,
             "vectors_removed": vectors_removed,
+            "storage_cleanup_error": storage_cleanup_error,
             **db_summary,
         }
+
+    def _managed_file(self, path):
+
+        if not path:
+            return None
+
+        try:
+            resolved = Path(path).resolve()
+            resolved.relative_to(self.repository.repository_root.resolve())
+            return resolved
+        except (OSError, ValueError):
+            return None
+
+    def _prune_empty_managed_folders(self, folder):
+
+        root = self.repository.repository_root.resolve()
+        current = folder.resolve()
+
+        while current != root and root in current.parents:
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent
 
     def _delete_vectors_for_version(self, domain, module, knowledge_name, version):
 

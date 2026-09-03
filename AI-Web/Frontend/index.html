@@ -395,6 +395,60 @@
   .modal-card .modal-sub{ font-size:12.5px; color:var(--ink-muted); margin-bottom:16px; }
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
 
+  /* ---------- Knowledge Hub workspace ---------- */
+  .kh-workspace{ padding:18px; overflow:auto; }
+  .kh-card{ width:100%; min-width:0; }
+  .kh-card .card-head{ padding:18px 20px; align-items:flex-start; }
+  .kh-section{ border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:18px; margin-bottom:16px; }
+  .kh-section-title{ font-size:13px; font-weight:700; margin:0 0 4px; color:var(--ink); }
+  .kh-section-help{ font-size:12px; color:var(--ink-muted); margin-bottom:15px; }
+  .kh-form-grid{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; }
+  .kh-field{ grid-column:span 4; min-width:0; }
+  .kh-field.wide{ grid-column:span 8; }
+  .kh-field.full{ grid-column:1/-1; }
+  .kh-field label{ display:block; font-size:12px; font-weight:650; color:var(--ink-muted); margin-bottom:6px; }
+  .kh-field input,.kh-field select,.kh-modal-grid input,.kh-modal-grid select,.kh-modal-grid textarea{ width:100%; border:1px solid var(--border); background:var(--surface); color:var(--ink); border-radius:8px; padding:9px 11px; font:inherit; }
+  .kh-control-pair{ display:flex; gap:7px; align-items:stretch; }
+  .kh-control-pair select{ min-width:0; flex:1; }
+  .kh-add-btn{ width:36px; min-width:36px; padding:0; justify-content:center; font-size:18px; }
+  .kh-source-actions,.kh-toolbar,.kh-progress-metrics{ display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+  .kh-source-table{ border:1px solid var(--border); border-radius:9px; overflow:auto; max-height:270px; }
+  .kh-source-table table{ width:100%; table-layout:fixed; border-collapse:collapse; }
+  .kh-source-table th,.kh-source-table td{ border-bottom:1px solid var(--border); padding:10px 12px; vertical-align:middle; }
+  .kh-source-table th{ background:var(--canvas); font-size:11px; text-transform:uppercase; letter-spacing:.035em; }
+  .kh-source-name{ overflow-wrap:anywhere; }
+  .kh-status{ display:inline-flex; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:650; background:var(--canvas); }
+  .kh-status.successful{ color:var(--success); background:var(--success-soft); }
+  .kh-status.failed{ color:var(--danger); background:var(--danger-soft); }
+  .kh-progress-panel{ background:var(--canvas); }
+  .kh-progress-track{ height:11px; background:var(--border); border-radius:999px; overflow:hidden; margin:10px 0 12px; }
+  .kh-progress-fill{ height:100%; background:var(--accent); width:0; transition:width .2s ease; }
+  .kh-progress-metric{ min-width:105px; padding:9px 11px; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
+  .kh-progress-metric span{ display:block; font-size:10px; color:var(--ink-muted); text-transform:uppercase; }
+  .kh-progress-metric strong{ font-size:15px; }
+  .kh-upload-log{ margin-top:12px; min-height:120px; max-height:190px; overflow:auto; border:1px solid var(--border); border-radius:8px; background:#111827; color:#d1d5db; padding:11px 13px; font:12px/1.55 Consolas,monospace; white-space:pre-wrap; }
+  .kh-tree{ border:1px solid var(--border); border-radius:9px; overflow:auto; min-height:300px; }
+  .kh-tree details{ border-bottom:1px solid var(--border); }
+  .kh-tree details details{ border-bottom:0; border-top:1px solid var(--border); margin-left:22px; }
+  .kh-tree summary{ cursor:pointer; list-style:none; padding:11px 14px; font-weight:650; display:flex; align-items:center; gap:8px; }
+  .kh-tree summary::-webkit-details-marker{ display:none; }
+  .kh-tree summary::before{ content:'›'; color:var(--ink-muted); transition:transform .15s; }
+  .kh-tree details[open]>summary::before{ transform:rotate(90deg); }
+  .kh-tree-leaf{ margin-left:22px; padding:11px 14px; border-top:1px solid var(--border); display:grid; grid-template-columns:minmax(220px,1fr) 110px 100px 150px; gap:12px; align-items:center; }
+  .kh-tree-meta{ font-size:11.5px; color:var(--ink-muted); }
+  .kh-toolbar{ padding:14px 18px; border-bottom:1px solid var(--border); }
+  .kh-toolbar .fbar-search{ min-width:230px; flex:1; max-width:420px; }
+  .kh-modal-card{ max-width:720px; max-height:88vh; overflow:auto; }
+  .kh-modal-section{ border-top:1px solid var(--border); padding-top:14px; margin-top:14px; }
+  .kh-modal-section h4{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); margin:0 0 10px; }
+  .kh-modal-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .kh-detail-grid{ display:grid; grid-template-columns:150px minmax(0,1fr); gap:8px 14px; font-size:12.5px; }
+  .kh-detail-grid dt{ color:var(--ink-muted); font-weight:650; }
+  .kh-detail-grid dd{ margin:0; overflow-wrap:anywhere; }
+  .kh-empty{ padding:52px 20px; text-align:center; color:var(--ink-muted); }
+  @media(max-width:900px){ .kh-field,.kh-field.wide{grid-column:span 6}.kh-tree-leaf{grid-template-columns:1fr 90px}.kh-tree-leaf>.kh-tree-meta:nth-of-type(n+2){display:none} }
+  @media(max-width:620px){ .kh-field,.kh-field.wide{grid-column:1/-1}.kh-modal-grid{grid-template-columns:1fr}.kh-tree-leaf{grid-template-columns:1fr} }
+
   /* ---------- Permission-aware sidebar ---------- */
   .nav-item.disabled{ opacity:.38; pointer-events:none; cursor:not-allowed; }
 
@@ -561,22 +615,81 @@
 
 <!-- ============ EDIT KNOWLEDGE ITEM MODAL ============ -->
 <div class="modal-overlay" id="khEditModal">
-  <div class="modal-card" style="max-width:460px;">
+  <div class="modal-card kh-modal-card">
     <h3>Edit knowledge item</h3>
-    <div class="modal-sub">Domain, module, knowledge name and version are set at upload time and shown here for reference only.</div>
+    <div class="modal-sub">Update the logical hierarchy and metadata. Managed source storage remains at its immutable physical location.</div>
     <div class="auth-error" id="khEditError"></div>
-    <div class="field"><label>Knowledge name</label><input id="khEditName" disabled></div>
-    <div style="display:flex; gap:10px;">
-      <div class="field" style="flex:1;"><label>Domain</label><input id="khEditDomain" disabled></div>
-      <div class="field" style="flex:1;"><label>Module</label><input id="khEditModule" disabled></div>
-      <div class="field" style="flex:0 0 80px;"><label>Version</label><input id="khEditVersion" disabled></div>
+    <div class="kh-modal-grid">
+      <div class="field"><label for="khEditDomain">Domain</label><div class="kh-control-pair"><select id="khEditDomain"></select><button type="button" class="btn kh-add-btn" id="khEditAddDomain">+</button></div></div>
+      <div class="field"><label for="khEditModule">Module</label><div class="kh-control-pair"><select id="khEditModule"></select><button type="button" class="btn kh-add-btn" id="khEditAddModule">+</button></div></div>
+      <div class="field"><label for="khEditName">Knowledge name</label><input id="khEditName"></div>
+      <div class="field"><label for="khEditVersion">Version</label><input id="khEditVersion"></div>
+      <div class="field"><label for="khEditDocType">Document type</label><select id="khEditDocType"><option>SRS</option><option>CRF</option><option>Test Case</option><option>SOP</option><option>API Documentation</option><option>Release Notes</option><option>Technical Document</option><option>Other</option></select></div>
+      <div class="field"><label for="khEditTags">Tags (comma-separated)</label><input id="khEditTags"></div>
+      <div class="field" style="grid-column:1/-1;"><label for="khEditSummary">Summary</label><textarea id="khEditSummary" rows="5"></textarea></div>
     </div>
-    <div class="field"><label for="khEditDocType">Document type</label><input id="khEditDocType" placeholder="e.g. SRS, CRF, API Spec"></div>
-    <div class="field"><label for="khEditSummary">Summary</label><input id="khEditSummary" placeholder="Short summary"></div>
-    <div class="field"><label for="khEditTags">Tags (comma-separated)</label><input id="khEditTags" placeholder="e.g. payments, gateway, srs"></div>
     <div class="modal-actions">
       <button type="button" class="btn" id="khEditCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="khEditSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khDetailsModal">
+  <div class="modal-card kh-modal-card">
+    <h3>Knowledge Details</h3>
+    <div class="modal-sub">Stored metadata and processing information for this source.</div>
+    <div class="auth-error" id="khDetailsError"></div>
+    <div id="khDetailsBody"></div>
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="khDetailsClose">Close</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khVersionsModal">
+  <div class="modal-card kh-modal-card">
+    <h3>Version History</h3>
+    <div class="modal-sub" id="khVersionsSub">Real version records associated with this source.</div>
+    <div class="auth-error" id="khVersionsError"></div>
+    <div class="kh-source-table"><table><thead><tr><th>Version</th><th>Created</th><th>Checksum</th><th>Storage</th><th></th></tr></thead><tbody id="khVersionsBody"></tbody></table></div>
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="khVersionsClose">Close</button></div>
+  </div>
+</div>
+
+<!-- ============ MANUAL KNOWLEDGE UPLOAD MODALS ============ -->
+<div class="modal-overlay" id="khAddDomainModal">
+  <div class="modal-card" style="max-width:400px;">
+    <h3>Add Domain</h3>
+    <div class="modal-sub">Create a Domain for Knowledge Hub uploads.</div>
+    <div class="auth-error" id="khAddDomainError"></div>
+    <div class="field"><label for="khAddDomainName">Domain name</label><input id="khAddDomainName" autocomplete="off" placeholder="Enter Domain name"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="khAddDomainCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="khAddDomainSave">Create Domain</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khAddModuleModal">
+  <div class="modal-card" style="max-width:400px;">
+    <h3>Add Module</h3>
+    <div class="modal-sub" id="khAddModuleSub">Create a Module under the selected Domain.</div>
+    <div class="auth-error" id="khAddModuleError"></div>
+    <div class="field"><label for="khAddModuleName">Module name</label><input id="khAddModuleName" autocomplete="off" placeholder="Enter Module name"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="khAddModuleCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="khAddModuleSave">Create Module</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khUploadSummaryModal">
+  <div class="modal-card kh-modal-card" style="max-width:780px;">
+    <h3>Manual Upload Complete</h3>
+    <div class="modal-sub">Review the real storage, processing, and analysis results returned for this upload.</div>
+    <div id="khUploadSummaryBody"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="khUploadSummaryClose">Upload More / Close</button>
+      <button type="button" class="btn btn-primary" id="khUploadSummaryView">View Knowledge</button>
     </div>
   </div>
 </div>
@@ -1076,78 +1189,124 @@ X-Client-Id: qa-automation-bot</pre>
         </div>
       </div>
       <div class="tabstrip">
-        <button class="tab active" data-tab="kh-browse">Browse</button>
-        <button class="tab" data-tab="kh-upload">Upload</button>
+        <button class="tab active" data-tab="kh-browse">Manage Knowledge</button>
+        <button class="tab" data-tab="kh-upload">Manual Upload</button>
         <button class="tab" data-tab="kh-smart">AI Smart Upload</button>
       </div>
-      <div class="workspace">
+      <div class="workspace kh-workspace">
         <div class="panel flush active" id="kh-browse">
-          <div class="card" style="flex:1;">
+          <div class="card kh-card" style="flex:1;">
             <div class="card-head">
-              <h3>Knowledge Items</h3>
-              <div style="display:flex; align-items:center; gap:12px;">
-                <div class="fbar-search" style="width:200px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="khSearch" placeholder="Search knowledge…"></div>
-                <button class="link-btn" id="khUploadTabBtn">+ Upload document</button>
-                <span class="muted-small" id="khCount"></span>
-              </div>
+              <div><h3>Manage Knowledge</h3><div class="muted-small">Navigate the real Domain → Module → Knowledge → Version → Source hierarchy.</div></div>
+              <span class="muted-small" id="khCount"></span>
             </div>
-            <div class="filterbar" style="border-bottom:1px solid var(--border); flex-shrink:0;">
+            <div class="kh-toolbar">
+              <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="khSearch" placeholder="Search knowledge, tags, or source…"></div>
               <div class="field-inline"><label>Domain</label><select id="khDomainFilter"><option value="">All domains</option></select></div>
               <div class="field-inline"><label>Module</label><select id="khModuleFilter"><option value="">All modules</option></select></div>
-              <button type="button" class="btn" id="khClearFilters">Clear filters</button>
+              <button type="button" class="btn" id="khRefreshBtn">Refresh</button>
+              <button type="button" class="btn" id="khExpandAllBtn">Expand All</button>
+              <button type="button" class="btn" id="khCollapseAllBtn">Collapse All</button>
+              <button type="button" class="btn btn-primary" id="khUploadTabBtn">Add New</button>
             </div>
-            <div class="table-scroll">
-              <table>
-                <thead><tr><th>Knowledge Name</th><th style="width:120px;">Domain</th><th style="width:120px;">Module</th><th style="width:64px;">Version</th><th style="width:100px;">Type</th><th>Summary</th><th style="width:86px;">Confidence</th><th style="width:112px;">Uploaded</th><th style="width:90px;text-align:right;">Actions</th></tr></thead>
-                <tbody id="khTableBody"><tr><td colspan="9" class="muted-small">Loading…</td></tr></tbody>
-              </table>
-            </div>
-            <div class="pg-bar" id="khPager"></div>
+            <div class="card-body"><div class="kh-tree" id="khTree"><div class="kh-empty">Loading knowledge hierarchy…</div></div></div>
           </div>
         </div>
 
         <div class="panel" id="kh-upload">
-          <div class="card" style="max-width:640px;">
-            <div class="card-head"><h3>Upload a document</h3></div>
+          <div class="card kh-card">
+            <div class="card-head"><div><h3>Manual Upload</h3><div class="muted-small">Classify and store one or more supported source documents in Knowledge Hub.</div></div></div>
             <div class="card-body">
               <div class="auth-error" id="khUploadError"></div>
-              <div class="field"><label for="khUpDomain">Domain</label><input id="khUpDomain" list="khDomainList" placeholder="e.g. Payments"></div>
-              <datalist id="khDomainList"></datalist>
-              <div class="field"><label for="khUpModule">Module</label><input id="khUpModule" list="khModuleList" placeholder="e.g. Gateway"></div>
-              <datalist id="khModuleList"></datalist>
-              <div class="field"><label for="khUpName">Knowledge Name</label><input id="khUpName" placeholder="e.g. Payment Gateway SRS"></div>
-              <div class="field"><label for="khUpVersion">Version</label><input id="khUpVersion" placeholder="1.0" value="1.0"></div>
-              <div class="field"><label for="khUpDocType">Document Type (optional)</label><input id="khUpDocType" placeholder="e.g. SRS, CRF, API Spec"></div>
-              <div class="field"><label for="khUpFile">File</label><input id="khUpFile" type="file"></div>
-              <div class="modal-actions">
-                <button type="button" class="btn btn-primary" id="khUploadBtn">Upload</button>
-              </div>
+              <section class="kh-section">
+                <h4 class="kh-section-title">Knowledge Information</h4><div class="kh-section-help">Choose where these sources belong in the logical knowledge hierarchy.</div>
+                <div class="kh-form-grid">
+                  <div class="kh-field"><label for="khUpDomainSel">Domain</label><div class="kh-control-pair"><select id="khUpDomainSel"><option value="">Select Domain...</option></select><button type="button" class="btn kh-add-btn" id="khOpenAddDomainBtn">+</button></div></div>
+                  <div class="kh-field"><label for="khUpModuleSel">Module</label><div class="kh-control-pair"><select id="khUpModuleSel" disabled><option value="">Select a Domain first...</option></select><button type="button" class="btn kh-add-btn" id="khOpenAddModuleBtn">+</button></div></div>
+                  <div class="kh-field wide"><label for="khUpName">Knowledge Name</label><input id="khUpName" placeholder="e.g. Payment Gateway SRS"></div>
+                  <div class="kh-field"><label for="khUpVersion">Version</label><input id="khUpVersion" placeholder="1.0" value="1.0"></div>
+                  <div class="kh-field"><label for="khUpDocTypeSel">Document Type</label><select id="khUpDocTypeSel"><option value="SRS">SRS</option><option value="CRF">CRF</option><option value="Test Case">Test Case</option><option value="SOP">SOP</option><option value="API Documentation">API Documentation</option><option value="Release Notes">Release Notes</option><option value="Technical Document">Technical Document</option><option value="Other">Other</option></select></div>
+                </div>
+              </section>
+              <section class="kh-section">
+                <h4 class="kh-section-title">Source Selection</h4><div class="kh-section-help">Files and browser folder selection use the existing document upload pipeline. Other source types remain unavailable until their real processing paths exist.</div>
+                <div class="kh-source-actions">
+                  <div class="kh-field" style="min-width:240px;"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Images" disabled>Images (unavailable)</option><option value="API Collection" disabled>API Collection (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Release Notes" disabled>Release Notes (unavailable)</option><option value="Test Cases" disabled>Test Cases (unavailable)</option><option value="SOP Documents" disabled>SOP Documents (unavailable)</option></select></div>
+                  <input type="file" id="khUpHiddenFile" multiple accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
+                  <input type="file" id="khUpHiddenFolder" multiple webkitdirectory directory accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
+                  <button type="button" class="btn btn-primary" id="khUpAddSourceBtn">Add Source</button>
+                  <button type="button" class="btn" id="khUpRemoveSelectedBtn">Remove Selected</button>
+                </div>
+              </section>
+              <section class="kh-section">
+                <h4 class="kh-section-title">Selected Sources</h4><div class="kh-section-help">Selections stay in this browser until each source is uploaded or removed.</div>
+                <div class="kh-source-table"><table><thead><tr><th style="width:42px;"><input type="checkbox" id="khUpSelectAll"></th><th>Source Name</th><th style="width:90px;">Type</th><th style="width:100px;">Size</th><th style="width:130px;">Status</th><th style="width:28%;">Message</th></tr></thead><tbody id="khUpSourcesTableBody"><tr><td colspan="6" class="kh-empty">No sources added yet.</td></tr></tbody></table></div>
+              </section>
+              <section class="kh-section kh-progress-panel" id="khUpProgressContainer" style="display:none;">
+                <h4 class="kh-section-title">Upload Progress</h4>
+                <div style="display:flex;justify-content:space-between;gap:12px;"><strong id="khUpProgressStatus">Preparing upload...</strong><span id="khUpProgressCount">0/0</span></div>
+                <div class="kh-progress-track"><div class="kh-progress-fill" id="khUpProgressBar"></div></div>
+                <div class="kh-progress-metrics"><div class="kh-progress-metric"><span>Total</span><strong id="khUpTotal">0</strong></div><div class="kh-progress-metric"><span>Completed</span><strong id="khUpCompleted">0</strong></div><div class="kh-progress-metric"><span>Successful</span><strong id="khUpSuccessful">0</strong></div><div class="kh-progress-metric"><span>Failed</span><strong id="khUpFailed">0</strong></div></div>
+                <div class="kh-upload-log" id="khUpLog" aria-live="polite"></div>
+                <div id="khUpProgressStats" class="muted-small" style="display:none;"></div>
+              </section>
+              <div class="modal-actions"><button type="button" class="btn btn-primary" id="khUploadBtn">Upload &amp; Process</button></div>
               <div id="khUploadResult"></div>
             </div>
           </div>
         </div>
 
         <div class="panel" id="kh-smart">
-          <div class="card" style="max-width:720px;">
+          <div class="card" style="max-width:760px;">
             <div class="card-head"><h3>AI Smart Upload</h3></div>
             <div class="card-body">
               <div class="auth-error" id="khSmartError"></div>
-              <div class="field"><label for="khSmartFile">Select File for AI Analysis</label><input id="khSmartFile" type="file"></div>
-              <div class="modal-actions">
-                <button type="button" class="btn btn-primary" id="khSmartAnalyzeBtn">Analyze with AI</button>
+              <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
+                <div style="flex:1;"><label for="khSmartDomainSel">Domain</label><select id="khSmartDomainSel" style="width:100%;"><option value="">Select Domain...</option></select></div>
+                <button type="button" class="btn" id="khSmartOpenAddDomainBtn" style="padding:0 12px; height:34px;">+</button>
+              </div>
+              <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
+                <div style="flex:1;"><label for="khSmartModuleSel">Module</label><select id="khSmartModuleSel" style="width:100%;"><option value="">Select Module...</option></select></div>
+                <button type="button" class="btn" id="khSmartOpenAddModuleBtn" style="padding:0 12px; height:34px;">+</button>
+              </div>
+              <div class="field"><label for="khSmartName">Knowledge Name</label><input id="khSmartName" placeholder="Auto-populated or enter custom name"></div>
+              <div class="field"><label for="khSmartVersion">Version</label><input id="khSmartVersion" value="1.0"></div>
+              <div class="field"><label for="khSmartDocTypeSel">Document Type</label><select id="khSmartDocTypeSel" style="width:100%;">
+                <option value="SRS">SRS</option>
+                <option value="CRF">CRF</option>
+                <option value="Test Case">Test Case</option>
+                <option value="SOP">SOP</option>
+                <option value="API Documentation">API Documentation</option>
+                <option value="Release Notes">Release Notes</option>
+                <option value="Technical Document">Technical Document</option>
+                <option value="Other">Other</option>
+              </select></div>
+              <div class="field">
+                <label>Selected Sources for AI Analysis</label>
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                  <input type="file" id="khSmartHiddenFile" multiple style="display:none;">
+                  <button type="button" class="btn" id="khSmartAddSourceBtn">Select Files</button>
+                  <button type="button" class="btn" id="khSmartRemoveSelectedBtn">Remove Selected</button>
+                  <button type="button" class="btn" id="khSmartClearBtn">Clear All</button>
+                </div>
+                <div class="table-scroll" style="max-height:140px; border:1px solid var(--border); border-radius:6px;">
+                  <table>
+                    <thead><tr><th style="width:30px;"><input type="checkbox" id="khSmartSelectAll"></th><th>Source Name</th><th style="width:90px;">Type</th><th style="width:70px;">Size</th><th style="width:80px;">Status</th></tr></thead>
+                    <tbody id="khSmartSourcesTableBody"><tr><td colspan="5" class="muted-small" style="text-align:center;">No sources added yet.</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="modal-actions" style="margin-top:12px;">
+                <button type="button" class="btn btn-primary" id="khSmartAnalyzeBtn">Analyze With AI</button>
               </div>
               <div id="khSmartResults" style="display:none; margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
-                <h4>AI Suggested Metadata (Review &amp; Edit)</h4>
-                <div class="field"><label for="khSmartDomain">Domain</label><input id="khSmartDomain" list="khDomainList"></div>
-                <div class="field"><label for="khSmartModule">Module</label><input id="khSmartModule" list="khModuleList"></div>
-                <div class="field"><label for="khSmartName">Knowledge Name</label><input id="khSmartName"></div>
-                <div class="field"><label for="khSmartVersion">Version</label><input id="khSmartVersion" value="1.0"></div>
-                <div class="field"><label for="khSmartDocType">Document Type</label><input id="khSmartDocType"></div>
-                <div class="field"><label for="khSmartSummary">Summary</label><textarea id="khSmartSummary" rows="3" style="width:100%; border:1px solid var(--border); border-radius:6px; padding:8px; font-family:inherit;"></textarea></div>
+                <h4>AI Analysis Summary &amp; Metadata Review</h4>
+                <div id="khSmartAnalysisList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;"></div>
+                <div class="field"><label for="khSmartSummary">Summary Override</label><textarea id="khSmartSummary" rows="3" style="width:100%; border:1px solid var(--border); border-radius:6px; padding:8px; font-family:inherit;"></textarea></div>
                 <div class="field"><label for="khSmartTags">Tags (comma separated)</label><input id="khSmartTags"></div>
-                <div class="field"><label>Confidence Score</label><div id="khSmartConfidence" style="font-weight:600; color:var(--primary);">—</div></div>
+                <div class="field"><label>Overall Confidence</label><div id="khSmartConfidence" style="font-weight:600; color:var(--primary);">—</div></div>
                 <div class="modal-actions" style="margin-top:12px;">
-                  <button type="button" class="btn btn-primary" id="khSmartUploadBtn">Confirm &amp; Upload</button>
+                  <button type="button" class="btn btn-primary" id="khSmartUploadBtn">Confirm Upload</button>
                 </div>
               </div>
               <div id="khSmartUploadResult"></div>
@@ -1834,27 +1993,20 @@ X-Client-Id: qa-automation-bot</pre>
     footer: document.getElementById('rolesPager'), colSpan: 5,
     emptyText: 'No roles yet.', onRendered: wireRoleRowActions,
   });
-  var khController = createGridController({
-    name: 'knowledge', tbody: document.getElementById('khTableBody'),
-    searchInput: document.getElementById('khSearch'),
-    footer: document.getElementById('khPager'), colSpan: 9,
-    emptyText: 'No knowledge items yet — upload the first document to get started.',
-    onRendered: wireKhRowActions,
-  });
-
   // ---- Knowledge Hub (Milestone 1) ----
   var khCache = [];
-  var khModulesByDomain = {};
+  var khDomains = [];
 
   function loadKnowledgeHub(){
-    Promise.all([
+    return Promise.all([
       apiFetch('/api/knowledge/items'),
       apiFetch('/api/knowledge/domains'),
     ]).then(function(results){
       khCache = results[0].items;
+      khDomains = results[1].domains || [];
       renderKnowledgeItems(khCache);
-      populateKhDomainFilter(results[1].domains);
-      populateKhDomainList(results[1].domains);
+      populateKhDomainFilter(khDomains);
+      populateKhDomainList(khDomains);
     }).catch(function(err){ toast(err.message, true); });
   }
 
@@ -1868,8 +2020,11 @@ X-Client-Id: qa-automation-bot</pre>
   }
 
   function populateKhDomainList(domains){
-    document.getElementById('khDomainList').innerHTML =
-      domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">'; }).join('');
+    var sel = document.getElementById('khUpDomainSel');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">Select Domain...</option>' +
+      domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+    if(domains.indexOf(current) !== -1) sel.value = current;
   }
 
   function refreshKhModuleFilterOptions(){
@@ -1885,24 +2040,31 @@ X-Client-Id: qa-automation-bot</pre>
     if(modules.indexOf(current) !== -1) modSel.value = current;
   }
 
-  function fetchKhModuleDatalist(domain){
-    if(!domain){ document.getElementById('khModuleList').innerHTML = ''; return; }
-    apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules')
+  function loadKhModulesInto(sel, domain, selectModule){
+    sel.innerHTML = '<option value="">' + (domain ? 'Loading modules...' : 'Select a Domain first...') + '</option>';
+    sel.disabled = !domain;
+    if(!domain) return Promise.resolve([]);
+    return apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules')
       .then(function(r){
-        document.getElementById('khModuleList').innerHTML =
-          r.modules.map(function(m){ return '<option value="' + escapeHtml(m) + '">'; }).join('');
-      }).catch(function(){ /* datalist is a convenience, not required */ });
+        var modules = r.modules || [];
+        sel.innerHTML = '<option value="">Select Module...</option>' +
+          modules.map(function(m){ return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('');
+        sel.disabled = false;
+        if(selectModule && modules.indexOf(selectModule) !== -1) sel.value = selectModule;
+        return modules;
+      }).catch(function(err){
+        sel.innerHTML = '<option value="">Unable to load modules</option>';
+        sel.disabled = true;
+        throw err;
+      });
+  }
+
+  function loadKhUploadModules(domain, selectModule){
+    return loadKhModulesInto(document.getElementById('khUpModuleSel'), domain, selectModule);
   }
 
   function applyKhFilters(){
-    var domain = document.getElementById('khDomainFilter').value;
-    var module = document.getElementById('khModuleFilter').value;
-    khController.setExtraFilter(function(row){
-      var item = row._item;
-      if(domain && item.domain !== domain) return false;
-      if(module && item.module !== module) return false;
-      return true;
-    });
+    renderKnowledgeItems(khCache);
   }
 
   function fmtDate(iso){
@@ -1917,33 +2079,59 @@ X-Client-Id: qa-automation-bot</pre>
   }
 
   function renderKnowledgeItems(items){
-    document.getElementById('khCount').textContent = items.length + ' item' + (items.length === 1 ? '' : 's');
+    var domainFilter = document.getElementById('khDomainFilter').value;
+    var moduleFilter = document.getElementById('khModuleFilter').value;
+    var query = document.getElementById('khSearch').value.trim().toLowerCase();
+    var filtered = items.filter(function(item){
+      var tags = (item.tags || []).join(' ');
+      var haystack = [item.domain,item.module,item.knowledge_name,item.version,item.document_type,item.file_name,item.summary,tags].join(' ').toLowerCase();
+      return (!domainFilter || item.domain === domainFilter) && (!moduleFilter || item.module === moduleFilter) && (!query || haystack.indexOf(query) !== -1);
+    });
+    document.getElementById('khCount').textContent = filtered.length + ' source' + (filtered.length === 1 ? '' : 's');
+    var tree = document.getElementById('khTree');
+    if(!filtered.length){ tree.innerHTML = '<div class="kh-empty"><strong>No knowledge found</strong><br><span>Adjust the filters or add a new source.</span></div>'; return; }
     var canEdit = hasPermission('knowledge', 'edit');
     var canDelete = hasPermission('knowledge', 'delete');
-    var rows = items.map(function(item){
-      var tags = (item.tags || []).join(', ');
-      var searchText = [item.knowledge_name, item.domain, item.module, item.version, item.document_type, item.summary, tags].join(' ').toLowerCase();
-      var html = '<tr data-search="' + escapeHtml(searchText) + '" data-kh-id="' + item.id + '">' +
-        '<td><div style="font-weight:600;">' + escapeHtml(item.knowledge_name) + '</div>' + (tags ? '<div class="muted-small">' + escapeHtml(tags) + '</div>' : '') + '</td>' +
-        '<td class="muted-small">' + escapeHtml(item.domain) + '</td>' +
-        '<td class="muted-small">' + escapeHtml(item.module) + '</td>' +
-        '<td class="muted-small mono">' + escapeHtml(item.version) + '</td>' +
-        '<td class="muted-small">' + escapeHtml(item.document_type || '—') + '</td>' +
-        '<td class="muted-small">' + escapeHtml(item.summary || '—') + '</td>' +
-        '<td>' + confidencePill(item.confidence) + '</td>' +
-        '<td class="muted-small">' + fmtDate(item.created_date) + '</td>' +
-        '<td><div class="row-actions" style="justify-content:flex-end;">' +
-          (canEdit ? '<button data-tip="Edit" data-action="kh-edit" data-kh-id="' + item.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' : '') +
-          (canDelete ? '<button data-tip="Delete" data-action="kh-delete" data-kh-id="' + item.id + '"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>' : '') +
-        '</div></td>' +
-      '</tr>';
-      return { html: html, search: searchText, _item: item };
+    var grouped = {};
+    filtered.forEach(function(item){
+      var domain = item.domain || 'Unspecified', module = item.module || 'Unspecified', name = item.knowledge_name || 'Unspecified', version = item.version || 'Unspecified', type = item.document_type || 'Unspecified';
+      grouped[domain] = grouped[domain] || {};
+      grouped[domain][module] = grouped[domain][module] || {};
+      grouped[domain][module][name] = grouped[domain][module][name] || {};
+      grouped[domain][module][name][version] = grouped[domain][module][name][version] || {};
+      grouped[domain][module][name][version][type] = grouped[domain][module][name][version][type] || [];
+      grouped[domain][module][name][version][type].push(item);
     });
-    khController.setRows(rows);
-    applyKhFilters();
+    function node(label, children, open){ return '<details' + (open ? ' open' : '') + '><summary>' + escapeHtml(label) + '</summary>' + children + '</details>'; }
+    var html = '';
+    Object.keys(grouped).sort().forEach(function(domain){
+      var moduleHtml = '';
+      Object.keys(grouped[domain]).sort().forEach(function(module){
+        var nameHtml = '';
+        Object.keys(grouped[domain][module]).sort().forEach(function(name){
+          var versionHtml = '';
+          Object.keys(grouped[domain][module][name]).sort().forEach(function(version){
+            var typeHtml = '';
+            Object.keys(grouped[domain][module][name][version]).sort().forEach(function(type){
+              var leaves = grouped[domain][module][name][version][type].map(function(item){
+                return '<div class="kh-tree-leaf"><div><strong>' + escapeHtml(item.file_name || 'Unnamed source') + '</strong><div class="kh-tree-meta">' + escapeHtml(item.summary || 'No summary available') + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button class="btn" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button class="btn" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button class="btn" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button class="btn" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
+              }).join('');
+              typeHtml += node(type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query);
+            });
+            versionHtml += node('Version ' + version, typeHtml, !!query);
+          });
+          nameHtml += node(name, versionHtml, !!query);
+        });
+        moduleHtml += node(module, nameHtml, !!query);
+      });
+      html += node(domain, moduleHtml, true);
+    });
+    tree.innerHTML = html;
+    wireKhRowActions(tree);
   }
 
   function wireKhRowActions(body){
+    body.querySelectorAll('[data-action="kh-view"]').forEach(function(btn){ btn.addEventListener('click', function(){ openKhDetails(parseInt(btn.getAttribute('data-kh-id'),10)); }); });
     body.querySelectorAll('[data-action="kh-edit"]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var id = parseInt(btn.getAttribute('data-kh-id'), 10);
@@ -1951,6 +2139,7 @@ X-Client-Id: qa-automation-bot</pre>
         if(item) openKhEditModal(item);
       });
     });
+    body.querySelectorAll('[data-action="kh-versions"]').forEach(function(btn){ btn.addEventListener('click', function(){ openKhVersions(parseInt(btn.getAttribute('data-kh-id'),10)); }); });
     body.querySelectorAll('[data-action="kh-delete"]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var id = parseInt(btn.getAttribute('data-kh-id'), 10);
@@ -1961,7 +2150,11 @@ X-Client-Id: qa-automation-bot</pre>
           'This removes this version\'s stored file and its indexed content. Other versions of the same knowledge item are not affected. This cannot be undone from here.',
           function(){
             return apiFetch('/api/knowledge/items/' + id, { method: 'DELETE' })
-              .then(function(){ toast('Deleted.'); loadKnowledgeHub(); });
+              .then(function(result){
+                if(result.storage_cleanup_error) toast('Knowledge deleted, but managed-file cleanup needs attention: ' + result.storage_cleanup_error, true);
+                else toast('Knowledge and indexed content deleted.');
+                return loadKnowledgeHub();
+              });
           }
         );
       });
@@ -1971,15 +2164,61 @@ X-Client-Id: qa-automation-bot</pre>
   function openKhEditModal(item){
     document.getElementById('khEditError').classList.remove('show');
     document.getElementById('khEditName').value = item.knowledge_name;
+    document.getElementById('khEditDomain').innerHTML = khDomains.map(function(domain){ return '<option value="' + escapeHtml(domain) + '">' + escapeHtml(domain) + '</option>'; }).join('');
     document.getElementById('khEditDomain').value = item.domain;
-    document.getElementById('khEditModule').value = item.module;
+    loadKhModulesInto(document.getElementById('khEditModule'), item.domain, item.module).catch(function(err){ document.getElementById('khEditError').textContent=err.message; document.getElementById('khEditError').classList.add('show'); });
     document.getElementById('khEditVersion').value = item.version;
-    document.getElementById('khEditDocType').value = item.document_type || '';
+    var documentType = item.document_type || '';
+    var documentTypeSelect = document.getElementById('khEditDocType');
+    if(documentType && !Array.prototype.some.call(documentTypeSelect.options,function(option){return option.value===documentType;})){
+      documentTypeSelect.add(new Option(documentType,documentType));
+    }
+    documentTypeSelect.value = documentType;
     document.getElementById('khEditSummary').value = item.summary || '';
     document.getElementById('khEditTags').value = (item.tags || []).join(', ');
     document.getElementById('khEditModal').setAttribute('data-kh-id', item.id);
     document.getElementById('khEditModal').classList.add('show');
   }
+
+  function detailRows(item){
+    var tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '—');
+    var fields = [
+      ['Domain',item.domain],['Module',item.module],['Knowledge Name',item.knowledge_name],['Version',item.version],
+      ['Document Type',item.document_type],['Source Type',item.source_type],['Source',item.file_name],['Managed Storage',item.storage_location],
+      ['Summary',item.summary],['Tags',tags],['Confidence',Math.round(Number(item.confidence || 0)*100)+'%'],['Status',item.status],
+      ['Created',formatDateTime(item.created_date)],['Updated',formatDateTime(item.modified_date)],['Chunks',item.chunks],['Vectors',item.vectors]
+    ];
+    return '<dl class="kh-detail-grid">' + fields.map(function(field){ return '<dt>' + escapeHtml(field[0]) + '</dt><dd>' + escapeHtml(field[1] == null || field[1] === '' ? '—' : field[1]) + '</dd>'; }).join('') + '</dl>';
+  }
+
+  function openKhDetails(id){
+    var error = document.getElementById('khDetailsError');
+    error.classList.remove('show');
+    document.getElementById('khDetailsBody').innerHTML = '<div class="kh-empty">Loading details…</div>';
+    document.getElementById('khDetailsModal').classList.add('show');
+    apiFetch('/api/knowledge/items/' + id).then(function(item){ document.getElementById('khDetailsBody').innerHTML = detailRows(item); })
+      .catch(function(err){ error.textContent=err.message; error.classList.add('show'); });
+  }
+
+  function openKhVersions(id){
+    var item = khCache.filter(function(row){return row.id===id;})[0];
+    var error = document.getElementById('khVersionsError');
+    error.classList.remove('show');
+    document.getElementById('khVersionsSub').textContent = item ? item.knowledge_name + ' · ' + item.file_name : 'Real version records associated with this source.';
+    document.getElementById('khVersionsBody').innerHTML = '<tr><td colspan="5" class="kh-empty">Loading versions…</td></tr>';
+    document.getElementById('khVersionsModal').classList.add('show');
+    apiFetch('/api/knowledge/items/' + id + '/versions').then(function(result){
+      var versions = result.versions || [];
+      document.getElementById('khVersionsBody').innerHTML = versions.length ? versions.map(function(version){
+        return '<tr><td><strong>' + escapeHtml(version.version) + '</strong></td><td>' + escapeHtml(fmtDate(version.created_date)) + '</td><td class="mono" title="' + escapeHtml(version.sha256 || '') + '">' + escapeHtml((version.sha256 || '').slice(0,12) || '—') + '</td><td>' + escapeHtml(version.storage_location || '—') + '</td><td><button class="btn" data-version-details="' + id + '">View Details</button></td></tr>';
+      }).join('') : '<tr><td colspan="5" class="kh-empty">No version records found.</td></tr>';
+      document.querySelectorAll('[data-version-details]').forEach(function(button){ button.addEventListener('click',function(){ document.getElementById('khVersionsModal').classList.remove('show'); openKhDetails(id); }); });
+    }).catch(function(err){ error.textContent=err.message; error.classList.add('show'); });
+  }
+
+  document.getElementById('khDetailsClose').addEventListener('click',function(){document.getElementById('khDetailsModal').classList.remove('show');});
+  document.getElementById('khVersionsClose').addEventListener('click',function(){document.getElementById('khVersionsModal').classList.remove('show');});
+  document.getElementById('khEditDomain').addEventListener('change',function(){ loadKhModulesInto(document.getElementById('khEditModule'),this.value).catch(function(err){toast(err.message,true);}); });
 
   document.getElementById('khEditCancel').addEventListener('click', function(){
     document.getElementById('khEditModal').classList.remove('show');
@@ -1990,10 +2229,19 @@ X-Client-Id: qa-automation-bot</pre>
     var id = parseInt(document.getElementById('khEditModal').getAttribute('data-kh-id'), 10);
     var tags = document.getElementById('khEditTags').value.split(',').map(function(t){ return t.trim(); }).filter(Boolean);
     var payload = {
-      document_type: document.getElementById('khEditDocType').value.trim(),
+      domain: document.getElementById('khEditDomain').value,
+      module: document.getElementById('khEditModule').value,
+      knowledge_name: document.getElementById('khEditName').value.trim(),
+      version: document.getElementById('khEditVersion').value.trim(),
+      document_type: document.getElementById('khEditDocType').value,
       summary: document.getElementById('khEditSummary').value.trim(),
       tags: tags,
     };
+    if(!payload.domain || !payload.module || !payload.knowledge_name || !payload.version || !payload.document_type){
+      errBox.textContent = 'Domain, Module, Knowledge Name, Version and Document Type are required.';
+      errBox.classList.add('show');
+      return;
+    }
     apiFetch('/api/knowledge/items/' + id, { method: 'PATCH', body: JSON.stringify(payload) })
       .then(function(){
         document.getElementById('khEditModal').classList.remove('show');
@@ -2007,16 +2255,10 @@ X-Client-Id: qa-automation-bot</pre>
     applyKhFilters();
   });
   document.getElementById('khModuleFilter').addEventListener('change', applyKhFilters);
-  document.getElementById('khClearFilters').addEventListener('click', function(){
-    document.getElementById('khDomainFilter').value = '';
-    refreshKhModuleFilterOptions();
-    document.getElementById('khModuleFilter').value = '';
-    applyKhFilters();
-  });
-  document.getElementById('khUpDomain').addEventListener('change', function(){
-    fetchKhModuleDatalist(this.value.trim());
-  });
-
+  document.getElementById('khSearch').addEventListener('input', applyKhFilters);
+  document.getElementById('khRefreshBtn').addEventListener('click', function(){ loadKnowledgeHub().then(function(){ toast('Knowledge refreshed.'); }); });
+  document.getElementById('khExpandAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=true; }); });
+  document.getElementById('khCollapseAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=false; }); });
   function switchToKhTab(tabName){
     var strip = document.querySelector('[data-page-content="knowledge"] .tabstrip');
     var btn = strip && strip.querySelector('[data-tab="' + tabName + '"]');
@@ -2027,66 +2269,288 @@ X-Client-Id: qa-automation-bot</pre>
     switchToKhTab('kh-upload');
   });
 
-  document.getElementById('khUploadBtn').addEventListener('click', function(){
-    var errBox = document.getElementById('khUploadError');
-    errBox.classList.remove('show');
-    var domain = document.getElementById('khUpDomain').value.trim();
-    var module = document.getElementById('khUpModule').value.trim();
-    var name = document.getElementById('khUpName').value.trim();
-    var version = document.getElementById('khUpVersion').value.trim() || '1.0';
-    var docType = document.getElementById('khUpDocType').value.trim();
-    var fileInput = document.getElementById('khUpFile');
-    var file = fileInput.files && fileInput.files[0];
-    if(!domain || !module || !name || !file){
-      errBox.textContent = 'Domain, Module, Knowledge Name and a file are all required.';
-      errBox.classList.add('show');
+  // Manual Upload handlers are defined below. Each selected file uses the
+  // existing single-file API so progress represents completed requests.
+  var khUploadSources = [];
+  var khUploadSequence = 0;
+  var khLastUploadSummary = null;
+  var khUploadBusy = false;
+  var khCreateContext = 'upload';
+  var khSupportedUploadExtensions = ['pdf', 'docx', 'txt', 'xlsx'];
+
+  function showKhUploadError(message){
+    var box = document.getElementById('khUploadError');
+    box.textContent = message;
+    box.classList.toggle('show', !!message);
+  }
+  function formatFileSize(bytes){
+    if(bytes < 1024) return bytes + ' B';
+    if(bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  function uploadSourceKey(file){ return [file.webkitRelativePath || file.name, file.size, file.lastModified].join('::'); }
+  function fileExtension(file){
+    var parts = file.name.toLowerCase().split('.');
+    return parts.length > 1 ? parts.pop() : '';
+  }
+  function addKhUploadSources(fileList){
+    var existing = {};
+    khUploadSources.forEach(function(source){ existing[source.key] = true; });
+    var unsupported = [];
+    Array.prototype.forEach.call(fileList || [], function(file){
+      var extension = fileExtension(file);
+      if(khSupportedUploadExtensions.indexOf(extension) === -1){ unsupported.push(file.name); return; }
+      var key = uploadSourceKey(file);
+      if(existing[key]) return;
+      khUploadSequence += 1;
+      khUploadSources.push({ id: khUploadSequence, key: key, file: file, status: 'Ready', error: '', result: null });
+      existing[key] = true;
+    });
+    renderKhUploadSources();
+    showKhUploadError(unsupported.length ? 'Unsupported files were skipped: ' + unsupported.join(', ') + '. Supported types are PDF, DOCX, TXT and XLSX.' : '');
+  }
+  function renderKhUploadSources(){
+    var body = document.getElementById('khUpSourcesTableBody');
+    if(!khUploadSources.length){
+      body.innerHTML = '<tr><td colspan="6" class="kh-empty">No sources added yet.</td></tr>';
+      document.getElementById('khUpSelectAll').checked = false;
       return;
     }
-    var uploadBtn = document.getElementById('khUploadBtn');
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading…';
+    body.innerHTML = khUploadSources.map(function(source){
+      var displayName = source.file.webkitRelativePath || source.file.name;
+      var statusClass = source.status.toLowerCase();
+      return '<tr><td><input type="checkbox" class="kh-upload-source-check" data-source-id="' + source.id + '"' + (khUploadBusy ? ' disabled' : '') + '></td>' +
+        '<td class="kh-source-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</td>' +
+        '<td class="muted-small">' + escapeHtml(fileExtension(source.file).toUpperCase()) + '</td>' +
+        '<td class="muted-small">' + formatFileSize(source.file.size) + '</td>' +
+        '<td><span class="kh-status ' + escapeHtml(statusClass) + '">' + escapeHtml(source.status) + '</span></td>' +
+        '<td class="muted-small kh-source-name" title="' + escapeHtml(source.error || '') + '">' + escapeHtml(source.error || '—') + '</td></tr>';
+    }).join('');
+  }
+  function setKhUploadBusy(busy){
+    khUploadBusy = busy;
+    ['khUpDomainSel','khOpenAddDomainBtn','khUpModuleSel','khOpenAddModuleBtn','khUpName','khUpVersion','khUpDocTypeSel','khUpSourceType','khUpAddSourceBtn','khUpRemoveSelectedBtn','khUpSelectAll','khUploadBtn'].forEach(function(id){
+      document.getElementById(id).disabled = busy;
+    });
+    document.getElementById('khUploadBtn').textContent = busy ? 'Uploading...' : 'Upload & Process';
+    renderKhUploadSources();
+  }
+  function updateKhUploadProgress(currentName, total, completed, successful, failed){
+    document.getElementById('khUpProgressContainer').style.display = 'block';
+    document.getElementById('khUpProgressStatus').textContent = currentName ? 'Current file: ' + currentName : 'Upload complete';
+    document.getElementById('khUpProgressCount').textContent = completed + '/' + total;
+    document.getElementById('khUpProgressStats').textContent = 'Completed: ' + completed + ' | Successful: ' + successful + ' | Failed: ' + failed;
+    document.getElementById('khUpTotal').textContent = total;
+    document.getElementById('khUpCompleted').textContent = completed;
+    document.getElementById('khUpSuccessful').textContent = successful;
+    document.getElementById('khUpFailed').textContent = failed;
+    document.getElementById('khUpProgressBar').style.width = (total ? Math.round(completed * 100 / total) : 0) + '%';
+  }
+  function appendKhUploadLog(message){
+    var log = document.getElementById('khUpLog');
+    log.textContent += (log.textContent ? '\n' : '') + message;
+    log.scrollTop = log.scrollHeight;
+  }
+  function postKhUploadFile(source, metadata){
     var formData = new FormData();
-    formData.append('file', file);
-    formData.append('domain', domain);
-    formData.append('module', module);
-    formData.append('knowledge_name', name);
-    formData.append('version', version);
-    formData.append('document_type', docType);
+    formData.append('file', source.file);
+    formData.append('domain', metadata.domain);
+    formData.append('module', metadata.module);
+    formData.append('knowledge_name', metadata.name);
+    formData.append('version', metadata.version);
+    formData.append('document_type', metadata.documentType);
     var headers = {};
-    if(authState.token) headers['Authorization'] = 'Bearer ' + authState.token;
-    fetch(API_BASE + '/api/knowledge/upload', { method: 'POST', headers: headers, body: formData })
-      .then(function(res){
-        return res.json().catch(function(){ return {}; }).then(function(data){
-          if(!res.ok) throw new Error((data && data.detail) || ('Upload failed (' + res.status + ')'));
+    if(authState.token) headers.Authorization = 'Bearer ' + authState.token;
+    return fetch(API_BASE + '/api/knowledge/upload', { method: 'POST', headers: headers, body: formData })
+      .then(function(response){
+        if(response.status === 401){ doLogout(true); throw new Error('Session expired or invalid.'); }
+        return response.json().catch(function(){ return {}; }).then(function(data){
+          if(!response.ok) throw new Error((data && data.detail) || ('Upload failed (' + response.status + ')'));
           return data;
         });
-      })
-      .then(function(result){
-        toast('Uploaded "' + name + '" v' + version + '.');
-        document.getElementById('khUploadResult').innerHTML =
-          '<div class="card-body" style="border:1px solid var(--border); border-radius:8px; margin-top:14px; padding:12px;">' +
-          '<div style="font-weight:600; margin-bottom:6px;">Analysis result</div>' +
-          '<div class="kv"><dt>Platform</dt><dd>' + escapeHtml(result.platform || '—') + '</dd>' +
-          '<dt>Category</dt><dd>' + escapeHtml(result.category || '—') + '</dd>' +
-          '<dt>Summary</dt><dd>' + escapeHtml(result.summary || '—') + '</dd>' +
-          '<dt>Tags</dt><dd>' + escapeHtml((result.tags || []).join(', ') || '—') + '</dd>' +
-          '<dt>Confidence</dt><dd>' + confidencePill(result.confidence) + '</dd>' +
-          '<dt>Chunks / Vectors saved</dt><dd>' + (result.total_chunks || 0) + ' / ' + (result.vectors_saved || 0) + '</dd></div>' +
-          '<button type="button" class="btn" style="margin-top:10px;" id="khViewInBrowseBtn">View in Browse</button>' +
-          '</div>';
-        document.getElementById('khViewInBrowseBtn').addEventListener('click', function(){
-          document.getElementById('khSearch').value = name;
-          switchToKhTab('kh-browse');
-          loadKnowledgeHub();
-        });
-        fileInput.value = '';
-        loadKnowledgeHub();
-      })
-      .catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); })
-      .finally(function(){
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload';
       });
+  }
+  function showKhUploadSummary(summary){
+    khLastUploadSummary = summary;
+    var hierarchy = [summary.domain, summary.module, summary.name, summary.version, summary.documentType].map(escapeHtml).join(' &rsaquo; ');
+    var successfulResults = summary.results || [];
+    var primary = successfulResults[0] ? successfulResults[0].result || {} : {};
+    var failedHtml = summary.failures.length ? '<div class="kh-modal-section"><h4>Failed Sources</h4>' + summary.failures.map(function(failure){return '<div><strong>'+escapeHtml(failure.name)+'</strong><div class="muted-small">'+escapeHtml(failure.reason)+'</div></div>';}).join('') + '</div>' : '';
+    document.getElementById('khUploadSummaryBody').innerHTML =
+      '<div class="kh-modal-section" style="border-top:0;margin-top:0;padding-top:0;"><h4>Upload Result</h4><dl class="kh-detail-grid"><dt>Overall Status</dt><dd>' + escapeHtml(summary.failed ? (summary.successful ? 'Partially completed' : 'Failed') : 'Completed') + '</dd><dt>Files Attempted</dt><dd>' + summary.total + '</dd><dt>Successful</dt><dd>' + summary.successful + '</dd><dt>Failed</dt><dd>' + summary.failed + '</dd><dt>Duration</dt><dd>' + (summary.durationMs/1000).toFixed(1) + ' seconds</dd></dl></div>' +
+      '<div class="kh-modal-section"><h4>Knowledge Metadata</h4><dl class="kh-detail-grid"><dt>Domain</dt><dd>' + escapeHtml(summary.domain) + '</dd><dt>Module</dt><dd>' + escapeHtml(summary.module) + '</dd><dt>Knowledge Name</dt><dd>' + escapeHtml(summary.name) + '</dd><dt>Version</dt><dd>' + escapeHtml(summary.version) + '</dd><dt>Document Type</dt><dd>' + escapeHtml(summary.documentType) + '</dd><dt>Source Type</dt><dd>' + escapeHtml(summary.sourceType) + '</dd></dl></div>' +
+      '<div class="kh-modal-section"><h4>Storage / Processing</h4><dl class="kh-detail-grid"><dt>Managed Storage</dt><dd>' + escapeHtml(primary.repository_path ? 'Stored in QA AI Studio repository' : '—') + '</dd><dt>Chunks Created</dt><dd>' + summary.chunks + '</dd><dt>Vectors Created</dt><dd>' + summary.vectors + '</dd></dl></div>' +
+      '<div class="kh-modal-section"><h4>AI Analysis Summary</h4><dl class="kh-detail-grid"><dt>Summary</dt><dd>' + escapeHtml(primary.summary || '—') + '</dd><dt>Tags</dt><dd>' + escapeHtml((primary.tags || []).join(', ') || '—') + '</dd><dt>Confidence</dt><dd>' + escapeHtml(primary.confidence == null ? '—' : Math.round(primary.confidence*100)+'%') + '</dd><dt>Classification</dt><dd>' + escapeHtml([primary.platform,primary.category,primary.document_type].filter(Boolean).join(' / ') || '—') + '</dd></dl></div>' +
+      '<div class="kh-modal-section"><h4>Hierarchy</h4><div>' + hierarchy + ' &rsaquo; ' + escapeHtml(successfulResults.length===1 ? successfulResults[0].name : successfulResults.length+' sources') + '</div></div>' + failedHtml;
+    document.getElementById('khUploadSummaryView').style.display = summary.successful ? '' : 'none';
+    document.getElementById('khUploadSummaryModal').classList.add('show');
+  }
+
+  document.getElementById('khUpDomainSel').addEventListener('change', function(){
+    showKhUploadError('');
+    loadKhUploadModules(this.value).catch(function(err){ showKhUploadError(err.message); });
+  });
+  document.getElementById('khUpAddSourceBtn').addEventListener('click', function(){
+    if(document.getElementById('khUpSourceType').value === 'Folder') document.getElementById('khUpHiddenFolder').click();
+    else document.getElementById('khUpHiddenFile').click();
+  });
+  document.getElementById('khUpHiddenFile').addEventListener('change', function(){ addKhUploadSources(this.files); this.value = ''; });
+  document.getElementById('khUpHiddenFolder').addEventListener('change', function(){ addKhUploadSources(this.files); this.value = ''; });
+  if(!('webkitdirectory' in document.getElementById('khUpHiddenFolder'))){
+    var folderOption = document.querySelector('#khUpSourceType option[value="Folder"]');
+    folderOption.disabled = true;
+    folderOption.textContent = 'Folder (unavailable in this browser)';
+  }
+  document.getElementById('khUpSelectAll').addEventListener('change', function(){
+    var checked = this.checked;
+    document.querySelectorAll('.kh-upload-source-check').forEach(function(box){ box.checked = checked; });
+  });
+  document.getElementById('khUpRemoveSelectedBtn').addEventListener('click', function(){
+    var selected = {};
+    document.querySelectorAll('.kh-upload-source-check:checked').forEach(function(box){ selected[box.getAttribute('data-source-id')] = true; });
+    khUploadSources = khUploadSources.filter(function(source){ return !selected[String(source.id)] || source.status === 'Uploading'; });
+    renderKhUploadSources();
+  });
+
+  function openKhAddDomain(context){
+    khCreateContext = context;
+    document.getElementById('khAddDomainName').value = '';
+    document.getElementById('khAddDomainError').classList.remove('show');
+    document.getElementById('khAddDomainModal').classList.add('show');
+    document.getElementById('khAddDomainName').focus();
+  }
+  document.getElementById('khOpenAddDomainBtn').addEventListener('click', function(){ openKhAddDomain('upload'); });
+  document.getElementById('khEditAddDomain').addEventListener('click', function(){ openKhAddDomain('edit'); });
+  document.getElementById('khAddDomainCancel').addEventListener('click', function(){ document.getElementById('khAddDomainModal').classList.remove('show'); });
+  document.getElementById('khAddDomainSave').addEventListener('click', function(){
+    var name = document.getElementById('khAddDomainName').value.trim();
+    var error = document.getElementById('khAddDomainError');
+    if(!name){ error.textContent = 'Domain name is required.'; error.classList.add('show'); return; }
+    this.disabled = true;
+    var button = this;
+    apiFetch('/api/knowledge/domains', { method: 'POST', body: JSON.stringify({ name: name }) })
+      .then(function(){ return apiFetch('/api/knowledge/domains'); })
+      .then(function(result){
+        khDomains = result.domains || [];
+        populateKhDomainFilter(result.domains);
+        populateKhDomainList(result.domains);
+        if(khCreateContext === 'edit'){
+          document.getElementById('khEditDomain').innerHTML = result.domains.map(function(domain){return '<option value="'+escapeHtml(domain)+'">'+escapeHtml(domain)+'</option>';}).join('');
+          document.getElementById('khEditDomain').value = name;
+          return loadKhModulesInto(document.getElementById('khEditModule'),name);
+        }
+        document.getElementById('khUpDomainSel').value = name;
+        return loadKhUploadModules(name);
+      }).then(function(){ document.getElementById('khAddDomainModal').classList.remove('show'); toast('Domain created.'); })
+      .catch(function(err){ error.textContent = err.message; error.classList.add('show'); })
+      .finally(function(){ button.disabled = false; });
+  });
+
+  function openKhAddModule(context){
+    khCreateContext = context;
+    var domain = document.getElementById(context === 'edit' ? 'khEditDomain' : 'khUpDomainSel').value;
+    if(!domain){ showKhUploadError('Select a Domain before adding a Module.'); return; }
+    document.getElementById('khAddModuleName').value = '';
+    document.getElementById('khAddModuleSub').textContent = 'Create a Module under "' + domain + '".';
+    document.getElementById('khAddModuleError').classList.remove('show');
+    document.getElementById('khAddModuleModal').classList.add('show');
+    document.getElementById('khAddModuleName').focus();
+  }
+  document.getElementById('khOpenAddModuleBtn').addEventListener('click', function(){ openKhAddModule('upload'); });
+  document.getElementById('khEditAddModule').addEventListener('click', function(){ openKhAddModule('edit'); });
+  document.getElementById('khAddModuleCancel').addEventListener('click', function(){ document.getElementById('khAddModuleModal').classList.remove('show'); });
+  document.getElementById('khAddModuleSave').addEventListener('click', function(){
+    var domain = document.getElementById(khCreateContext === 'edit' ? 'khEditDomain' : 'khUpDomainSel').value;
+    var name = document.getElementById('khAddModuleName').value.trim();
+    var error = document.getElementById('khAddModuleError');
+    if(!domain || !name){ error.textContent = 'A selected Domain and Module name are required.'; error.classList.add('show'); return; }
+    this.disabled = true;
+    var button = this;
+    apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules', { method: 'POST', body: JSON.stringify({ name: name }) })
+      .then(function(){ return khCreateContext === 'edit' ? loadKhModulesInto(document.getElementById('khEditModule'),domain,name) : loadKhUploadModules(domain,name); })
+      .then(function(){ document.getElementById('khAddModuleModal').classList.remove('show'); toast('Module created.'); })
+      .catch(function(err){ error.textContent = err.message; error.classList.add('show'); })
+      .finally(function(){ button.disabled = false; });
+  });
+
+  document.getElementById('khUploadBtn').addEventListener('click', function(){
+    var metadata = {
+      domain: document.getElementById('khUpDomainSel').value,
+      module: document.getElementById('khUpModuleSel').value,
+      name: document.getElementById('khUpName').value.trim(),
+      version: document.getElementById('khUpVersion').value.trim() || '1.0',
+      documentType: document.getElementById('khUpDocTypeSel').value
+    };
+    var selectedSourceType = document.getElementById('khUpSourceType').value;
+    if(['Files','Folder'].indexOf(selectedSourceType) === -1){
+      showKhUploadError('The selected source type is unavailable in this phase.');
+      return;
+    }
+    var uploadQueue = khUploadSources.filter(function(source){ return source.status !== 'Successful'; });
+    if(!metadata.domain || !metadata.module || !metadata.name || !metadata.documentType || !uploadQueue.length){
+      showKhUploadError('Domain, Module, Knowledge Name, Document Type and at least one source file are required.');
+      return;
+    }
+    showKhUploadError('');
+    setKhUploadBusy(true);
+    document.getElementById('khUpLog').textContent = '';
+    var startedAt = Date.now();
+    var uploadResults = [], uploadFailures = [];
+    var total = uploadQueue.length, completed = 0, successful = 0, failed = 0, chunks = 0, vectors = 0;
+    uploadQueue.forEach(function(source){ source.status = 'Queued'; source.error = ''; source.result = null; });
+    renderKhUploadSources();
+    updateKhUploadProgress(uploadQueue[0].file.name, total, 0, 0, 0);
+
+    var sequence = Promise.resolve();
+    uploadQueue.forEach(function(source){
+      sequence = sequence.then(function(){
+        source.status = 'Uploading';
+        appendKhUploadLog('[Started] ' + (source.file.webkitRelativePath || source.file.name));
+        renderKhUploadSources();
+        updateKhUploadProgress(source.file.webkitRelativePath || source.file.name, total, completed, successful, failed);
+        return postKhUploadFile(source, metadata)
+          .then(function(result){
+            source.status = 'Successful'; source.result = result; successful += 1;
+            uploadResults.push({name:source.file.name,result:result});
+            chunks += Number(result.total_chunks || 0); vectors += Number(result.vectors_saved || 0);
+            appendKhUploadLog('[Stored] ' + source.file.name + ' · ' + Number(result.total_chunks || 0) + ' chunk(s)');
+            appendKhUploadLog('[Indexed] ' + source.file.name + ' · ' + Number(result.vectors_saved || 0) + ' vector(s)');
+          }).catch(function(err){ source.status = 'Failed'; source.error = err.message; failed += 1; uploadFailures.push({name:source.file.name,reason:err.message}); appendKhUploadLog('[Failed] ' + source.file.name + ' · ' + err.message); })
+          .then(function(){ completed += 1; appendKhUploadLog('[Completed] ' + source.file.name); renderKhUploadSources(); updateKhUploadProgress('', total, completed, successful, failed); });
+      });
+    });
+    sequence.then(function(){
+      var summary = Object.assign({}, metadata, { sourceType:selectedSourceType, total:total, successful:successful, failed:failed, chunks:chunks, vectors:vectors, durationMs:Date.now()-startedAt, results:uploadResults, failures:uploadFailures });
+      showKhUploadSummary(summary);
+      loadKnowledgeHub();
+      toast(successful + ' of ' + total + ' file(s) uploaded.', failed > 0);
+    }).finally(function(){ setKhUploadBusy(false); });
+  });
+
+  function resetKhUploadAfterSummary(refresh){
+    khUploadSources = khUploadSources.filter(function(source){
+      if(source.status === 'Failed'){ source.status = 'Ready'; return true; }
+      return false;
+    });
+    document.getElementById('khUpProgressContainer').style.display = 'none';
+    document.getElementById('khUpProgressBar').style.width = '0%';
+    document.getElementById('khUpLog').textContent = '';
+    renderKhUploadSources();
+    if(refresh !== false) loadKnowledgeHub();
+  }
+  document.getElementById('khUploadSummaryClose').addEventListener('click', function(){ document.getElementById('khUploadSummaryModal').classList.remove('show'); resetKhUploadAfterSummary(); });
+  document.getElementById('khUploadSummaryView').addEventListener('click', function(){
+    if(!khLastUploadSummary) return;
+    document.getElementById('khUploadSummaryModal').classList.remove('show');
+    resetKhUploadAfterSummary(false);
+    document.getElementById('khSearch').value = khLastUploadSummary.name;
+    switchToKhTab('kh-browse');
+    loadKnowledgeHub().then(function(){
+      document.getElementById('khDomainFilter').value = khLastUploadSummary.domain;
+      refreshKhModuleFilterOptions();
+      document.getElementById('khModuleFilter').value = khLastUploadSummary.module;
+      applyKhFilters();
+    }).catch(function(err){ toast(err.message, true); });
   });
 
   // ---- AI Smart Upload Handlers ----

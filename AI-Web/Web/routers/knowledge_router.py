@@ -139,7 +139,7 @@ def get_item(
     current_user=Depends(require_permission("knowledge", "view")),
 ):
 
-    item = KnowledgeRepository().get_item(knowledge_id)
+    item = KnowledgeRepository().get_item_details(knowledge_id)
 
     if item is None:
 
@@ -178,7 +178,10 @@ def update_item(
 
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
-    updated = repository.update_item(knowledge_id, **fields)
+    try:
+        updated = repository.update_item(knowledge_id, **fields)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
     _audit(
         current_user,

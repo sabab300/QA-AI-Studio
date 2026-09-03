@@ -292,6 +292,84 @@ class VectorStore:
             return False
 
     # --------------------------------------------------
+    # Integrity helpers for Knowledge Hub edit/delete
+    # --------------------------------------------------
+
+    def snapshot(self, ids):
+        """Return restorable records for the requested chunk ids."""
+
+        ids = [str(doc_id) for doc_id in ids if doc_id]
+
+        if not ids:
+            return {"ids": [], "documents": [], "embeddings": [], "metadatas": []}
+
+        return self.collection.get(
+            ids=ids,
+            include=["documents", "embeddings", "metadatas"],
+        )
+
+    def update_metadata(self, ids, updates):
+        """Update logical metadata without changing text or embeddings."""
+
+        snapshot = self.snapshot(ids)
+        snapshot_ids = snapshot.get("ids", [])
+
+        if not snapshot_ids:
+            return snapshot
+
+        metadatas = []
+
+        for metadata in snapshot.get("metadatas", []):
+            revised = dict(metadata or {})
+            revised.update(updates)
+            metadatas.append(self._prepare_metadata(revised))
+
+        self.collection.update(ids=snapshot_ids, metadatas=metadatas)
+
+        return snapshot
+
+    def delete_with_snapshot(self, ids):
+        """Delete exact chunks and return enough data to restore them."""
+
+        snapshot = self.snapshot(ids)
+        snapshot_ids = snapshot.get("ids", [])
+
+        if snapshot_ids:
+            self.collection.delete(ids=snapshot_ids)
+
+        return snapshot
+
+    def restore_metadata(self, snapshot):
+        """Restore metadata after a later database update fails."""
+
+        ids = snapshot.get("ids", []) if snapshot else []
+
+        if ids:
+            self.collection.update(
+                ids=ids,
+                metadatas=snapshot.get("metadatas", []),
+            )
+
+        return len(ids)
+
+    def restore_snapshot(self, snapshot):
+        """Restore chunks captured by snapshot() after a failed operation."""
+
+        ids = snapshot.get("ids", []) if snapshot else []
+
+        if not ids:
+            return 0
+
+        self.collection.add(
+            ids=ids,
+            documents=snapshot.get("documents", []),
+            embeddings=snapshot.get("embeddings", []),
+            metadatas=snapshot.get("metadatas", []),
+        )
+
+        return len(ids)
+
+    # --------------------------------------------------
     # Delete by Knowledge
     # --------------------------------------------------
 
