@@ -48,7 +48,9 @@ class UploadPipeline:
         module,
         knowledge_name,
         version="1.0",
-        document_type=""
+        document_type="",
+        reviewed_analysis=None,
+        source_type="FILE",
         ):
 
         source_file = Path(source_file).resolve()
@@ -66,23 +68,61 @@ class UploadPipeline:
             file_info["repository_path"]
         )
 
-        analysis = self.analyzer.analyze(text)
+        if not str(text or "").strip():
+            # A non-empty binary can still contain no extractable knowledge.
+            # Do not report success or leave a managed orphan in that case.
+            try:
+                Path(file_info["repository_path"]).unlink()
+            except OSError:
+                pass
+            raise ValueError("The source contains no extractable text.")
 
-        analysis = dict(analysis)
+        # Smart Upload has already run the real analyzer and allowed an
+        # operator to review its result.  Re-analyzing here would waste work
+        # and could silently overwrite reviewed Summary/Tags.
+        try:
+            analysis = dict(
+                reviewed_analysis
+                if reviewed_analysis is not None
+                else self.analyzer.analyze(text)
+            )
+        except Exception:
+            try:
+                Path(file_info["repository_path"]).unlink()
+            except OSError:
+                pass
+            raise
+
+        def rollback_persisted_upload():
+            try:
+                self.metadata.delete(metadata_status)
+            finally:
+                try:
+                    Path(file_info["repository_path"]).unlink()
+                except OSError:
+                    pass
 
         print("SUMMARY:", analysis.get("summary"))
 
         if file_info.get("document_type"):
             analysis["document_type"] = file_info["document_type"]
 
-        metadata_status = self.metadata.save_knowledge_item(
-            domain=domain,
-            module=module,
-            knowledge_name=knowledge_name,
-            version=version,
-            file_info=file_info,
-            analysis=analysis
-        )
+        try:
+            metadata_status = self.metadata.save_knowledge_item(
+                domain=domain,
+                module=module,
+                knowledge_name=knowledge_name,
+                version=version,
+                file_info=file_info,
+                analysis=analysis,
+                source_type=source_type,
+            )
+        except Exception:
+            try:
+                Path(file_info["repository_path"]).unlink()
+            except OSError:
+                pass
+            raise
 
 # PATCH — AI/Core/upload_pipeline.py
 #
@@ -94,13 +134,21 @@ class UploadPipeline:
 # After:  N chunks -> 1 batched model.encode() call -> 1 batched
 #         ChromaDB add() call. Same result, much fewer round trips.
 
-        chunks = self.chunker.split(text)
+        try:
+            chunks = self.chunker.split(text)
+        except Exception:
+            rollback_persisted_upload()
+            raise
 
         vectors_saved = 0
 
         if chunks:
 
-            embeddings = self.embedding.generate_embeddings(chunks)
+            try:
+                embeddings = self.embedding.generate_embeddings(chunks)
+            except Exception:
+                rollback_persisted_upload()
+                raise
 
             if embeddings is None:
 
@@ -170,9 +218,13 @@ class UploadPipeline:
                     },
                 })
 
-            vectors_saved = self.vector_store.save_documents_batch(
-                batch_items
-            )
+            try:
+                vectors_saved = self.vector_store.save_documents_batch(
+                    batch_items
+                )
+            except Exception:
+                rollback_persisted_upload()
+                raise
 
 # Everything after this point (the "return { ... }" block) stays
 # exactly the same — vectors_saved and len(chunks) are still set,

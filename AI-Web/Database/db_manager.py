@@ -28,10 +28,18 @@ class DatabaseManager:
 
     def __init__(self):
 
-        db_folder = Path("Database")
-        db_folder.mkdir(exist_ok=True)
+        # Resolve from this module, never from the process working directory.
+        # Uvicorn may be launched from the repository root, AI-Web, an IDE, or
+        # a shortcut; a CWD-relative path silently created separate databases
+        # and made deleted Knowledge appear to return on a later launch.
+        db_folder = Path(__file__).resolve().parent
+        db_folder.mkdir(exist_ok=True, parents=True)
 
         self.db_path = db_folder / "metadata.db"
+
+    def resolved_path(self):
+
+        return self.db_path.resolve()
 
     def get_connection(self):
 
@@ -83,4 +91,7 @@ class DatabaseManager:
 
             conn.close()
 
-        print("Metadata database initialized successfully.")
+        print(
+            "Metadata database initialized successfully: "
+            f"{self.resolved_path()}"
+        )

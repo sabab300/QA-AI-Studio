@@ -24,6 +24,22 @@ class RepositoryManager:
             exist_ok=True
         )
 
+    @staticmethod
+    def _safe_segment(value, label):
+
+        segment = str(value or "").strip()
+
+        if (
+            not segment
+            or segment in {".", ".."}
+            or Path(segment).name != segment
+            or "/" in segment
+            or "\\" in segment
+        ):
+            raise ValueError(f"Invalid {label}.")
+
+        return segment
+
     # --------------------------------------------------
     # Repository Path
     # --------------------------------------------------
@@ -41,6 +57,11 @@ class RepositoryManager:
         version
 
     ):
+
+        domain = self._safe_segment(domain, "domain")
+        module = self._safe_segment(module, "module")
+        knowledge_name = self._safe_segment(knowledge_name, "knowledge name")
+        version = self._safe_segment(version, "version")
 
         path = (
 

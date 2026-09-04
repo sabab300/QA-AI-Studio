@@ -113,7 +113,35 @@ class KnowledgeRepository:
             else self.metadata.list_all()
         )
 
-        return [_row_to_dict(row) for row in rows]
+        items = [_row_to_dict(row) for row in rows]
+        api_repository = None
+        discovery_repository = None
+        for item in items:
+            if item.get("source_type") == "API_COLLECTION":
+                from Core.api_collection_repository import ApiCollectionRepository
+                api_repository = api_repository or ApiCollectionRepository()
+                item["api_collections"] = []
+                for collection in api_repository.list_collections():
+                    if collection.get("linked_knowledge_item_id") == item["id"]:
+                        item["api_collections"].append({
+                            "id": collection["id"],
+                            "name": collection.get("name"),
+                            "endpoints": [
+                                {
+                                    "id": endpoint["id"],
+                                    "method": endpoint.get("method"),
+                                    "name": endpoint.get("name"),
+                                    "folder_path": endpoint.get("folder_path"),
+                                    "url": endpoint.get("url_resolved") or endpoint.get("url_raw"),
+                                }
+                                for endpoint in api_repository.list_endpoints(collection["id"])
+                            ],
+                        })
+            elif item.get("source_type") == "URL_CAPTURE":
+                from Core.discovery_repository import DiscoveryRepository
+                discovery_repository = discovery_repository or DiscoveryRepository()
+                item["captured_flows"] = discovery_repository.get_captured_flows_for_knowledge_item(item["id"])
+        return items
 
     def get_item(self, knowledge_id):
 
@@ -121,18 +149,28 @@ class KnowledgeRepository:
 
     def get_item_versions(self, knowledge_id):
 
-        rows = self.metadata.get_versions(knowledge_id)
+        selected = self.get_item(knowledge_id)
+        if selected is None:
+            return []
 
-        return [
-            {
-                "knowledge_id": knowledge_id,
-                "version": row[0],
-                "sha256": row[1],
-                "storage_location": self._managed_storage_location(row[2]),
-                "created_date": row[3],
-            }
-            for row in rows
-        ]
+        versions = []
+        for item in self.list_items():
+            if (
+                item.get("domain") == selected.get("domain")
+                and item.get("module") == selected.get("module")
+                and item.get("knowledge_name") == selected.get("knowledge_name")
+            ):
+                versions.append({
+                    "knowledge_id": item["id"],
+                    "version": item.get("version"),
+                    "sha256": item.get("sha256"),
+                    "source": item.get("file_name"),
+                    "status": item.get("status"),
+                    "document_type": item.get("document_type"),
+                    "storage_location": self._managed_storage_location(item.get("repository_path")),
+                    "created_date": item.get("created_date"),
+                })
+        return sorted(versions, key=lambda row: (str(row["version"]), str(row["source"])))
 
     def get_item_details(self, knowledge_id):
 
@@ -383,12 +421,21 @@ class KnowledgeRepository:
         knowledge_name,
         version,
         document_type="",
+        source_type="FILE",
+        reviewed_analysis=None,
     ):
 
         domain = (domain or "").strip()
         module = (module or "").strip()
         knowledge_name = (knowledge_name or "").strip()
         version = (version or "1.0").strip() or "1.0"
+        source_type = (source_type or "FILE").strip()
+        allowed_source_types = {
+            "FILE", "Files", "Folder", "Release Notes", "Test Cases",
+            "SOP Documents", "SMART_UPLOAD",
+        }
+        if source_type not in allowed_source_types:
+            raise ValueError("Unsupported document source type.")
 
         missing = [
             label
@@ -432,6 +479,8 @@ class KnowledgeRepository:
                 knowledge_name=knowledge_name,
                 version=version,
                 document_type=document_type,
+                source_type=source_type,
+                reviewed_analysis=reviewed_analysis,
             )
 
         finally:

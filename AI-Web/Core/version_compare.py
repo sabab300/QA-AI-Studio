@@ -27,6 +27,7 @@ class VersionCompare:
         fields = [
             "domain", "module", "knowledge_name", "version", "status",
             "platform", "category", "business_process", "document_type",
+            "summary", "tags", "source_type", "file_name",
         ]
 
         changes = {}

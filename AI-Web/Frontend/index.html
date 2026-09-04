@@ -396,7 +396,7 @@
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
 
   /* ---------- Knowledge Hub workspace ---------- */
-  .kh-workspace{ padding:18px; overflow:auto; }
+  .kh-workspace{ padding:10px 12px; overflow:auto; }
   .kh-card{ width:100%; min-width:0; }
   .kh-card .card-head{ padding:18px 20px; align-items:flex-start; }
   .kh-section{ border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:18px; margin-bottom:16px; }
@@ -429,12 +429,14 @@
   .kh-upload-log{ margin-top:12px; min-height:120px; max-height:190px; overflow:auto; border:1px solid var(--border); border-radius:8px; background:#111827; color:#d1d5db; padding:11px 13px; font:12px/1.55 Consolas,monospace; white-space:pre-wrap; }
   .kh-tree{ border:1px solid var(--border); border-radius:9px; overflow:auto; min-height:300px; }
   .kh-tree details{ border-bottom:1px solid var(--border); }
-  .kh-tree details details{ border-bottom:0; border-top:1px solid var(--border); margin-left:22px; }
+  .kh-tree details details{ border-bottom:0; border-top:1px solid var(--border); margin-left:16px; }
   .kh-tree summary{ cursor:pointer; list-style:none; padding:11px 14px; font-weight:650; display:flex; align-items:center; gap:8px; }
   .kh-tree summary::-webkit-details-marker{ display:none; }
   .kh-tree summary::before{ content:'›'; color:var(--ink-muted); transition:transform .15s; }
   .kh-tree details[open]>summary::before{ transform:rotate(90deg); }
-  .kh-tree-leaf{ margin-left:22px; padding:11px 14px; border-top:1px solid var(--border); display:grid; grid-template-columns:minmax(220px,1fr) 110px 100px 150px; gap:12px; align-items:center; }
+  .kh-tree-leaf{ margin-left:16px; padding:9px 12px; border-top:1px solid var(--border); display:grid; grid-template-columns:minmax(180px,1fr) 90px 100px minmax(260px,auto); gap:10px; align-items:center; }
+  .kh-tree-leaf .row-actions{ display:flex; flex-wrap:nowrap; justify-content:flex-end; gap:6px; }
+  .kh-tree-leaf .row-actions .btn{ white-space:nowrap; padding:6px 9px; }
   .kh-tree-meta{ font-size:11.5px; color:var(--ink-muted); }
   .kh-toolbar{ padding:14px 18px; border-bottom:1px solid var(--border); }
   .kh-toolbar .fbar-search{ min-width:230px; flex:1; max-width:420px; }
@@ -654,6 +656,27 @@
     <div class="modal-actions"><button type="button" class="btn btn-primary" id="khVersionsClose">Close</button></div>
   </div>
 </div>
+
+<div class="modal-overlay" id="khEndpointModal">
+  <div class="modal-card kh-modal-card" style="max-width:860px;">
+    <h3>API Endpoint</h3><div class="modal-sub">Inspect or edit the persisted imported request. Sensitive header values are masked.</div>
+    <div class="auth-error" id="khEndpointError"></div>
+    <div class="kh-modal-grid">
+      <div class="field"><label for="khEndpointMethod">Method</label><select id="khEndpointMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></div>
+      <div class="field"><label for="khEndpointName">Name</label><input id="khEndpointName"></div>
+      <div class="field" style="grid-column:1/-1;"><label for="khEndpointUrl">URL</label><input id="khEndpointUrl"></div>
+      <div class="field"><label for="khEndpointBodyMode">Body mode</label><input id="khEndpointBodyMode"></div>
+      <div class="field" style="grid-column:1/-1;"><label for="khEndpointHeaders">Headers (one Key: Value per line)</label><textarea id="khEndpointHeaders" rows="5"></textarea></div>
+      <div class="field" style="grid-column:1/-1;"><label for="khEndpointBody">Request body</label><textarea id="khEndpointBody" rows="7"></textarea></div>
+    </div>
+    <div class="kh-modal-section" id="khEndpointRunResult" style="display:none;"></div>
+    <div class="modal-actions"><button type="button" class="btn" id="khEndpointCancel">Cancel</button><button type="button" class="btn" id="khEndpointRun">Run Now</button><button type="button" class="btn btn-primary" id="khEndpointSave">Save</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khMergeCompareModal"><div class="modal-card kh-modal-card"><h3 id="khMergeCompareTitle">Knowledge operation</h3><div class="modal-sub" id="khMergeCompareSub"></div><div class="auth-error" id="khMergeCompareError"></div><div class="kh-modal-grid"><div class="field"><label for="khOperationA">First item</label><select id="khOperationA"></select></div><div class="field"><label for="khOperationB">Second item</label><select id="khOperationB"></select></div></div><div class="kh-modal-section" id="khMergeCompareResult" style="display:none;"></div><div class="modal-actions"><button type="button" class="btn" id="khMergeCompareClose">Close</button><button type="button" class="btn btn-primary" id="khMergeCompareRun">Run</button></div></div></div>
+
+<div class="modal-overlay" id="khDiscoveryModal"><div class="modal-card kh-modal-card" style="max-width:900px;"><h3>Guided URL Knowledge Discovery</h3><div class="modal-sub">A server-side Playwright session captures only screens you review and confirm. Credentials remain in memory for authentication only.</div><div class="auth-error" id="khDiscoveryError"></div><div class="kh-modal-grid"><div class="field" style="grid-column:1/-1;"><label for="khDiscoveryUrl">URL</label><input id="khDiscoveryUrl" type="url" placeholder="https://application.example/"></div><div class="field"><label for="khDiscoveryAuth">Authentication</label><select id="khDiscoveryAuth"><option value="NONE">Public / None</option><option value="FORM">Username and password</option></select></div><div class="field"><label for="khDiscoveryUsername">Username</label><input id="khDiscoveryUsername" autocomplete="off"></div><div class="field"><label for="khDiscoveryPassword">Password</label><input id="khDiscoveryPassword" type="password" autocomplete="new-password"></div><div class="field"><label for="khDiscoveryStep">Step name</label><input id="khDiscoveryStep" placeholder="e.g. Login screen"></div></div><div class="kh-modal-section" id="khDiscoveryReview" style="display:none;"></div><div class="kh-modal-section"><h4>Confirmed Steps</h4><div id="khDiscoverySteps" class="muted-small">No confirmed screens.</div></div><div class="modal-actions"><button type="button" class="btn" id="khDiscoveryCancel">Cancel</button><button type="button" class="btn" id="khDiscoveryStart">Analyze Access</button><button type="button" class="btn" id="khDiscoveryCapture" disabled>Capture Current Screen</button><button type="button" class="btn" id="khDiscoveryConfirm" disabled>Confirm Step</button><button type="button" class="btn btn-primary" id="khDiscoverySave" disabled>Save Flow</button></div></div></div>
 
 <!-- ============ MANUAL KNOWLEDGE UPLOAD MODALS ============ -->
 <div class="modal-overlay" id="khAddDomainModal">
@@ -1207,7 +1230,8 @@ X-Client-Id: qa-automation-bot</pre>
               <button type="button" class="btn" id="khRefreshBtn">Refresh</button>
               <button type="button" class="btn" id="khExpandAllBtn">Expand All</button>
               <button type="button" class="btn" id="khCollapseAllBtn">Collapse All</button>
-              <button type="button" class="btn btn-primary" id="khUploadTabBtn">Add New</button>
+              <button type="button" class="btn" id="khMergeBtn">Merge Preview</button>
+              <button type="button" class="btn" id="khCompareBtn">Compare Versions</button>
             </div>
             <div class="card-body"><div class="kh-tree" id="khTree"><div class="kh-empty">Loading knowledge hierarchy…</div></div></div>
           </div>
@@ -1231,7 +1255,7 @@ X-Client-Id: qa-automation-bot</pre>
               <section class="kh-section">
                 <h4 class="kh-section-title">Source Selection</h4><div class="kh-section-help">Files and browser folder selection use the existing document upload pipeline. Other source types remain unavailable until their real processing paths exist.</div>
                 <div class="kh-source-actions">
-                  <div class="kh-field" style="min-width:240px;"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Images" disabled>Images (unavailable)</option><option value="API Collection" disabled>API Collection (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Release Notes" disabled>Release Notes (unavailable)</option><option value="Test Cases" disabled>Test Cases (unavailable)</option><option value="SOP Documents" disabled>SOP Documents (unavailable)</option></select></div>
+                  <div class="kh-field" style="min-width:240px;"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Release Notes">Release Notes</option><option value="Test Cases">Test Cases</option><option value="SOP Documents">SOP Documents</option><option value="API Collection">API Collection</option><option value="URL">URL / Guided Discovery</option><option value="Images" disabled>Images (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Database Metadata" disabled>Database Metadata (unavailable)</option><option value="Git Repository" disabled>Git Repository (unavailable)</option></select></div>
                   <input type="file" id="khUpHiddenFile" multiple accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
                   <input type="file" id="khUpHiddenFolder" multiple webkitdirectory directory accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
                   <button type="button" class="btn btn-primary" id="khUpAddSourceBtn">Add Source</button>
@@ -1257,7 +1281,7 @@ X-Client-Id: qa-automation-bot</pre>
         </div>
 
         <div class="panel" id="kh-smart">
-          <div class="card" style="max-width:760px;">
+          <div class="card kh-card">
             <div class="card-head"><h3>AI Smart Upload</h3></div>
             <div class="card-body">
               <div class="auth-error" id="khSmartError"></div>
@@ -1282,6 +1306,8 @@ X-Client-Id: qa-automation-bot</pre>
                 <option value="Other">Other</option>
               </select></div>
               <div class="field">
+                <label for="khSmartSourceType">Source Type</label>
+                <select id="khSmartSourceType" style="width:220px; margin-bottom:8px;"><option value="Files">Files</option></select>
                 <label>Selected Sources for AI Analysis</label>
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
                   <input type="file" id="khSmartHiddenFile" multiple style="display:none;">
@@ -1291,8 +1317,8 @@ X-Client-Id: qa-automation-bot</pre>
                 </div>
                 <div class="table-scroll" style="max-height:140px; border:1px solid var(--border); border-radius:6px;">
                   <table>
-                    <thead><tr><th style="width:30px;"><input type="checkbox" id="khSmartSelectAll"></th><th>Source Name</th><th style="width:90px;">Type</th><th style="width:70px;">Size</th><th style="width:80px;">Status</th></tr></thead>
-                    <tbody id="khSmartSourcesTableBody"><tr><td colspan="5" class="muted-small" style="text-align:center;">No sources added yet.</td></tr></tbody>
+                    <thead><tr><th style="width:30px;"><input type="checkbox" id="khSmartSelectAll"></th><th>Source Name</th><th style="width:90px;">Type</th><th style="width:80px;">Size</th><th style="width:110px;">Analysis Status</th><th>Message</th></tr></thead>
+                    <tbody id="khSmartSourcesTableBody"><tr><td colspan="6" class="muted-small" style="text-align:center;">No sources added yet.</td></tr></tbody>
                   </table>
                 </div>
               </div>
@@ -2020,11 +2046,13 @@ X-Client-Id: qa-automation-bot</pre>
   }
 
   function populateKhDomainList(domains){
-    var sel = document.getElementById('khUpDomainSel');
-    var current = sel.value;
-    sel.innerHTML = '<option value="">Select Domain...</option>' +
-      domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
-    if(domains.indexOf(current) !== -1) sel.value = current;
+    ['khUpDomainSel','khSmartDomainSel'].forEach(function(id){
+      var sel = document.getElementById(id);
+      var current = sel.value;
+      sel.innerHTML = '<option value="">Select Domain...</option>' +
+        domains.map(function(d){ return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+      if(domains.indexOf(current) !== -1) sel.value = current;
+    });
   }
 
   function refreshKhModuleFilterOptions(){
@@ -2114,7 +2142,11 @@ X-Client-Id: qa-automation-bot</pre>
             var typeHtml = '';
             Object.keys(grouped[domain][module][name][version]).sort().forEach(function(type){
               var leaves = grouped[domain][module][name][version][type].map(function(item){
-                return '<div class="kh-tree-leaf"><div><strong>' + escapeHtml(item.file_name || 'Unnamed source') + '</strong><div class="kh-tree-meta">' + escapeHtml(item.summary || 'No summary available') + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button class="btn" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button class="btn" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button class="btn" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button class="btn" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
+                var sourceName = item.source_type === 'API_COLLECTION' ? 'Imported API Collection' : (item.file_name || 'Unnamed source');
+                var leaf='<div class="kh-tree-leaf"><div class="kh-source-name" title="' + escapeHtml(sourceName) + '"><strong>' + escapeHtml(sourceName) + '</strong><div class="kh-tree-meta">Updated ' + escapeHtml(fmtDate(item.modified_date)) + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button type="button" class="btn" title="View details" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button type="button" class="btn" title="Edit knowledge" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button type="button" class="btn" title="View versions" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button type="button" class="btn" style="color:var(--danger);" title="Delete knowledge" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
+                (item.api_collections||[]).forEach(function(collection){leaf+=node('API Collection · '+collection.name,(collection.endpoints||[]).map(function(endpoint){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml((endpoint.method||'GET').toUpperCase())+' · '+escapeHtml(endpoint.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(endpoint.folder_path||'Root')+' · '+escapeHtml(endpoint.url||'Unresolved URL')+'</div></div><div></div><div class="kh-tree-meta">Endpoint</div><div class="row-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+endpoint.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+endpoint.id+'">Run Now</button></div></div>';}).join(''),!!query);});
+                (item.captured_flows||[]).forEach(function(flow){var steps=(flow.steps||[]).map(function(step){var elements=(step.elements||[]).map(function(element){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml(element.name||element.element_type||'Control')+'</strong><div class="kh-tree-meta" title="'+escapeHtml(element.locator||'')+'">'+escapeHtml(element.locator_strategy||'locator')+' · '+escapeHtml(element.locator||'—')+'</div></div><div></div><div class="kh-tree-meta">Control</div><div></div></div>';}).join('');return node((step.step_order||'')+' · '+(step.step_name||step.page_name||'Step'),elements,!!query);}).join('');leaf+=node('Captured Flow · '+(flow.business_process_name||'Process')+' / '+(flow.variant_name||'Variant'),steps,!!query);});
+                return leaf;
               }).join('');
               typeHtml += node(type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query);
             });
@@ -2131,6 +2163,8 @@ X-Client-Id: qa-automation-bot</pre>
   }
 
   function wireKhRowActions(body){
+    body.querySelectorAll('[data-action="kh-endpoint"]').forEach(function(btn){btn.addEventListener('click',function(){openKhEndpoint(parseInt(btn.dataset.endpointId,10));});});
+    body.querySelectorAll('[data-action="kh-endpoint-run"]').forEach(function(btn){btn.addEventListener('click',function(){runKhEndpoint(parseInt(btn.dataset.endpointId,10));});});
     body.querySelectorAll('[data-action="kh-view"]').forEach(function(btn){ btn.addEventListener('click', function(){ openKhDetails(parseInt(btn.getAttribute('data-kh-id'),10)); }); });
     body.querySelectorAll('[data-action="kh-edit"]').forEach(function(btn){
       btn.addEventListener('click', function(){
@@ -2182,13 +2216,11 @@ X-Client-Id: qa-automation-bot</pre>
 
   function detailRows(item){
     var tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '—');
-    var fields = [
-      ['Domain',item.domain],['Module',item.module],['Knowledge Name',item.knowledge_name],['Version',item.version],
-      ['Document Type',item.document_type],['Source Type',item.source_type],['Source',item.file_name],['Managed Storage',item.storage_location],
-      ['Summary',item.summary],['Tags',tags],['Confidence',Math.round(Number(item.confidence || 0)*100)+'%'],['Status',item.status],
-      ['Created',formatDateTime(item.created_date)],['Updated',formatDateTime(item.modified_date)],['Chunks',item.chunks],['Vectors',item.vectors]
-    ];
-    return '<dl class="kh-detail-grid">' + fields.map(function(field){ return '<dt>' + escapeHtml(field[0]) + '</dt><dd>' + escapeHtml(field[1] == null || field[1] === '' ? '—' : field[1]) + '</dd>'; }).join('') + '</dl>';
+    function section(title,fields){return '<div class="kh-modal-section"><h4>'+escapeHtml(title)+'</h4><dl class="kh-detail-grid">'+fields.map(function(field){return '<dt>'+escapeHtml(field[0])+'</dt><dd>'+escapeHtml(field[1]==null||field[1]===''?'—':field[1])+'</dd>';}).join('')+'</dl></div>';}
+    return section('Knowledge',[['Domain',item.domain],['Module',item.module],['Knowledge Name',item.knowledge_name],['Version',item.version],['Document Type',item.document_type]])+
+      section('Source',[['Source Type',item.source_type],['Source Name',item.file_name],['Managed Storage',item.storage_location],['Status',item.status],['Created',formatDateTime(item.created_date)],['Modified',formatDateTime(item.modified_date)]])+
+      section('AI Analysis',[['Summary',item.summary],['Tags',tags],['Confidence',Math.round(Number(item.confidence||0)*100)+'%']])+
+      section('Indexing',[['Chunks',item.chunks],['Vectors',item.vectors],['Embedding Status',item.embedding_status]]);
   }
 
   function openKhDetails(id){
@@ -2200,6 +2232,21 @@ X-Client-Id: qa-automation-bot</pre>
       .catch(function(err){ error.textContent=err.message; error.classList.add('show'); });
   }
 
+  var khEndpointId=null;
+  function endpointHeadersToText(headers){return (headers||[]).map(function(row){return (row.key||'')+': '+(row.value||'');}).join('\n');}
+  function endpointHeadersFromText(text){return text.split(/\r?\n/).map(function(line){var at=line.indexOf(':');return at<0?null:{key:line.slice(0,at).trim(),value:line.slice(at+1).trim()};}).filter(function(row){return row&&row.key;});}
+  function openKhEndpoint(id){
+    khEndpointId=id;var error=document.getElementById('khEndpointError');error.classList.remove('show');document.getElementById('khEndpointRunResult').style.display='none';document.getElementById('khEndpointModal').classList.add('show');
+    apiFetch('/api/knowledge/api-endpoints/'+id).then(function(endpoint){document.getElementById('khEndpointMethod').value=endpoint.method||'GET';document.getElementById('khEndpointName').value=endpoint.name||'';document.getElementById('khEndpointUrl').value=endpoint.url_resolved||endpoint.url_raw||'';document.getElementById('khEndpointBodyMode').value=endpoint.body_mode||'';document.getElementById('khEndpointHeaders').value=endpointHeadersToText(endpoint.headers);document.getElementById('khEndpointBody').value=endpoint.body_raw||'';}).catch(function(err){error.textContent=err.message;error.classList.add('show');});
+  }
+  function runKhEndpoint(id){
+    openKhEndpoint(id);document.getElementById('khEndpointRunResult').style.display='block';document.getElementById('khEndpointRunResult').innerHTML='<div class="kh-empty">Running request…</div>';
+    apiFetch('/api/knowledge/api-endpoints/'+id+'/run',{method:'POST',body:JSON.stringify({})}).then(function(result){var request=result.request||{};document.getElementById('khEndpointRunResult').innerHTML='<h4>Execution Result</h4><dl class="kh-detail-grid"><dt>Request</dt><dd>'+escapeHtml((request.method||'')+' '+(request.url||''))+'</dd><dt>Status</dt><dd>'+escapeHtml(result.status_code==null?'No response':result.status_code)+'</dd><dt>Duration</dt><dd>'+escapeHtml(result.elapsed_ms==null?'—':result.elapsed_ms+' ms')+'</dd><dt>Error</dt><dd>'+escapeHtml(result.error||'—')+'</dd><dt>Response</dt><dd><pre style="white-space:pre-wrap;max-height:260px;overflow:auto;">'+escapeHtml(result.response_body_text||'—')+'</pre></dd></dl>';}).catch(function(err){document.getElementById('khEndpointRunResult').innerHTML='<div class="auth-error show">'+escapeHtml(err.message)+'</div>';});
+  }
+  document.getElementById('khEndpointCancel').addEventListener('click',function(){document.getElementById('khEndpointModal').classList.remove('show');});
+  document.getElementById('khEndpointRun').addEventListener('click',function(){if(khEndpointId)runKhEndpoint(khEndpointId);});
+  document.getElementById('khEndpointSave').addEventListener('click',function(){var button=this,error=document.getElementById('khEndpointError'),payload={method:document.getElementById('khEndpointMethod').value,name:document.getElementById('khEndpointName').value.trim(),url_raw:document.getElementById('khEndpointUrl').value.trim(),url_resolved:document.getElementById('khEndpointUrl').value.trim(),headers:endpointHeadersFromText(document.getElementById('khEndpointHeaders').value),body_mode:document.getElementById('khEndpointBodyMode').value.trim(),body_raw:document.getElementById('khEndpointBody').value};if(!payload.name||!payload.url_raw){error.textContent='Name and URL are required.';error.classList.add('show');return;}button.disabled=true;apiFetch('/api/knowledge/api-endpoints/'+khEndpointId,{method:'PATCH',body:JSON.stringify(payload)}).then(function(){document.getElementById('khEndpointModal').classList.remove('show');loadKnowledgeHub();toast('Endpoint saved.');}).catch(function(err){error.textContent=err.message;error.classList.add('show');}).finally(function(){button.disabled=false;});});
+
   function openKhVersions(id){
     var item = khCache.filter(function(row){return row.id===id;})[0];
     var error = document.getElementById('khVersionsError');
@@ -2210,7 +2257,7 @@ X-Client-Id: qa-automation-bot</pre>
     apiFetch('/api/knowledge/items/' + id + '/versions').then(function(result){
       var versions = result.versions || [];
       document.getElementById('khVersionsBody').innerHTML = versions.length ? versions.map(function(version){
-        return '<tr><td><strong>' + escapeHtml(version.version) + '</strong></td><td>' + escapeHtml(fmtDate(version.created_date)) + '</td><td class="mono" title="' + escapeHtml(version.sha256 || '') + '">' + escapeHtml((version.sha256 || '').slice(0,12) || '—') + '</td><td>' + escapeHtml(version.storage_location || '—') + '</td><td><button class="btn" data-version-details="' + id + '">View Details</button></td></tr>';
+        return '<tr><td><strong>' + escapeHtml(version.version) + '</strong><div class="muted-small">'+escapeHtml(version.source||'—')+' · '+escapeHtml(version.status||'—')+'</div></td><td>' + escapeHtml(fmtDate(version.created_date)) + '</td><td class="mono" title="' + escapeHtml(version.sha256 || '') + '">' + escapeHtml((version.sha256 || '').slice(0,12) || '—') + '</td><td>' + escapeHtml(version.storage_location || '—') + '</td><td><button class="btn" data-version-details="' + version.knowledge_id + '">View Details</button></td></tr>';
       }).join('') : '<tr><td colspan="5" class="kh-empty">No version records found.</td></tr>';
       document.querySelectorAll('[data-version-details]').forEach(function(button){ button.addEventListener('click',function(){ document.getElementById('khVersionsModal').classList.remove('show'); openKhDetails(id); }); });
     }).catch(function(err){ error.textContent=err.message; error.classList.add('show'); });
@@ -2242,12 +2289,13 @@ X-Client-Id: qa-automation-bot</pre>
       errBox.classList.add('show');
       return;
     }
+    var saveButton=this;saveButton.disabled=true;
     apiFetch('/api/knowledge/items/' + id, { method: 'PATCH', body: JSON.stringify(payload) })
       .then(function(){
         document.getElementById('khEditModal').classList.remove('show');
         toast('Saved.');
         loadKnowledgeHub();
-      }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); });
+      }).catch(function(err){ errBox.textContent = err.message; errBox.classList.add('show'); }).finally(function(){saveButton.disabled=false;});
   });
 
   document.getElementById('khDomainFilter').addEventListener('change', function(){
@@ -2259,15 +2307,17 @@ X-Client-Id: qa-automation-bot</pre>
   document.getElementById('khRefreshBtn').addEventListener('click', function(){ loadKnowledgeHub().then(function(){ toast('Knowledge refreshed.'); }); });
   document.getElementById('khExpandAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=true; }); });
   document.getElementById('khCollapseAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=false; }); });
+  var khOperation='merge';
+  function openKhOperation(operation){
+    khOperation=operation;var options=khCache.map(function(item){return '<option value="'+item.id+'">'+escapeHtml(item.domain+' / '+item.module+' / '+item.knowledge_name+' / v'+item.version+' / '+item.file_name)+'</option>';}).join('');document.getElementById('khOperationA').innerHTML=options;document.getElementById('khOperationB').innerHTML=options;if(khCache.length>1)document.getElementById('khOperationB').selectedIndex=1;document.getElementById('khMergeCompareTitle').textContent=operation==='merge'?'Merge Knowledge Preview':'Compare Versions';document.getElementById('khMergeCompareSub').textContent=operation==='merge'?'Preview only. This does not store or modify Knowledge.':'Compare two actual persisted Knowledge items.';document.getElementById('khMergeCompareResult').style.display='none';document.getElementById('khMergeCompareError').classList.remove('show');document.getElementById('khMergeCompareModal').classList.add('show');
+  }
+  document.getElementById('khMergeBtn').addEventListener('click',function(){openKhOperation('merge');});document.getElementById('khCompareBtn').addEventListener('click',function(){openKhOperation('compare');});document.getElementById('khMergeCompareClose').addEventListener('click',function(){document.getElementById('khMergeCompareModal').classList.remove('show');});
+  document.getElementById('khMergeCompareRun').addEventListener('click',function(){var a=Number(document.getElementById('khOperationA').value),b=Number(document.getElementById('khOperationB').value),error=document.getElementById('khMergeCompareError'),result=document.getElementById('khMergeCompareResult');if(!a||!b||a===b){error.textContent='Select two different Knowledge items.';error.classList.add('show');return;}var path=khOperation==='merge'?'/api/knowledge/merge':'/api/knowledge/compare',payload=khOperation==='merge'?{knowledge_ids:[a,b]}:{knowledge_id_a:a,knowledge_id_b:b};apiFetch(path,{method:'POST',body:JSON.stringify(payload)}).then(function(data){result.style.display='block';if(khOperation==='merge'){result.innerHTML='<h4>Preview Result</h4><div><strong>Summary</strong><pre style="white-space:pre-wrap;">'+escapeHtml(data.summary||'—')+'</pre><strong>Tags</strong><div>'+escapeHtml((data.tags||[]).join(', ')||'—')+'</div><button type="button" class="btn" id="khCopyMerge">Copy Result</button></div>';document.getElementById('khCopyMerge').addEventListener('click',function(){navigator.clipboard.writeText((data.summary||'')+'\n\n'+(data.tags||[]).join(', '));});}else{var changes=data.changes||{};result.innerHTML='<h4>Field Differences</h4><div class="kh-source-table"><table><thead><tr><th>Field</th><th>First</th><th>Second</th><th>Result</th></tr></thead><tbody>'+Object.keys(changes).map(function(field){return '<tr><td>'+escapeHtml(field)+'</td><td>'+escapeHtml(changes[field].old==null?'—':changes[field].old)+'</td><td>'+escapeHtml(changes[field].new==null?'—':changes[field].new)+'</td><td>Changed</td></tr>';}).join('')+'</tbody></table></div>';}}).catch(function(err){error.textContent=err.message;error.classList.add('show');});});
   function switchToKhTab(tabName){
     var strip = document.querySelector('[data-page-content="knowledge"] .tabstrip');
     var btn = strip && strip.querySelector('[data-tab="' + tabName + '"]');
     if(btn) btn.click();
   }
-
-  document.getElementById('khUploadTabBtn').addEventListener('click', function(){
-    switchToKhTab('kh-upload');
-  });
 
   // Manual Upload handlers are defined below. Each selected file uses the
   // existing single-file API so progress represents completed requests.
@@ -2299,15 +2349,17 @@ X-Client-Id: qa-automation-bot</pre>
     var unsupported = [];
     Array.prototype.forEach.call(fileList || [], function(file){
       var extension = fileExtension(file);
-      if(khSupportedUploadExtensions.indexOf(extension) === -1){ unsupported.push(file.name); return; }
+      var selectedType = document.getElementById('khUpSourceType').value;
+      var supported = selectedType === 'API Collection' ? extension === 'json' : khSupportedUploadExtensions.indexOf(extension) !== -1;
+      if(!supported){ unsupported.push(file.name); return; }
       var key = uploadSourceKey(file);
       if(existing[key]) return;
       khUploadSequence += 1;
-      khUploadSources.push({ id: khUploadSequence, key: key, file: file, status: 'Ready', error: '', result: null });
+      khUploadSources.push({ id: khUploadSequence, key: key, file: file, sourceType:selectedType, status: 'Ready', error: '', result: null });
       existing[key] = true;
     });
     renderKhUploadSources();
-    showKhUploadError(unsupported.length ? 'Unsupported files were skipped: ' + unsupported.join(', ') + '. Supported types are PDF, DOCX, TXT and XLSX.' : '');
+    showKhUploadError(unsupported.length ? 'Unsupported files were skipped: ' + unsupported.join(', ') + '.' : '');
   }
   function renderKhUploadSources(){
     var body = document.getElementById('khUpSourcesTableBody');
@@ -2321,7 +2373,7 @@ X-Client-Id: qa-automation-bot</pre>
       var statusClass = source.status.toLowerCase();
       return '<tr><td><input type="checkbox" class="kh-upload-source-check" data-source-id="' + source.id + '"' + (khUploadBusy ? ' disabled' : '') + '></td>' +
         '<td class="kh-source-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</td>' +
-        '<td class="muted-small">' + escapeHtml(fileExtension(source.file).toUpperCase()) + '</td>' +
+        '<td class="muted-small">' + escapeHtml(source.sourceType || fileExtension(source.file).toUpperCase()) + '</td>' +
         '<td class="muted-small">' + formatFileSize(source.file.size) + '</td>' +
         '<td><span class="kh-status ' + escapeHtml(statusClass) + '">' + escapeHtml(source.status) + '</span></td>' +
         '<td class="muted-small kh-source-name" title="' + escapeHtml(source.error || '') + '">' + escapeHtml(source.error || '—') + '</td></tr>';
@@ -2359,6 +2411,7 @@ X-Client-Id: qa-automation-bot</pre>
     formData.append('knowledge_name', metadata.name);
     formData.append('version', metadata.version);
     formData.append('document_type', metadata.documentType);
+    formData.append('source_type', metadata.sourceType || 'FILE');
     var headers = {};
     if(authState.token) headers.Authorization = 'Bearer ' + authState.token;
     return fetch(API_BASE + '/api/knowledge/upload', { method: 'POST', headers: headers, body: formData })
@@ -2390,9 +2443,21 @@ X-Client-Id: qa-automation-bot</pre>
     showKhUploadError('');
     loadKhUploadModules(this.value).catch(function(err){ showKhUploadError(err.message); });
   });
+  var khDiscoverySessionId=null,khDiscoveryScan=null,khDiscoverySteps=[];
+  function khDiscoveryError(message){var box=document.getElementById('khDiscoveryError');box.textContent=message||'';box.classList.toggle('show',!!message);}
+  function closeKhDiscovery(){var session=khDiscoverySessionId;khDiscoverySessionId=null;document.getElementById('khDiscoveryPassword').value='';document.getElementById('khDiscoveryModal').classList.remove('show');if(session)apiFetch('/api/knowledge/discovery/sessions/'+session,{method:'DELETE'}).catch(function(){});}
+  function openKhDiscovery(){if(!document.getElementById('khUpDomainSel').value||!document.getElementById('khUpModuleSel').value||!document.getElementById('khUpName').value.trim()){showKhUploadError('Select Domain, Module, and enter Knowledge Name before guided discovery.');return;}khDiscoverySteps=[];khDiscoveryScan=null;khDiscoveryError('');document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoverySteps').textContent='No confirmed screens.';document.getElementById('khDiscoveryCapture').disabled=true;document.getElementById('khDiscoveryConfirm').disabled=true;document.getElementById('khDiscoverySave').disabled=true;document.getElementById('khDiscoveryModal').classList.add('show');}
+  document.getElementById('khDiscoveryCancel').addEventListener('click',closeKhDiscovery);
+  document.getElementById('khDiscoveryStart').addEventListener('click',function(){var url=document.getElementById('khDiscoveryUrl').value.trim(),auth=document.getElementById('khDiscoveryAuth').value,button=this;if(!url){khDiscoveryError('URL is required.');return;}button.disabled=true;khDiscoveryError('');apiFetch('/api/knowledge/discovery/sessions',{method:'POST',body:JSON.stringify({url:url,authentication_type:auth})}).then(function(created){khDiscoverySessionId=created.session_id;return apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/authenticate',{method:'POST',body:JSON.stringify({credentials:{username:document.getElementById('khDiscoveryUsername').value,password:document.getElementById('khDiscoveryPassword').value},analysis:{authentication_type:auth}})});}).then(function(result){document.getElementById('khDiscoveryPassword').value='';if(!result.success)throw new Error(result.error||'Access could not be established.');document.getElementById('khDiscoveryCapture').disabled=false;toast('Discovery session ready.');}).catch(function(error){khDiscoveryError(error.message);closeKhDiscovery();}).finally(function(){button.disabled=false;});});
+  document.getElementById('khDiscoveryCapture').addEventListener('click',function(){var button=this;if(!khDiscoverySessionId)return;button.disabled=true;apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/scan',{method:'POST',body:JSON.stringify({label:document.getElementById('khDiscoveryStep').value.trim()})}).then(function(scan){if(!scan.success)throw new Error(scan.error||'Screen capture failed.');khDiscoveryScan=scan;var candidates=[].concat(scan.fields||[],scan.buttons||[],scan.links||[],scan.tabs||[]);document.getElementById('khDiscoveryReview').style.display='block';document.getElementById('khDiscoveryReview').innerHTML='<h4>Review Captured Controls</h4><div class="muted-small">'+escapeHtml(scan.page_title||scan.url||'Current page')+'</div>'+candidates.map(function(item,index){return '<label style="display:flex;gap:8px;margin:7px 0;"><input type="checkbox" class="kh-discovery-element" value="'+index+'" checked><span>'+escapeHtml(item.text||item.label||item.name||item.placeholder||item.tag||'Unnamed control')+' · '+escapeHtml(item.locator_strategy||item.strategy||'locator')+'</span></label>';}).join('');document.getElementById('khDiscoveryConfirm').disabled=false;}).catch(function(error){khDiscoveryError(error.message);}).finally(function(){button.disabled=false;});});
+  document.getElementById('khDiscoveryConfirm').addEventListener('click',function(){if(!khDiscoveryScan)return;var candidates=[].concat(khDiscoveryScan.fields||[],khDiscoveryScan.buttons||[],khDiscoveryScan.links||[],khDiscoveryScan.tabs||[]),selected={};document.querySelectorAll('.kh-discovery-element:checked').forEach(function(box){selected[box.value]=true;});var elements=candidates.filter(function(item,index){return selected[String(index)];}).map(function(item){return {name:item.text||item.label||item.name||item.placeholder||item.tag||'Unnamed control',element_type:item.element_type||item.tag||item.type||'control',locator:item.locator||'',locator_strategy:item.locator_strategy||item.strategy||'',alternate_locators:item.alternate_locators||[],placeholder:item.placeholder||'',is_required:!!item.is_required};}).filter(function(item){return item.locator;});khDiscoverySteps.push({step_name:document.getElementById('khDiscoveryStep').value.trim()||'Step '+(khDiscoverySteps.length+1),page_name:khDiscoveryScan.page_title||'Page '+(khDiscoverySteps.length+1),page_url:khDiscoveryScan.url,page_title:khDiscoveryScan.page_title||'',tab_name:'(scanned view)',is_end_step:false,elements:elements});document.getElementById('khDiscoverySteps').textContent=khDiscoverySteps.map(function(step,index){return (index+1)+'. '+step.step_name+' ('+step.elements.length+' controls)';}).join(' · ');document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoveryConfirm').disabled=true;document.getElementById('khDiscoverySave').disabled=false;khDiscoveryScan=null;});
+  document.getElementById('khDiscoverySave').addEventListener('click',function(){if(!khDiscoverySessionId||!khDiscoverySteps.length)return;khDiscoverySteps[khDiscoverySteps.length-1].is_end_step=true;var hierarchy={domain:document.getElementById('khUpDomainSel').value,module:document.getElementById('khUpModuleSel').value,knowledge_name:document.getElementById('khUpName').value.trim(),version:document.getElementById('khUpVersion').value.trim()||'1.0'};var button=this;button.disabled=true;apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/save',{method:'POST',body:JSON.stringify({steps:khDiscoverySteps,hierarchy:hierarchy})}).then(function(){khDiscoverySessionId=null;document.getElementById('khDiscoveryModal').classList.remove('show');loadKnowledgeHub();toast('Captured business flow saved.');}).catch(function(error){khDiscoveryError(error.message);}).finally(function(){button.disabled=false;});});
   document.getElementById('khUpAddSourceBtn').addEventListener('click', function(){
-    if(document.getElementById('khUpSourceType').value === 'Folder') document.getElementById('khUpHiddenFolder').click();
-    else document.getElementById('khUpHiddenFile').click();
+    var type=document.getElementById('khUpSourceType').value;
+    if(type==='URL'){openKhDiscovery();return;}
+    var input=document.getElementById(type==='Folder'?'khUpHiddenFolder':'khUpHiddenFile');
+    input.accept=type==='API Collection'?'.json':'.pdf,.docx,.txt,.xlsx';
+    input.click();
   });
   document.getElementById('khUpHiddenFile').addEventListener('change', function(){ addKhUploadSources(this.files); this.value = ''; });
   document.getElementById('khUpHiddenFolder').addEventListener('change', function(){ addKhUploadSources(this.files); this.value = ''; });
@@ -2439,6 +2504,10 @@ X-Client-Id: qa-automation-bot</pre>
           document.getElementById('khEditDomain').value = name;
           return loadKhModulesInto(document.getElementById('khEditModule'),name);
         }
+        if(khCreateContext === 'smart'){
+          document.getElementById('khSmartDomainSel').value = name;
+          return loadKhModulesInto(document.getElementById('khSmartModuleSel'),name);
+        }
         document.getElementById('khUpDomainSel').value = name;
         return loadKhUploadModules(name);
       }).then(function(){ document.getElementById('khAddDomainModal').classList.remove('show'); toast('Domain created.'); })
@@ -2448,7 +2517,8 @@ X-Client-Id: qa-automation-bot</pre>
 
   function openKhAddModule(context){
     khCreateContext = context;
-    var domain = document.getElementById(context === 'edit' ? 'khEditDomain' : 'khUpDomainSel').value;
+    var domainId = context === 'edit' ? 'khEditDomain' : (context === 'smart' ? 'khSmartDomainSel' : 'khUpDomainSel');
+    var domain = document.getElementById(domainId).value;
     if(!domain){ showKhUploadError('Select a Domain before adding a Module.'); return; }
     document.getElementById('khAddModuleName').value = '';
     document.getElementById('khAddModuleSub').textContent = 'Create a Module under "' + domain + '".';
@@ -2458,16 +2528,19 @@ X-Client-Id: qa-automation-bot</pre>
   }
   document.getElementById('khOpenAddModuleBtn').addEventListener('click', function(){ openKhAddModule('upload'); });
   document.getElementById('khEditAddModule').addEventListener('click', function(){ openKhAddModule('edit'); });
+  document.getElementById('khSmartOpenAddDomainBtn').addEventListener('click', function(){ openKhAddDomain('smart'); });
+  document.getElementById('khSmartOpenAddModuleBtn').addEventListener('click', function(){ openKhAddModule('smart'); });
   document.getElementById('khAddModuleCancel').addEventListener('click', function(){ document.getElementById('khAddModuleModal').classList.remove('show'); });
   document.getElementById('khAddModuleSave').addEventListener('click', function(){
-    var domain = document.getElementById(khCreateContext === 'edit' ? 'khEditDomain' : 'khUpDomainSel').value;
+    var domainId = khCreateContext === 'edit' ? 'khEditDomain' : (khCreateContext === 'smart' ? 'khSmartDomainSel' : 'khUpDomainSel');
+    var domain = document.getElementById(domainId).value;
     var name = document.getElementById('khAddModuleName').value.trim();
     var error = document.getElementById('khAddModuleError');
     if(!domain || !name){ error.textContent = 'A selected Domain and Module name are required.'; error.classList.add('show'); return; }
     this.disabled = true;
     var button = this;
     apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules', { method: 'POST', body: JSON.stringify({ name: name }) })
-      .then(function(){ return khCreateContext === 'edit' ? loadKhModulesInto(document.getElementById('khEditModule'),domain,name) : loadKhUploadModules(domain,name); })
+      .then(function(){ if(khCreateContext === 'edit') return loadKhModulesInto(document.getElementById('khEditModule'),domain,name); if(khCreateContext === 'smart') return loadKhModulesInto(document.getElementById('khSmartModuleSel'),domain,name); return loadKhUploadModules(domain,name); })
       .then(function(){ document.getElementById('khAddModuleModal').classList.remove('show'); toast('Module created.'); })
       .catch(function(err){ error.textContent = err.message; error.classList.add('show'); })
       .finally(function(){ button.disabled = false; });
@@ -2482,7 +2555,7 @@ X-Client-Id: qa-automation-bot</pre>
       documentType: document.getElementById('khUpDocTypeSel').value
     };
     var selectedSourceType = document.getElementById('khUpSourceType').value;
-    if(['Files','Folder'].indexOf(selectedSourceType) === -1){
+    if(['Files','Folder','Release Notes','Test Cases','SOP Documents','API Collection'].indexOf(selectedSourceType) === -1){
       showKhUploadError('The selected source type is unavailable in this phase.');
       return;
     }
@@ -2508,7 +2581,11 @@ X-Client-Id: qa-automation-bot</pre>
         appendKhUploadLog('[Started] ' + (source.file.webkitRelativePath || source.file.name));
         renderKhUploadSources();
         updateKhUploadProgress(source.file.webkitRelativePath || source.file.name, total, completed, successful, failed);
-        return postKhUploadFile(source, metadata)
+        metadata.sourceType = source.sourceType || selectedSourceType;
+        var operation = source.sourceType === 'API Collection'
+          ? (function(){ var form=new FormData();form.append('file',source.file);form.append('domain',metadata.domain);form.append('module',metadata.module);form.append('knowledge_name',metadata.name);form.append('version',metadata.version);var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/api-collections/import',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'API Collection import failed.');return data;});});})()
+          : postKhUploadFile(source, metadata);
+        return operation
           .then(function(result){
             source.status = 'Successful'; source.result = result; successful += 1;
             uploadResults.push({name:source.file.name,result:result});
@@ -2554,116 +2631,79 @@ X-Client-Id: qa-automation-bot</pre>
   });
 
   // ---- AI Smart Upload Handlers ----
+  var khSmartSources = [], khSmartSourceSequence = 0;
+  function renderKhSmartSources(){
+    var body=document.getElementById('khSmartSourcesTableBody');
+    if(!khSmartSources.length){body.innerHTML='<tr><td colspan="6" class="muted-small" style="text-align:center;">No sources added yet.</td></tr>';return;}
+    body.innerHTML=khSmartSources.map(function(source){return '<tr><td><input type="checkbox" class="kh-smart-check" data-id="'+source.id+'"></td><td class="kh-source-name" title="'+escapeHtml(source.file.name)+'">'+escapeHtml(source.file.name)+'</td><td>'+escapeHtml(fileExtension(source.file).toUpperCase())+'</td><td>'+formatFileSize(source.file.size)+'</td><td>'+escapeHtml(source.status)+'</td><td>'+escapeHtml(source.message||'—')+'</td></tr>';}).join('');
+  }
+  document.getElementById('khSmartDomainSel').addEventListener('change', function(){ loadKhModulesInto(document.getElementById('khSmartModuleSel'),this.value).catch(function(error){ showKhUploadError(error.message); }); });
+  document.getElementById('khSmartAddSourceBtn').addEventListener('click', function(){ document.getElementById('khSmartHiddenFile').click(); });
+  document.getElementById('khSmartSelectAll').addEventListener('change',function(){var checked=this.checked;document.querySelectorAll('.kh-smart-check').forEach(function(box){box.checked=checked;});});
+  document.getElementById('khSmartRemoveSelectedBtn').addEventListener('click', function(){
+    var selected={};document.querySelectorAll('.kh-smart-check:checked').forEach(function(box){selected[box.dataset.id]=true;});khSmartSources=khSmartSources.filter(function(source){if(selected[String(source.id)])delete khSmartAnalyses[source.key];return !selected[String(source.id)];});renderKhSmartSources();
+  });
+  document.getElementById('khSmartClearBtn').addEventListener('click', function(){khSmartSources=[];khSmartAnalyses={};document.getElementById('khSmartHiddenFile').value='';document.getElementById('khSmartResults').style.display='none';renderKhSmartSources();});
+  document.getElementById('khSmartHiddenFile').addEventListener('change', function(){
+    var known={};khSmartSources.forEach(function(source){known[source.key]=true;});Array.prototype.forEach.call(this.files||[],function(file){var key=uploadSourceKey(file);if(known[key]||khSupportedUploadExtensions.indexOf(fileExtension(file))===-1)return;known[key]=true;khSmartSources.push({id:++khSmartSourceSequence,key:key,file:file,status:'Pending',message:'Ready for analysis'});});this.value='';renderKhSmartSources();
+  });
+  var khSmartAnalyses = {};
+  function runKhSmartAnalysis(files){
+    var sequence=Promise.resolve(), successful=[];
+    Array.prototype.forEach.call(files,function(file,index){
+      sequence=sequence.then(function(){
+        var source=khSmartSources[index],row=document.querySelector('.kh-smart-check[data-id="'+source.id+'"]').closest('tr');file=source.file;
+        if(row){row.cells[4].textContent='Analyzing';row.cells[5].textContent='AI analysis in progress';}
+        var form=new FormData();form.append('file',file);var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;
+        return fetch(API_BASE+'/api/knowledge/suggest-classification',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Analysis failed.');return data;});}).then(function(result){khSmartAnalyses[source.key]=result;source.status='Analyzed';source.message='Analysis complete';successful.push({file:file,result:result});renderKhSmartSources();}).catch(function(error){source.status='Failed';source.message=error.message;renderKhSmartSources();});
+      });
+    });
+    return sequence.then(function(){
+      if(!successful.length)throw new Error('AI analysis failed for every selected source.');
+      var first=successful[0];document.getElementById('khSmartResults').style.display='block';document.getElementById('khSmartAnalysisList').innerHTML=khSmartSources.map(function(source){return '<div><strong>'+escapeHtml(source.file.name)+'</strong> — '+escapeHtml(source.status)+(source.message?' · '+escapeHtml(source.message):'')+'</div>';}).join('');
+      document.getElementById('khSmartDomainSel').value=khDomains.indexOf(first.result.domain)!==-1?first.result.domain:'';
+      return loadKhModulesInto(document.getElementById('khSmartModuleSel'),document.getElementById('khSmartDomainSel').value,first.result.module||'').then(function(){document.getElementById('khSmartName').value=first.result.knowledge_name||first.file.name.replace(/\.[^/.]+$/,'').replace(/[_-]/g,' ');document.getElementById('khSmartVersion').value=first.result.version||'1.0';document.getElementById('khSmartDocTypeSel').value=first.result.document_type||'Other';document.getElementById('khSmartSummary').value=first.result.summary||'';document.getElementById('khSmartTags').value=(first.result.tags||[]).join(', ');document.getElementById('khSmartConfidence').textContent=Math.round(Number(first.result.confidence||0)*100)+'%';});
+    });
+  }
   document.getElementById('khSmartAnalyzeBtn').addEventListener('click', function(){
     var errBox = document.getElementById('khSmartError');
     errBox.classList.remove('show');
-    var fileInput = document.getElementById('khSmartFile');
-    var file = fileInput.files && fileInput.files[0];
+    var fileInput = document.getElementById('khSmartHiddenFile');
+    var file = khSmartSources.length ? khSmartSources[0].file : null;
     if(!file){
       errBox.textContent = 'Please select a file to analyze.';
       errBox.classList.add('show');
       return;
     }
-    var btn = this;
-    btn.disabled = true;
-    btn.textContent = 'Analyzing with AI…';
-    var formData = new FormData();
-    formData.append('file', file);
-    var headers = {};
-    if(authState.token) headers['Authorization'] = 'Bearer ' + authState.token;
-    fetch(API_BASE + '/api/knowledge/suggest-classification', { method: 'POST', headers: headers, body: formData })
-      .then(function(res){
-        return res.json().catch(function(){ return {}; }).then(function(data){
-          if(!res.ok) throw new Error((data && data.detail) || ('Analysis failed (' + res.status + ')'));
-          return data;
-        });
-      })
-      .then(function(res){
-        document.getElementById('khSmartResults').style.display = 'block';
-        document.getElementById('khSmartDomain').value = res.domain || '';
-        document.getElementById('khSmartModule').value = res.module || '';
-        document.getElementById('khSmartName').value = res.knowledge_name || file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, ' ');
-        document.getElementById('khSmartVersion').value = res.version || '1.0';
-        document.getElementById('khSmartDocType').value = res.document_type || '';
-        document.getElementById('khSmartSummary').value = res.summary || '';
-        document.getElementById('khSmartTags').value = (res.tags || []).join(', ');
-        document.getElementById('khSmartConfidence').textContent = Math.round((res.confidence || 0) * 100) + '%';
-        toast('AI analysis completed successfully.');
-      })
-      .catch(function(err){
-        errBox.textContent = err.message;
-        errBox.classList.add('show');
-      })
-      .finally(function(){
-        btn.disabled = false;
-        btn.textContent = 'Analyze with AI';
-      });
+    var smartAnalyzeButton=this;smartAnalyzeButton.disabled=true;smartAnalyzeButton.textContent='Analyzing with AI…';runKhSmartAnalysis(khSmartSources.map(function(source){return source.file;})).then(function(){toast('AI analysis completed.');}).catch(function(error){errBox.textContent=error.message;errBox.classList.add('show');}).finally(function(){smartAnalyzeButton.disabled=false;smartAnalyzeButton.textContent='Analyze With AI';});
+    return;
   });
 
   document.getElementById('khSmartUploadBtn').addEventListener('click', function(){
     var errBox = document.getElementById('khSmartError');
     errBox.classList.remove('show');
-    var domain = document.getElementById('khSmartDomain').value.trim();
-    var module = document.getElementById('khSmartModule').value.trim();
+    var domain = document.getElementById('khSmartDomainSel').value.trim();
+    var module = document.getElementById('khSmartModuleSel').value.trim();
     var name = document.getElementById('khSmartName').value.trim();
     var version = document.getElementById('khSmartVersion').value.trim() || '1.0';
-    var docType = document.getElementById('khSmartDocType').value.trim();
+    var docType = document.getElementById('khSmartDocTypeSel').value.trim();
     var summary = document.getElementById('khSmartSummary').value.trim();
     var tagsInput = document.getElementById('khSmartTags').value.trim();
     var tags = tagsInput ? tagsInput.split(',').map(function(t){ return t.trim(); }).filter(Boolean) : [];
-    var fileInput = document.getElementById('khSmartFile');
-    var file = fileInput.files && fileInput.files[0];
+    var fileInput = document.getElementById('khSmartHiddenFile');
+    var file = khSmartSources.length ? khSmartSources[0].file : null;
 
     if(!domain || !module || !name || !file){
       errBox.textContent = 'Domain, Module, Knowledge Name and file are required.';
       errBox.classList.add('show');
       return;
     }
-
-    var btn = this;
-    btn.disabled = true;
-    btn.textContent = 'Saving…';
-    var formData = new FormData();
-    formData.append('file', file);
-    formData.append('domain', domain);
-    formData.append('module', module);
-    formData.append('knowledge_name', name);
-    formData.append('version', version);
-    formData.append('document_type', docType);
-    var headers = {};
-    if(authState.token) headers['Authorization'] = 'Bearer ' + authState.token;
-
-    fetch(API_BASE + '/api/knowledge/upload', { method: 'POST', headers: headers, body: formData })
-      .then(function(res){
-        return res.json().catch(function(){ return {}; }).then(function(data){
-          if(!res.ok) throw new Error((data && data.detail) || ('Upload failed (' + res.status + ')'));
-          return data;
-        });
-      })
-      .then(function(result){
-        toast('Smart Upload saved "' + name + '" v' + version + '.');
-        document.getElementById('khSmartUploadResult').innerHTML =
-          '<div class="card-body" style="border:1px solid var(--border); border-radius:8px; margin-top:14px; padding:12px; background:var(--bg-surface);">' +
-          '<div style="font-weight:600; margin-bottom:4px; color:var(--primary);">Successfully Saved &amp; Indexed</div>' +
-          '<div class="muted-small">Chunks: ' + (result.total_chunks || 0) + ' | Vectors: ' + (result.vectors_saved || 0) + '</div>' +
-          '<button type="button" class="btn" style="margin-top:8px;" id="khSmartViewBtn">View in Browse</button>' +
-          '</div>';
-        document.getElementById('khSmartViewBtn').addEventListener('click', function(){
-          document.getElementById('khSearch').value = name;
-          switchToKhTab('kh-browse');
-          loadKnowledgeHub();
-        });
-        fileInput.value = '';
-        loadKnowledgeHub();
-      })
-      .catch(function(err){
-        errBox.textContent = err.message;
-        errBox.classList.add('show');
-      })
-      .finally(function(){
-        btn.disabled = false;
-        btn.textContent = 'Confirm & Upload';
-      });
+    var smartFiles=khSmartSources.filter(function(source){return !!khSmartAnalyses[source.key];}).map(function(source){return source.file;}),smartButton=this;
+    if(!smartFiles.length){errBox.textContent='Analyze at least one source before confirming upload.';errBox.classList.add('show');return;}
+    smartButton.disabled=true;smartButton.textContent='Uploading…';var smartSequence=Promise.resolve(),smartSuccessful=0,smartFailed=0;
+    smartFiles.forEach(function(candidate){smartSequence=smartSequence.then(function(){var reviewed=khSmartAnalyses[uploadSourceKey(candidate)]||{},form=new FormData();form.append('file',candidate);form.append('domain',domain);form.append('module',module);form.append('knowledge_name',name);form.append('version',version);form.append('document_type',docType);form.append('source_type','SMART_UPLOAD');form.append('reviewed_summary',summary);form.append('reviewed_tags',JSON.stringify(tags));form.append('reviewed_confidence',String(reviewed.confidence||0));var requestHeaders={};if(authState.token)requestHeaders.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/upload',{method:'POST',headers:requestHeaders,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Upload failed.');return data;});}).then(function(){smartSuccessful++;delete khSmartAnalyses[uploadSourceKey(candidate)];}).catch(function(){smartFailed++;});});});
+    smartSequence.then(function(){document.getElementById('khSmartUploadResult').innerHTML='<div class="kh-section"><strong>Smart Upload completed</strong><div class="muted-small">Successful: '+smartSuccessful+' · Failed: '+smartFailed+'</div></div>';khSmartSources=khSmartSources.filter(function(source){if(khSmartAnalyses[source.key]){source.status='Analyzed';return true;}return false;});renderKhSmartSources();loadKnowledgeHub();toast(smartSuccessful+' source(s) saved.',smartFailed>0);}).finally(function(){smartButton.disabled=false;smartButton.textContent='Confirm Upload';});
+    return;
   });
 
   function updateBulkDeleteButton(tbodyId, btnId){

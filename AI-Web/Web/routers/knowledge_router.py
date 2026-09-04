@@ -25,12 +25,19 @@ drivable browser session (see the delivery notes) and is not a fit
 for a stateless request/response endpoint.
 """
 
-from typing import List, Optional
+import json
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from Core.knowledge_web_repository import KnowledgeRepository
+from Core.api_collection_repository import ApiCollectionRepository
+from Core.api_automation_runner import ApiAutomationRunner
+from Core.knowledge_discovery_sessions import KnowledgeDiscoverySessions
 from Core.user_repository import UserRepository
 from Web.deps import require_permission
 
@@ -64,6 +71,46 @@ class CreateModuleRequest(BaseModel):
     name: str
 
 
+class UpdateApiEndpointRequest(BaseModel):
+    method: Optional[str] = None
+    name: Optional[str] = None
+    url_raw: Optional[str] = None
+    url_resolved: Optional[str] = None
+    headers: Optional[List[Dict[str, str]]] = None
+    body_mode: Optional[str] = None
+    body_raw: Optional[str] = None
+
+
+class RunApiEndpointRequest(BaseModel):
+    variables: Dict[str, str] = Field(default_factory=dict)
+    base_url_override: str = ""
+    timeout_seconds: float = 30
+    verify_ssl: bool = True
+
+
+class CreateDiscoverySessionRequest(BaseModel):
+    url: str
+    authentication_type: str = "NONE"
+
+
+class AuthenticateDiscoveryRequest(BaseModel):
+    credentials: Dict[str, str] = Field(default_factory=dict)
+    analysis: Dict[str, Any] = Field(default_factory=dict)
+
+
+class NavigateDiscoveryRequest(BaseModel):
+    url: str
+
+
+class ScanDiscoveryRequest(BaseModel):
+    label: str = ""
+
+
+class SaveDiscoveryRequest(BaseModel):
+    steps: List[Dict[str, Any]]
+    hierarchy: Dict[str, str]
+
+
 def _audit(current_user, action, detail):
 
     UserRepository().write_audit_log(
@@ -73,6 +120,39 @@ def _audit(current_user, action, detail):
         resource="knowledge",
         detail=detail,
     )
+
+
+_SENSITIVE_HEADER_NAMES = {
+    "authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie"
+}
+
+
+def _mask_headers(headers):
+    if isinstance(headers, str):
+        try:
+            headers = json.loads(headers or "[]")
+        except json.JSONDecodeError:
+            return []
+    if isinstance(headers, list):
+        return [
+            {**item, "value": "••••••••"}
+            if str((item or {}).get("key", "")).lower() in _SENSITIVE_HEADER_NAMES
+            else item
+            for item in headers
+        ]
+    return {
+        key: ("••••••••" if str(key).lower() in _SENSITIVE_HEADER_NAMES else value)
+        for key, value in (headers or {}).items()
+    }
+
+
+def _safe_endpoint(endpoint):
+    if endpoint is None:
+        return None
+    result = dict(endpoint)
+    result["headers"] = _mask_headers(result.pop("headers_json", "[]"))
+    result.pop("auth_details_json", None)
+    return result
 
 
 @router.get("/tree")
@@ -227,6 +307,10 @@ def upload(
     knowledge_name: str = Form(...),
     version: str = Form("1.0"),
     document_type: str = Form(""),
+    source_type: str = Form("FILE"),
+    reviewed_summary: Optional[str] = Form(None),
+    reviewed_tags: Optional[str] = Form(None),
+    reviewed_confidence: Optional[float] = Form(None),
     current_user=Depends(require_permission("knowledge", "create")),
 ):
 
@@ -238,6 +322,19 @@ def upload(
 
     try:
 
+        reviewed_analysis = None
+        if reviewed_summary is not None or reviewed_tags is not None:
+            try:
+                tags = json.loads(reviewed_tags or "[]")
+            except (TypeError, json.JSONDecodeError):
+                tags = [tag.strip() for tag in (reviewed_tags or "").split(",") if tag.strip()]
+            reviewed_analysis = {
+                "summary": reviewed_summary or "",
+                "tags": tags if isinstance(tags, list) else [],
+                "confidence": reviewed_confidence or 0,
+                "document_type": document_type,
+            }
+
         result = KnowledgeRepository().upload(
             file_bytes=file_bytes,
             original_filename=file.filename,
@@ -246,6 +343,8 @@ def upload(
             knowledge_name=knowledge_name,
             version=version,
             document_type=document_type,
+            source_type=source_type,
+            reviewed_analysis=reviewed_analysis,
         )
 
     except ValueError as error:
@@ -335,3 +434,162 @@ def compare_versions(
         raise HTTPException(status_code=400, detail=str(error))
 
     return result
+
+
+@router.post("/api-collections/import")
+def import_api_collection(
+    file: UploadFile = File(...),
+    domain: Optional[str] = Form(None),
+    module: Optional[str] = Form(None),
+    knowledge_name: Optional[str] = Form(None),
+    version: Optional[str] = Form("1.0"),
+    current_user=Depends(require_permission("knowledge", "create")),
+):
+    if Path(file.filename or "").suffix.lower() != ".json":
+        raise HTTPException(status_code=400, detail="A Postman Collection JSON file is required.")
+    temp_dir = tempfile.mkdtemp(prefix="qaais_postman_")
+    temp_path = Path(temp_dir) / (Path(file.filename or "collection.json").name or "collection.json")
+    try:
+        temp_path.write_bytes(file.file.read())
+        if not temp_path.stat().st_size:
+            raise HTTPException(status_code=400, detail="The uploaded collection is empty.")
+        result = ApiCollectionRepository().import_postman_collection(
+            str(temp_path), domain, module, knowledge_name, version
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("error") or "Collection import failed.")
+    _audit(current_user, "IMPORT_API_COLLECTION", f"Imported collection_id={result.get('collection_id')}")
+    return result
+
+
+@router.get("/api-collections/{collection_id}")
+def get_api_collection(collection_id: int, current_user=Depends(require_permission("knowledge", "view"))):
+    repository = ApiCollectionRepository()
+    collection = repository.get_collection(collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="API collection not found.")
+    result = dict(collection)
+    result.pop("variables_json", None)
+    result["endpoints"] = [_safe_endpoint(row) for row in repository.list_endpoints(collection_id)]
+    return result
+
+
+@router.get("/items/{knowledge_id}/api-collections")
+def get_api_collections_for_knowledge(knowledge_id: int, current_user=Depends(require_permission("knowledge", "view"))):
+    repository = ApiCollectionRepository()
+    collections = [
+        dict(row) for row in repository.list_collections()
+        if row.get("linked_knowledge_item_id") == knowledge_id
+    ]
+    for collection in collections:
+        collection.pop("variables_json", None)
+        collection["endpoints"] = [_safe_endpoint(row) for row in repository.list_endpoints(collection["id"])]
+    return {"collections": collections}
+
+
+@router.get("/api-endpoints/{endpoint_id}")
+def get_api_endpoint(endpoint_id: int, current_user=Depends(require_permission("knowledge", "view"))):
+    endpoint = ApiCollectionRepository().get_endpoint(endpoint_id)
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="API endpoint not found.")
+    return _safe_endpoint(endpoint)
+
+
+@router.patch("/api-endpoints/{endpoint_id}")
+def update_api_endpoint(endpoint_id: int, payload: UpdateApiEndpointRequest, current_user=Depends(require_permission("knowledge", "edit"))):
+    repository = ApiCollectionRepository()
+    if not repository.get_endpoint(endpoint_id):
+        raise HTTPException(status_code=404, detail="API endpoint not found.")
+    fields = {key: value for key, value in payload.dict().items() if value is not None}
+    headers = fields.pop("headers", None)
+    if headers is not None:
+        existing_headers = {}
+        try:
+            existing_headers = {
+                str(row.get("key", "")): row.get("value", "")
+                for row in json.loads(repository.get_endpoint(endpoint_id).get("headers_json") or "[]")
+            }
+        except (TypeError, json.JSONDecodeError):
+            existing_headers = {}
+        for row in headers:
+            if row.get("value") == "••••••••":
+                row["value"] = existing_headers.get(str(row.get("key", "")), "")
+        fields["headers_json"] = json.dumps(headers)
+    if not fields or not repository.update_endpoint(endpoint_id, **fields):
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+    _audit(current_user, "UPDATE_API_ENDPOINT", f"Updated endpoint_id={endpoint_id}")
+    return _safe_endpoint(repository.get_endpoint(endpoint_id))
+
+
+@router.post("/api-endpoints/{endpoint_id}/run")
+def run_api_endpoint(endpoint_id: int, payload: RunApiEndpointRequest, current_user=Depends(require_permission("knowledge", "view"))):
+    endpoint = ApiCollectionRepository().get_endpoint(endpoint_id)
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="API endpoint not found.")
+    result = ApiAutomationRunner().send(endpoint, {
+        "api_variables": payload.variables,
+        "api_base_url_override": payload.base_url_override,
+        "api_timeout_seconds": payload.timeout_seconds,
+        "api_verify_ssl": payload.verify_ssl,
+    })
+    if result.get("request"):
+        result["request"]["headers"] = _mask_headers(result["request"].get("headers", {}))
+        data = result["request"].get("data")
+        if isinstance(data, bytes):
+            result["request"]["data"] = data.decode("utf-8", errors="replace")[:8000]
+    result["response_headers"] = _mask_headers(result.get("response_headers", {}))
+    _audit(current_user, "RUN_API_ENDPOINT", f"Ran endpoint_id={endpoint_id}; status={result.get('status_code')}")
+    return result
+
+
+@router.post("/discovery/sessions")
+def create_discovery_session(payload: CreateDiscoverySessionRequest, current_user=Depends(require_permission("knowledge", "create"))):
+    try:
+        result = KnowledgeDiscoverySessions.create(payload.url, payload.authentication_type)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    _audit(current_user, "CREATE_DISCOVERY_SESSION", "Created a URL discovery session")
+    return result
+
+
+@router.post("/discovery/sessions/{session_id}/authenticate")
+def authenticate_discovery_session(session_id: str, payload: AuthenticateDiscoveryRequest, current_user=Depends(require_permission("knowledge", "create"))):
+    try:
+        return KnowledgeDiscoverySessions.authenticate(session_id, payload.credentials, payload.analysis)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/discovery/sessions/{session_id}/navigate")
+def navigate_discovery_session(session_id: str, payload: NavigateDiscoveryRequest, current_user=Depends(require_permission("knowledge", "create"))):
+    try:
+        return KnowledgeDiscoverySessions.navigate(session_id, payload.url)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/discovery/sessions/{session_id}/scan")
+def scan_discovery_session(session_id: str, payload: ScanDiscoveryRequest, current_user=Depends(require_permission("knowledge", "create"))):
+    try:
+        return KnowledgeDiscoverySessions.scan(session_id, payload.label)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/discovery/sessions/{session_id}/save")
+def save_discovery_session(session_id: str, payload: SaveDiscoveryRequest, current_user=Depends(require_permission("knowledge", "create"))):
+    try:
+        result = KnowledgeDiscoverySessions.save(session_id, payload.steps, payload.hierarchy)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("error") or "Discovery could not be saved.")
+    _audit(current_user, "SAVE_DISCOVERY_FLOW", f"Saved knowledge_id={result.get('knowledge_item_id')}")
+    return result
+
+
+@router.delete("/discovery/sessions/{session_id}")
+def close_discovery_session(session_id: str, current_user=Depends(require_permission("knowledge", "create"))):
+    return {"closed": KnowledgeDiscoverySessions.close(session_id)}

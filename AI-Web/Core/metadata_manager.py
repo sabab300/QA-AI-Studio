@@ -34,7 +34,8 @@ class MetadataManager:
         knowledge_name,
         version,
         file_info,
-        analysis=None
+        analysis=None,
+        source_type="FILE",
     ):
 
         domain_id = self.get_or_create_domain(domain)
@@ -146,7 +147,7 @@ class MetadataManager:
 
                 "DOCUMENT",
 
-                "FILE",
+                source_type or "FILE",
 
                 summary,
 

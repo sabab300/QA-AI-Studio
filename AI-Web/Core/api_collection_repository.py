@@ -656,10 +656,16 @@ class ApiCollectionRepository:
 
             if headers:
 
+                sensitive_names = {
+                    "authorization", "proxy-authorization", "x-api-key",
+                    "api-key", "cookie", "set-cookie",
+                }
+
                 header_text = ", ".join(
                     f"{h.get('key', '')}: {h.get('value', '')}"
                     for h in headers
                     if h.get("key")
+                    and str(h.get("key")).lower() not in sensitive_names
                 )
 
                 if header_text:
