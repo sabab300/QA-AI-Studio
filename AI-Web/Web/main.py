@@ -39,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from Core.user_repository import UserRepository
+from Core.automation_execution_repository import AutomationExecutionRepository
 from Database.db_manager import DatabaseManager
 from Web.routers.auth_router import router as auth_router
 from Web.routers.users_router import (
@@ -89,6 +90,15 @@ def on_startup():
     # and seeds the default Admin/QA Engineer/Viewer roles plus a
     # first admin account on a genuinely first run only.
     UserRepository()
+
+    # QA Automation: any run row still "Queued"/"Running" at this
+    # exact moment is provably orphaned — no background thread from a
+    # previous process can still be alive in a freshly-started
+    # process. Without this, a run interrupted by a server
+    # restart/crash would show as "Running" forever (see
+    # Core/automation_execution_repository.py's module docstring).
+    # Safe to call on every startup, same as initialize_database().
+    AutomationExecutionRepository().reconcile_stale_running_on_startup()
 
 
 @app.get("/api/health")

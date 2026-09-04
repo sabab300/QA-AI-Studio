@@ -36,12 +36,7 @@ from Core.logger import Logger
 from Core.test_environment_config import TestEnvironmentConfig
 
 
-# BUGFIX (ported from the Web port — see
-# AI-Web/Core/playwright_runner.py's matching comment): anchored to
-# this file's own location instead of the process's current working
-# directory (see git_config_manager.py's matching comment in this
-# same folder for why a bare relative path here is unsafe).
-OUTPUT_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "AutomationRuns"
+OUTPUT_FOLDER = Path("Output") / "AutomationRuns"
 
 DEFAULT_TIMEOUT_SECONDS = 120
 
@@ -75,7 +70,6 @@ SPEED_SHIM_TEMPLATE = '''# --- QA AI Studio: speed/timeout safety shim (auto-ins
 # intermittent failures. Adjust in QA Automation -> Test Environment
 # Settings.
 from playwright.sync_api import BrowserType as _QA_BrowserType
-from playwright.sync_api import Browser as _QA_Browser
 from playwright.sync_api import BrowserContext as _QA_BrowserContext
 
 _QA_ORIGINAL_LAUNCH = _QA_BrowserType.launch
@@ -88,38 +82,14 @@ def _qa_launch_with_speed_settings(self, **kwargs):
 
 _QA_BrowserType.launch = _qa_launch_with_speed_settings
 
-
-def _qa_apply_timeout(page):
-    page.set_default_timeout({timeout})
-    page.set_default_navigation_timeout({timeout})
-    return page
-
-
-# BUGFIX (ported from the Web port after being caught there in
-# real runtime testing — see AI-Web/Core/playwright_runner.py's
-# matching comment): every script this app generates or records
-# calls browser.new_page() — a distinct method on Browser itself
-# (it creates an implicit context AND the page in one call), NOT
-# BrowserContext.new_page() (only used for a second+ page inside a
-# context you created yourself). Patching only
-# BrowserContext.new_page, as this shim originally did, meant the
-# per-page timeout below NEVER actually applied to a single script
-# produced by this app — silently. Both are patched now so this
-# actually applies regardless of which call shape a script uses.
-_QA_ORIGINAL_BROWSER_NEW_PAGE = _QA_Browser.new_page
-
-
-def _qa_browser_new_page_with_timeout(self, *args, **kwargs):
-    return _qa_apply_timeout(_QA_ORIGINAL_BROWSER_NEW_PAGE(self, *args, **kwargs))
-
-
-_QA_Browser.new_page = _qa_browser_new_page_with_timeout
-
 _QA_ORIGINAL_NEW_PAGE = _QA_BrowserContext.new_page
 
 
 def _qa_new_page_with_timeout(self, *args, **kwargs):
-    return _qa_apply_timeout(_QA_ORIGINAL_NEW_PAGE(self, *args, **kwargs))
+    page = _QA_ORIGINAL_NEW_PAGE(self, *args, **kwargs)
+    page.set_default_timeout({timeout})
+    page.set_default_navigation_timeout({timeout})
+    return page
 
 
 _QA_BrowserContext.new_page = _qa_new_page_with_timeout

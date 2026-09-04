@@ -310,6 +310,156 @@ class TestCaseRepository:
 
         return rows
 
+    # --------------------------------------------------
+    # WEB PORT ADDITION: cross-scope listing.
+    #
+    # Every existing caller (Desktop and Web alike) only ever lists
+    # test cases for ONE already-selected Domain/Module/Knowledge Name
+    # — there was no landing page that needed to show automation
+    # assets across every scope at once. The Web "Automation
+    # Workspace" (see AGENTS.md / the QA Automation task spec, section
+    # 7) is exactly that kind of landing page, so it needs a real
+    # cross-scope query instead of requiring a scope to be picked
+    # first. Purely additive — does not change list_test_cases()'s
+    # existing behavior or signature.
+    # --------------------------------------------------
+
+    def list_all_test_cases(
+        self, domain=None, module=None, knowledge_name=None,
+        status=None, automation_type=None, q=None,
+        limit=200, offset=0,
+    ):
+        """
+        Returns {"test_cases": [...], "total": N} — total is the
+        count BEFORE limit/offset, for real pagination.
+        """
+
+        conditions = []
+
+        params = []
+
+        if domain:
+
+            conditions.append("domain=?")
+
+            params.append(domain)
+
+        if module:
+
+            conditions.append("module=?")
+
+            params.append(module)
+
+        if knowledge_name:
+
+            conditions.append("knowledge_name=?")
+
+            params.append(knowledge_name)
+
+        if status:
+
+            conditions.append("status=?")
+
+            params.append(status)
+
+        if automation_type:
+
+            conditions.append("automation_type=?")
+
+            params.append(automation_type)
+
+        if q:
+
+            conditions.append(
+                "(tc_number LIKE ? OR test_case LIKE ? OR scenario LIKE ?)"
+            )
+
+            like = f"%{q}%"
+
+            params.extend([like, like, like])
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            f"SELECT COUNT(*) as c FROM test_cases {where_clause}", params
+        )
+
+        total = cursor.fetchone()["c"]
+
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM test_cases
+            {where_clause}
+            ORDER BY modified_date DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            params + [limit, offset],
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        return {"test_cases": rows, "total": total}
+
+    def list_distinct_scopes(self):
+        """
+        Distinct Domain / Module / Knowledge Name combinations that
+        currently have at least one test case — backs the Automation
+        Workspace's filter dropdowns with only scopes that actually
+        HAVE automation assets, rather than every Knowledge Hub
+        domain/module (most of which have no automation yet).
+        """
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT DISTINCT domain, module, knowledge_name
+            FROM test_cases
+            ORDER BY domain, module, knowledge_name
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        return rows
+
+    def delete_test_case(self, test_case_id):
+        """
+        Used by the "delete" permission action (Admin-only by
+        default — see Core/user_repository.py's DEFAULT_ROLES, no
+        seeded role grants 'delete' on 'automation' except Admin).
+        Returns True if a row was actually deleted.
+        """
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM test_cases WHERE id=?", (test_case_id,))
+
+        deleted = cursor.rowcount > 0
+
+        conn.commit()
+
+        conn.close()
+
+        return deleted
+
 
     @staticmethod
     def _dict_factory(cursor, row):

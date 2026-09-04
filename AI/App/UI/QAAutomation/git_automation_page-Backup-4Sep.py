@@ -835,28 +835,6 @@ class GitAutomationPage(QWidget):
 
             return
 
-        # BUGFIX (task spec section 33 — Desktop Remaining Defects):
-        # this used to commit immediately on click, with no
-        # confirmation, even though "push after commit" can send the
-        # result straight to a shared remote. A misclick or a stale
-        # file selection previously had no recovery step before the
-        # commit (and possible push) actually happened.
-        confirm = QMessageBox.question(
-            self,
-            "Commit Selected Files?",
-            f"Commit {len(files)} file(s) with message:\n\n\"{message}\""
-            + (
-                "\n\nThis will also PUSH to the remote immediately after committing."
-                if self.push_after_commit.isChecked() else ""
-            )
-            + "\n\nContinue?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-
-        if confirm != QMessageBox.Yes:
-
-            return
-
         def after_commit(result):
 
             self.commit_message.clear()
@@ -884,53 +862,15 @@ class GitAutomationPage(QWidget):
 
     def pull(self):
 
-        # BUGFIX (task spec section 33): Pull merges incoming remote
-        # changes into the local working copy with no warning — on a
-        # dirty tree this can produce a real, unprompted merge/
-        # conflict state the operator didn't ask for. Confirm first,
-        # same as Push/Merge/Commit below.
-        branch = self.current_config()["branch"]
-
-        confirm = QMessageBox.question(
-            self,
-            "Pull from Remote?",
-            f"Pull the latest changes for branch '{branch}' into this "
-            f"local workspace? This may merge in changes automatically.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-
-        if confirm != QMessageBox.Yes:
-
-            return
-
         self.run_operation(
-            "pull", branch=branch
+            "pull", branch=self.current_config()["branch"]
         )
 
 
     def push(self):
 
-        # BUGFIX (task spec section 33): Push sends local commits to
-        # a real, possibly shared remote with no confirmation — the
-        # one Git action here that's genuinely hard to undo once
-        # other people have pulled it. Confirm first.
-        branch = self.current_config()["branch"]
-
-        confirm = QMessageBox.question(
-            self,
-            "Push to Remote?",
-            f"Push branch '{branch}' to the remote repository? "
-            f"This shares your local commits — it can't be silently undone "
-            f"once someone else pulls them.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-
-        if confirm != QMessageBox.Yes:
-
-            return
-
         self.run_operation(
-            "push", branch=branch
+            "push", branch=self.current_config()["branch"]
         )
 
 
@@ -943,20 +883,6 @@ class GitAutomationPage(QWidget):
             QMessageBox.warning(
                 self, "QA AI Studio", "Enter a branch name to merge."
             )
-
-            return
-
-        # BUGFIX (task spec section 33): Merge can introduce real
-        # conflicts into the working copy with no warning beforehand.
-        confirm = QMessageBox.question(
-            self,
-            "Merge Branch?",
-            f"Merge '{source}' into the current branch? "
-            f"This may produce conflicts that need manual resolution.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-
-        if confirm != QMessageBox.Yes:
 
             return
 

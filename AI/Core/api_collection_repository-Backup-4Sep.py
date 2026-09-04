@@ -656,29 +656,10 @@ class ApiCollectionRepository:
 
             if headers:
 
-                # BUGFIX (ported from the Web port after being caught
-                # there — see AI-Web/Core/api_collection_repository.py's
-                # matching comment): a real Postman export commonly
-                # carries a live Authorization/API key/session cookie
-                # value in its headers. This text is embedded and
-                # written into the vector store as searchable
-                # knowledge — with no redaction, a real secret from an
-                # imported collection was being indexed in plaintext
-                # (and could later resurface in a knowledge search
-                # result or an LLM prompt). Sensitive header VALUES are
-                # now omitted; the header NAME is still shown so the
-                # summary still tells a reader/AI that auth is
-                # required, without exposing the actual secret.
-                sensitive_names = {
-                    "authorization", "proxy-authorization", "x-api-key",
-                    "api-key", "cookie", "set-cookie",
-                }
-
                 header_text = ", ".join(
                     f"{h.get('key', '')}: {h.get('value', '')}"
                     for h in headers
                     if h.get("key")
-                    and str(h.get("key")).lower() not in sensitive_names
                 )
 
                 if header_text:

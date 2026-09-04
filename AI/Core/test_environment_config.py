@@ -25,7 +25,15 @@ from pathlib import Path
 from Core.logger import Logger
 
 
-CONFIG_PATH = Path("Config") / "test_environment_config.json"
+# BUGFIX (ported from the Web port — see
+# AI-Web/Core/test_environment_config.py's matching comment): anchored
+# to this file's own location instead of the process's current
+# working directory, which isn't guaranteed to be the app's install
+# folder (a shortcut, a packaged .exe, or a different launch shell
+# could all change it) — same fix applied to git_config_manager.py,
+# playwright_runner.py and test_execution_manager.py in this same
+# folder.
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "Config" / "test_environment_config.json"
 
 # Every key this config file can hold, with its default value.
 # load() fills in any key missing from an older config file (or a

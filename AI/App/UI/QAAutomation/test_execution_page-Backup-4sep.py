@@ -2923,26 +2923,9 @@ class TestExecutionPage(QWidget):
                 script
             )
 
-        except Exception as ex:
+        except Exception:
 
-            # BUGFIX (task spec section 33 — Desktop Remaining
-            # Defects): this used to swallow ANY exception from the
-            # scan and silently fall back to flagged=[], which reads
-            # identically to "scanned it, found nothing" — the
-            # operator would never know the dynamic-locator check
-            # didn't actually run for this recording. Surface it in
-            # the log instead (never fabricate a false "all clear"),
-            # while still letting the recording save proceed — a
-            # failed scan is a real, separate problem from whether
-            # the recording itself is good.
             flagged = []
-
-            self.log.append(
-                f"{tc_number}: could not scan the recorded script for "
-                f"dynamic locators ({ex}) — this recording was saved "
-                f"anyway, but the dynamic-locator check above did not "
-                f"actually run for it."
-            )
 
         if flagged:
 

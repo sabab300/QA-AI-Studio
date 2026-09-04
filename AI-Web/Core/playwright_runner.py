@@ -36,7 +36,22 @@ from Core.logger import Logger
 from Core.test_environment_config import TestEnvironmentConfig
 
 
-OUTPUT_FOLDER = Path("Output") / "AutomationRuns"
+# BUGFIX (shared Core defect, also present on Desktop): this used to
+# be the bare relative path Path("Output") / "AutomationRuns", which
+# resolves against the PROCESS'S CURRENT WORKING DIRECTORY — the exact
+# same class of bug Database/db_manager.py's DatabaseManager already
+# had to fix for metadata.db (see its own comment). A web server can be
+# launched from the repo root, from AI-Web/, or via a process manager
+# with an unrelated CWD; each would silently create/read a DIFFERENT
+# "Output/AutomationRuns" folder, making past run scripts "disappear"
+# after a restart from a different directory. Anchored to this file's
+# own location instead, exactly like GIT_WORKSPACE_ROOT in
+# automation_web_repository.py already does.
+OUTPUT_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "AutomationRuns"
+
+# WEB PORT ADDITION: where failure screenshots (see EVIDENCE_SHIM_TEMPLATE
+# below) are written. Same anchoring reasoning as OUTPUT_FOLDER above.
+EVIDENCE_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "Evidence"
 
 DEFAULT_TIMEOUT_SECONDS = 120
 
@@ -70,6 +85,7 @@ SPEED_SHIM_TEMPLATE = '''# --- QA AI Studio: speed/timeout safety shim (auto-ins
 # intermittent failures. Adjust in QA Automation -> Test Environment
 # Settings.
 from playwright.sync_api import BrowserType as _QA_BrowserType
+from playwright.sync_api import Browser as _QA_Browser
 from playwright.sync_api import BrowserContext as _QA_BrowserContext
 
 _QA_ORIGINAL_LAUNCH = _QA_BrowserType.launch
@@ -82,14 +98,36 @@ def _qa_launch_with_speed_settings(self, **kwargs):
 
 _QA_BrowserType.launch = _qa_launch_with_speed_settings
 
+
+def _qa_apply_timeout(page):
+    page.set_default_timeout({timeout})
+    page.set_default_navigation_timeout({timeout})
+    return page
+
+
+# BUGFIX (found in Part 2 runtime testing): every script this app
+# generates or records calls browser.new_page() — a distinct method
+# on Browser itself (it creates an implicit context AND the page in
+# one call), NOT BrowserContext.new_page() (only used for a second+
+# page inside a context you created yourself). Patching only
+# BrowserContext.new_page, as this shim originally did, meant the
+# per-page timeout below NEVER actually applied to a single script
+# produced by this app — silently. Both are patched now so this
+# actually applies regardless of which call shape a script uses.
+_QA_ORIGINAL_BROWSER_NEW_PAGE = _QA_Browser.new_page
+
+
+def _qa_browser_new_page_with_timeout(self, *args, **kwargs):
+    return _qa_apply_timeout(_QA_ORIGINAL_BROWSER_NEW_PAGE(self, *args, **kwargs))
+
+
+_QA_Browser.new_page = _qa_browser_new_page_with_timeout
+
 _QA_ORIGINAL_NEW_PAGE = _QA_BrowserContext.new_page
 
 
 def _qa_new_page_with_timeout(self, *args, **kwargs):
-    page = _QA_ORIGINAL_NEW_PAGE(self, *args, **kwargs)
-    page.set_default_timeout({timeout})
-    page.set_default_navigation_timeout({timeout})
-    return page
+    return _qa_apply_timeout(_QA_ORIGINAL_NEW_PAGE(self, *args, **kwargs))
 
 
 _QA_BrowserContext.new_page = _qa_new_page_with_timeout
@@ -115,6 +153,115 @@ def _qa_launch_headless(self, **kwargs):
 
 _QA_BrowserType_H.launch = _qa_launch_headless
 # --- end QA AI Studio web headless shim ---
+
+'''
+
+# WEB PORT ADDITION: real failure evidence. The desktop app never
+# captures a screenshot on failure (confirmed by reading
+# App/UI/QAAutomation/test_execution_page.py — a failed run only ever
+# surfaces truncated stderr text). For a server-side/headless run
+# nobody is watching live, so a screenshot of the page at the moment
+# of failure is the difference between "FAILED" and an actionable
+# reason why. This chains onto SPEED_SHIM_TEMPLATE's own
+# BrowserContext.new_page patch (this shim's text is always placed
+# AFTER it — see run_script()) rather than replacing it, so both the
+# timeout-setting AND the page-tracking behaviour apply to every page.
+# Only fires for an UNCAUGHT exception reaching the interpreter (a
+# normal assert failure or unhandled error in run() does exactly
+# this) — never runs for a script that passes, so passing runs never
+# get an unused screenshot file. Not used by run_script_interactive(),
+# which already surfaces failures live to the operator via its own
+# step-by-step event protocol.
+# The screenshot path is substituted via a plain string .replace(),
+# never str.format() — same reasoning as INTERACTIVE_HARNESS_TEMPLATE
+# below: repr() is the only safe way to embed an arbitrary filesystem
+# path (Windows backslashes, spaces, drive letters) as a Python string
+# literal without hand-rolled escaping bugs.
+EVIDENCE_SHIM_TEMPLATE = '''# --- QA AI Studio: failure screenshot shim (auto-inserted at run time, not saved) ---
+import sys as _qa_sys_e
+
+from playwright.sync_api import Browser as _QA_Browser_E
+from playwright.sync_api import BrowserContext as _QA_BrowserContext_E
+from playwright.sync_api import PlaywrightContextManager as _QA_PwCtxMgr_E
+
+_QA_LAST_PAGE_E = {"page": None, "captured": False}
+
+
+def _qa_track_e(page):
+    _QA_LAST_PAGE_E["page"] = page
+    return page
+
+
+# Same fix as SPEED_SHIM_TEMPLATE's: browser.new_page() (what every
+# generated/recorded script actually calls) is a Browser method, not
+# a BrowserContext one — both are patched so page-tracking for the
+# failure screenshot actually fires regardless of call shape.
+_QA_ORIGINAL_BROWSER_NEW_PAGE_E = _QA_Browser_E.new_page
+
+
+def _qa_browser_new_page_track_e(self, *args, **kwargs):
+    return _qa_track_e(_QA_ORIGINAL_BROWSER_NEW_PAGE_E(self, *args, **kwargs))
+
+
+_QA_Browser_E.new_page = _qa_browser_new_page_track_e
+
+_QA_ORIGINAL_NEW_PAGE_E = _QA_BrowserContext_E.new_page
+
+
+def _qa_new_page_track_e(self, *args, **kwargs):
+    return _qa_track_e(_QA_ORIGINAL_NEW_PAGE_E(self, *args, **kwargs))
+
+
+_QA_BrowserContext_E.new_page = _qa_new_page_track_e
+
+
+def _qa_capture_e():
+    if _QA_LAST_PAGE_E["captured"]:
+        return
+    page = _QA_LAST_PAGE_E.get("page")
+    if page is not None:
+        try:
+            page.screenshot(path=__SCREENSHOT_PATH_REPR__, full_page=True)
+            print("QA_EVIDENCE_SCREENSHOT::" + __SCREENSHOT_PATH_REPR__, flush=True)
+            _QA_LAST_PAGE_E["captured"] = True
+        except Exception:
+            pass
+
+
+# BUGFIX (found in Part 2 runtime testing): every real script this app
+# produces (AI-generated and Manually Recorded alike) uses
+# "with sync_playwright() as playwright: ...". When a step fails, the
+# exception propagates out of that `with` block BEFORE it ever reaches
+# sys.excepthook — and the context manager's own __exit__ calls
+# playwright.stop(), which tears down the browser connection first.
+# By the time the excepthook below ran, the page was already gone, so
+# page.screenshot() silently failed every single time for this (the
+# overwhelmingly common) script shape — evidence capture never
+# actually fired in practice. Capturing here, on the way OUT of the
+# `with` block but before the original __exit__ tears anything down,
+# is what actually gets a real screenshot for a real failure.
+_QA_ORIGINAL_PW_EXIT_E = _QA_PwCtxMgr_E.__exit__
+
+
+def _qa_pw_exit_capture_e(self, exc_type, exc_value, exc_tb):
+    if exc_type is not None:
+        _qa_capture_e()
+    return _QA_ORIGINAL_PW_EXIT_E(self, exc_type, exc_value, exc_tb)
+
+
+_QA_PwCtxMgr_E.__exit__ = _qa_pw_exit_capture_e
+
+
+def _qa_excepthook_e(exc_type, exc_value, exc_tb):
+    # Fallback for scripts that don't use the "with sync_playwright()"
+    # form (e.g. a bare start()/stop()) — the __exit__ patch above
+    # already handles the common shape by the time this normally runs.
+    _qa_capture_e()
+    _qa_sys_e.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+_qa_sys_e.excepthook = _qa_excepthook_e
+# --- end QA AI Studio failure screenshot shim ---
 
 '''
 
@@ -303,7 +450,7 @@ def _qa_run_step(step_number, code_text):
                     "step": step_number,
                 })
                 sys.exit(2)
-                        current_code = outcome
+            current_code = outcome
 # --- end QA AI Studio interactive step runner ---
 
 '''
@@ -419,7 +566,16 @@ class PlaywrightRunner:
         # script generation/recording needs to change.
         self.force_headless = force_headless
 
+        # WEB PORT ADDITION: set by cancel_current_run() right before
+        # terminating the subprocess, so run_script()/run_script_interactive()
+        # can tell "the operator/API caller cancelled this" apart from
+        # "the script's own process crashed/was killed for some other
+        # reason" — both look identical from a bare negative return code.
+        self._cancel_requested = False
+
         OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+        EVIDENCE_FOLDER.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------
 
@@ -538,7 +694,21 @@ class PlaywrightRunner:
 
     # --------------------------------------------------
 
-    def run_script(self, script_text, tc_number="script", timeout_seconds=None):
+    def run_script(
+        self, script_text, tc_number="script", timeout_seconds=None,
+        on_process_started=None,
+    ):
+        """
+        `on_process_started`, if given, is called once with the
+        running subprocess.Popen — same convention as
+        record_manual_script() — so a caller running this from a
+        background job (see
+        Core/automation_web_repository.py's TestCasesWeb._run_job())
+        can look the process up later for a genuine Cancel action.
+        Also settable via self._current_process /
+        cancel_current_run(), same mechanism run_script_interactive()
+        already uses.
+        """
 
         if not self.is_playwright_installed():
 
@@ -579,9 +749,17 @@ class PlaywrightRunner:
 
         slow_mo_ms, timeout_ms = self._resolve_speed_settings()
 
-        script_with_shim = SPEED_SHIM_TEMPLATE.format(
-            slow_mo=slow_mo_ms, timeout=timeout_ms
-        ) + script_text
+        screenshot_path = EVIDENCE_FOLDER / f"{safe_name}_{timestamp}_failure.png"
+
+        evidence_shim = EVIDENCE_SHIM_TEMPLATE.replace(
+            "__SCREENSHOT_PATH_REPR__", repr(str(screenshot_path))
+        )
+
+        script_with_shim = (
+            SPEED_SHIM_TEMPLATE.format(slow_mo=slow_mo_ms, timeout=timeout_ms)
+            + evidence_shim
+            + script_text
+        )
 
         if self.force_headless:
 
@@ -596,60 +774,102 @@ class PlaywrightRunner:
 
         start = datetime.now()
 
+        self._cancel_requested = False
+
+        # BUGFIX/IMPROVEMENT (web port): this used to be subprocess.run(),
+        # which blocks with no way to reach the child process from
+        # another thread — there was no way to implement a genuine
+        # Cancel for a queued/background Execute (see
+        # TestCasesWeb.cancel_execution() in
+        # automation_web_repository.py). Popen + communicate(timeout=)
+        # is functionally equivalent for the normal/timeout paths
+        # (matches subprocess.run's own documented implementation)
+        # but exposes self._current_process so cancel_current_run()
+        # — already used by the interactive path — works here too.
+        process = subprocess.Popen(
+            [sys.executable, str(script_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        self._current_process = process
+
+        if on_process_started:
+
+            on_process_started(process)
+
         try:
 
-            process = subprocess.run(
-                [sys.executable, str(script_path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
+            try:
+
+                stdout, stderr = process.communicate(timeout=timeout_seconds)
+
+            except subprocess.TimeoutExpired:
+
+                process.kill()
+
+                stdout, stderr = process.communicate()
+
+                duration = (datetime.now() - start).total_seconds()
+
+                self.logger.warning(
+                    f"Playwright script timed out after {timeout_seconds}s"
+                )
+
+                return {
+                    "success": False,
+                    "error": (
+                        f"Script did not finish within {timeout_seconds} "
+                        f"seconds and was stopped. It may be waiting on "
+                        f"a page element that never appeared, or a wrong "
+                        f"URL/selector. Currently using {slow_mo_ms}ms "
+                        f"slow motion and a {timeout_ms}ms per-action "
+                        f"timeout — if the app is just slow to load, try "
+                        f"raising the timeout in Test Environment "
+                        f"Settings rather than the overall run timeout."
+                    ),
+                    "stdout": stdout or "",
+                    "stderr": stderr or "",
+                    "duration": duration,
+                    "script_path": str(script_path),
+                    "slow_mo_ms": slow_mo_ms,
+                    "timeout_ms": timeout_ms,
+                }
 
             duration = (datetime.now() - start).total_seconds()
 
+            cancelled = self._cancel_requested and process.returncode != 0
+
             passed = process.returncode == 0
+
+            found_screenshot = None
+
+            for line in (stdout or "").splitlines():
+
+                if line.startswith("QA_EVIDENCE_SCREENSHOT::"):
+
+                    candidate = line[len("QA_EVIDENCE_SCREENSHOT::"):]
+
+                    if Path(candidate).exists():
+
+                        found_screenshot = candidate
 
             self.logger.info(
                 f"Playwright script finished in {duration:.1f}s — "
-                f"{'PASS' if passed else 'FAIL'} (exit code "
-                f"{process.returncode})"
+                f"{'CANCELLED' if cancelled else ('PASS' if passed else 'FAIL')} "
+                f"(exit code {process.returncode})"
             )
 
             return {
                 "success": passed,
-                "stdout": process.stdout,
-                "stderr": process.stderr,
+                "cancelled": cancelled,
+                "stdout": stdout,
+                "stderr": stderr,
                 "return_code": process.returncode,
                 "duration": duration,
                 "script_path": str(script_path),
-                "slow_mo_ms": slow_mo_ms,
-                "timeout_ms": timeout_ms,
-            }
-
-        except subprocess.TimeoutExpired as ex:
-
-            duration = (datetime.now() - start).total_seconds()
-
-            self.logger.warning(
-                f"Playwright script timed out after {timeout_seconds}s"
-            )
-
-            return {
-                "success": False,
-                "error": (
-                    f"Script did not finish within {timeout_seconds} "
-                    f"seconds and was stopped. It may be waiting on "
-                    f"a page element that never appeared, or a wrong "
-                    f"URL/selector. Currently using {slow_mo_ms}ms "
-                    f"slow motion and a {timeout_ms}ms per-action "
-                    f"timeout — if the app is just slow to load, try "
-                    f"raising the timeout in Test Environment "
-                    f"Settings rather than the overall run timeout."
-                ),
-                "stdout": ex.stdout or "",
-                "stderr": ex.stderr or "",
-                "duration": duration,
-                "script_path": str(script_path),
+                "screenshot_path": found_screenshot,
                 "slow_mo_ms": slow_mo_ms,
                 "timeout_ms": timeout_ms,
             }
@@ -665,6 +885,10 @@ class PlaywrightRunner:
                 "error": str(ex),
                 "script_path": str(script_path),
             }
+
+        finally:
+
+            self._current_process = None
 
     # --------------------------------------------------
     # Interactive execution — pause on a broken locator, ask the
@@ -1131,13 +1355,18 @@ class PlaywrightRunner:
     def cancel_current_run(self):
         """
         Called from the UI thread (Cancel Execution) while an
-        interactive run is in progress on the background thread —
-        Popen.terminate() is safe to call from another thread.
+        interactive run is in progress on the background thread — or,
+        on the web port, from a request handler while a background
+        Execute job (run_script(), not just run_script_interactive())
+        is in progress on its own worker thread. Popen.terminate() is
+        safe to call from another thread.
         """
 
         process = self._current_process
 
         if process and process.poll() is None:
+
+            self._cancel_requested = True
 
             try:
 

@@ -22,7 +22,10 @@ from pathlib import Path
 from Core.logger import Logger
 
 
-CONFIG_PATH = Path("Config") / "git_config.json"
+# BUGFIX (shared Core defect, also present on Desktop): same
+# CWD-relative-path issue fixed in playwright_runner.py's
+# OUTPUT_FOLDER. Anchored to this file's own location instead.
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "Config" / "git_config.json"
 
 
 class GitConfigManager:

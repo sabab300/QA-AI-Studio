@@ -738,6 +738,43 @@ class MetadataManager:
 
         return True
 
+    def delete_domain_by_name(self, domain_name):
+        """Delete an unused Domain master-data row without cascading Knowledge."""
+        domain_name = (domain_name or "").strip()
+        if not domain_name:
+            raise ValueError("Domain name is required.")
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM domains WHERE name=?", (domain_name,))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Domain '{domain_name}' was not found.")
+            domain_id = row[0]
+            cursor.execute("SELECT COUNT(*) FROM modules WHERE domain_id=?", (domain_id,))
+            if cursor.fetchone()[0]:
+                raise ValueError("Delete the Domain's Modules first. No Knowledge was deleted.")
+            cursor.execute(
+                "SELECT COUNT(*) FROM knowledge_items WHERE domain_id=? OR domain=?",
+                (domain_id, domain_name),
+            )
+            if cursor.fetchone()[0]:
+                raise ValueError("This Domain is referenced by Knowledge and cannot be deleted.")
+            cursor.execute(
+                "SELECT COUNT(*) FROM discovery_business_processes WHERE linked_domain_id=?",
+                (domain_id,),
+            )
+            if cursor.fetchone()[0]:
+                raise ValueError("This Domain is referenced by captured discovery knowledge and cannot be deleted.")
+            cursor.execute("DELETE FROM domains WHERE id=?", (domain_id,))
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
 
     # ==================================================
 
@@ -1047,6 +1084,48 @@ class MetadataManager:
         conn.close()
 
         return True
+
+    def delete_module_by_name(self, domain_name, module_name):
+        """Delete an unused Module master-data row without cascading Knowledge."""
+        domain_name = (domain_name or "").strip()
+        module_name = (module_name or "").strip()
+        if not domain_name or not module_name:
+            raise ValueError("Domain and Module names are required.")
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id FROM modules m
+                JOIN domains d ON d.id=m.domain_id
+                WHERE d.name=? AND m.name=?
+                """,
+                (domain_name, module_name),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Module '{module_name}' was not found under Domain '{domain_name}'.")
+            module_id = row[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM knowledge_items WHERE module_id=? OR (domain=? AND module=?)",
+                (module_id, domain_name, module_name),
+            )
+            if cursor.fetchone()[0]:
+                raise ValueError("This Module is referenced by Knowledge and cannot be deleted.")
+            cursor.execute(
+                "SELECT COUNT(*) FROM discovery_business_processes WHERE linked_module_id=?",
+                (module_id,),
+            )
+            if cursor.fetchone()[0]:
+                raise ValueError("This Module is referenced by captured discovery knowledge and cannot be deleted.")
+            cursor.execute("DELETE FROM modules WHERE id=?", (module_id,))
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
     # ==================================================

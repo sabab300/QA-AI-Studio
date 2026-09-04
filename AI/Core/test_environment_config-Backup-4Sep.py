@@ -25,13 +25,7 @@ from pathlib import Path
 from Core.logger import Logger
 
 
-# BUGFIX (shared Core defect, also present on Desktop): same
-# CWD-relative-path issue fixed in playwright_runner.py's
-# OUTPUT_FOLDER — Test Environment Settings (Base URL, timeouts, API
-# auth) would appear to "reset" whenever the server process started
-# from a different working directory. Anchored to this file's own
-# location instead.
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "Config" / "test_environment_config.json"
+CONFIG_PATH = Path("Config") / "test_environment_config.json"
 
 # Every key this config file can hold, with its default value.
 # load() fills in any key missing from an older config file (or a

@@ -38,8 +38,6 @@ from pathlib import Path
 
 from Core.metadata_manager import MetadataManager
 from Core.repository_manager import RepositoryManager
-from Core.upload_pipeline import UploadPipeline
-from Core.vector_store import VectorStore
 from Core.knowledge_merge import KnowledgeMerge
 from Core.version_compare import VersionCompare
 from Core.smart_upload import SmartUpload
@@ -92,7 +90,12 @@ class KnowledgeRepository:
         name = (name or "").strip()
         if not name:
             raise ValueError("Domain name is required.")
+        if any(existing.casefold() == name.casefold() for existing in self.list_domains()):
+            raise ValueError(f"Domain '{name}' already exists.")
         return self.metadata.create_domain(name)
+
+    def delete_domain(self, name):
+        return self.metadata.delete_domain_by_name(name)
 
     def list_modules(self, domain):
 
@@ -104,6 +107,9 @@ class KnowledgeRepository:
         if not domain or not name:
             raise ValueError("Domain and module name are required.")
         return self.metadata.get_or_create_module(domain, name)
+
+    def delete_module(self, domain, name):
+        return self.metadata.delete_module_by_name(domain, name)
 
     def list_items(self, search=None):
 
@@ -200,6 +206,7 @@ class KnowledgeRepository:
             return "External or unavailable"
 
     def _vector_ids_for_item(self, item):
+        from Core.vector_store import VectorStore
 
         data = VectorStore().get_all() or {}
         sha256 = str(item.get("sha256") or "")
@@ -238,6 +245,7 @@ class KnowledgeRepository:
     # --------------------------------------------------
 
     def update_item(self, knowledge_id, **fields):
+        from Core.vector_store import VectorStore
 
         existing = self.get_item(knowledge_id)
 
@@ -308,6 +316,7 @@ class KnowledgeRepository:
     # --------------------------------------------------
 
     def delete_item(self, knowledge_id):
+        from Core.vector_store import VectorStore
 
         item = self.get_item(knowledge_id)
 
@@ -393,6 +402,7 @@ class KnowledgeRepository:
             current = current.parent
 
     def _delete_vectors_for_version(self, domain, module, knowledge_name, version):
+        from Core.vector_store import VectorStore
 
         store = VectorStore()
 
@@ -436,6 +446,8 @@ class KnowledgeRepository:
         source_type="FILE",
         reviewed_analysis=None,
     ):
+
+        from Core.upload_pipeline import UploadPipeline
 
         domain = (domain or "").strip()
         module = (module or "").strip()
@@ -587,6 +599,15 @@ class KnowledgeRepository:
         if row_a is None or row_b is None:
 
             raise ValueError("One or both knowledge items no longer exist.")
+
+        logical_fields = ("domain", "module", "knowledge_name")
+        if any(row_a[field] != row_b[field] for field in logical_fields):
+            raise ValueError(
+                "Compare Versions requires two versions of the same Domain, Module, and Knowledge Name."
+            )
+
+        if knowledge_id_a == knowledge_id_b or row_a["version"] == row_b["version"]:
+            raise ValueError("Select two different versions of this Knowledge.")
 
         changes = VersionCompare().compare(row_a, row_b)
 

@@ -26,6 +26,7 @@ for a stateless request/response endpoint.
 """
 
 import json
+import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -42,6 +43,19 @@ from Core.user_repository import UserRepository
 from Web.deps import require_permission
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+logger = logging.getLogger(__name__)
+
+
+def _safe_file_error(filename, error):
+    name = Path(filename or "uploaded file").name
+    if isinstance(error, UnicodeError):
+        return f"Could not decode '{name}' as text. Save it as UTF-8 and try again."
+    if isinstance(error, ImportError):
+        return f"The reader required for '{name}' is unavailable on the server."
+    message = " ".join(str(error).split())
+    if message:
+        return f"Could not analyze '{name}': {message}"
+    return f"Could not analyze '{name}' ({type(error).__name__})."
 
 
 class UpdateKnowledgeItemRequest(BaseModel):
@@ -181,6 +195,16 @@ def create_domain(
     return {"status": "success", "domain": payload.name, "domain_id": domain_id}
 
 
+@router.delete("/domains/{domain}")
+def delete_domain(domain: str, current_user=Depends(require_permission("knowledge", "delete"))):
+    try:
+        KnowledgeRepository().delete_domain(domain)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    _audit(current_user, "DELETE_DOMAIN", f"Deleted unused domain '{domain}'")
+    return {"status": "deleted", "domain": domain}
+
+
 @router.get("/domains/{domain}/modules")
 def list_modules(
     domain: str, current_user=Depends(require_permission("knowledge", "view"))
@@ -202,6 +226,16 @@ def create_module(
 
     _audit(current_user, "CREATE_MODULE", f"Created module '{payload.name}' under domain '{domain}'")
     return {"status": "success", "domain": domain, "module": payload.name, "module_id": module_id}
+
+
+@router.delete("/domains/{domain}/modules/{module}")
+def delete_module(domain: str, module: str, current_user=Depends(require_permission("knowledge", "delete"))):
+    try:
+        KnowledgeRepository().delete_module(domain, module)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    _audit(current_user, "DELETE_MODULE", f"Deleted unused module '{module}' under domain '{domain}'")
+    return {"status": "deleted", "domain": domain, "module": module}
 
 
 @router.get("/items")
@@ -367,7 +401,11 @@ def suggest_classification(
     current_user=Depends(require_permission("knowledge", "create")),
 ):
 
-    file_bytes = file.file.read()
+    try:
+        file_bytes = file.file.read()
+    except Exception as error:
+        logger.warning("Smart Upload could not read multipart content for %s: %s", Path(file.filename or "upload").name, type(error).__name__)
+        raise HTTPException(status_code=422, detail=_safe_file_error(file.filename, error))
 
     if not file_bytes:
 
@@ -381,8 +419,13 @@ def suggest_classification(
         )
 
     except ValueError as error:
-
-        raise HTTPException(status_code=400, detail=str(error))
+        raise HTTPException(status_code=422, detail=_safe_file_error(file.filename, error))
+    except (OSError, EOFError, UnicodeError) as error:
+        logger.info("Smart Upload extraction failed for %s: %s", Path(file.filename or "upload").name, type(error).__name__)
+        raise HTTPException(status_code=422, detail=_safe_file_error(file.filename, error))
+    except Exception as error:
+        logger.exception("Smart Upload analysis failed for %s", Path(file.filename or "upload").name)
+        raise HTTPException(status_code=422, detail=_safe_file_error(file.filename, error))
 
     if not result.get("success"):
 

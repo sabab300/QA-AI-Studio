@@ -1,0 +1,21 @@
+{
+  "base_url": "https://qa.psw.gov.pk/app",
+  "username": "un-00-0453600",
+  "password": "Test@1234",
+  "notes": "",
+  "slow_mo_ms": "300",
+  "default_timeout_ms": "45000",
+  "api_auth_type": "None",
+  "api_auth_token": "",
+  "api_auth_header_name": "",
+  "api_auth_header_value": "",
+  "api_username": "",
+  "api_password": "",
+  "api_extra_headers": {},
+  "api_timeout_seconds": "",
+  "api_verify_ssl": true,
+  "api_base_url_override": "",
+  "api_variables": {
+    "Test01": "123"
+  }
+}

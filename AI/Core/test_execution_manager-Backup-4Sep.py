@@ -43,14 +43,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# BUGFIX (shared Core defect, also present on Desktop): same
-# CWD-relative-path issue fixed in playwright_runner.py's
-# OUTPUT_FOLDER — see that comment for the full explanation.
-RECORDINGS_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "Recordings"
+RECORDINGS_FOLDER = Path("Output") / "Recordings"
 
 class TestExecutionManager:
 
-    def __init__(self, force_headless=False):
+    def __init__(self):
 
         self.logger = Logger.get_logger()
 
@@ -60,9 +57,7 @@ class TestExecutionManager:
 
         self.llm = LLMEngine()
 
-        # WEB PORT ADDITION: force_headless=True on a server (no
-        # display) — see PlaywrightRunner.__init__'s docstring.
-        self.playwright_runner = PlaywrightRunner(force_headless=force_headless)
+        self.playwright_runner = PlaywrightRunner()
 
         self.environment_config = TestEnvironmentConfig()
 
@@ -466,10 +461,15 @@ class TestExecutionManager:
             f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
             f"are plain strings passed directly as the first "
             f"argument.\n\n"
-            f"WRONG (Selenium-style, will not work):\n"
+                        f"WRONG (Selenium-style, will not work):\n"
             f"page.fill(By.ID, \"username\", \"myuser\")\n\n"
             f"CORRECT (Playwright-style):\n"
             f"page.fill(\"#username\", \"myuser\")\n\n"
+            f"- NEVER use page.get_by_text(...) with a value that "
+            f"looks like an HTML attribute (contains 'class=', "
+            f"'id=', or quotation marks around an attribute name) — "
+            f"get_by_text() only matches real, visible page text. "
+            f"Build a CSS selector with page.locator(...) instead.\n\n"
             f"{environment_block}"
             f"If the exact URL for a step isn't clear from the "
             f"test case, use 'https://REPLACE_WITH_ACTUAL_URL'.\n\n"
@@ -490,7 +490,7 @@ class TestExecutionManager:
         try:
 
             from Core.discovery_repository import DiscoveryRepository
-
+            
             elements = DiscoveryRepository().get_elements_for_scope(
                 domain, module, knowledge_name
             )
@@ -532,6 +532,21 @@ class TestExecutionManager:
             f"page.fill()/page.click()/etc, with NO special prefix "
             f"or wrapper needed — use it exactly as given, never "
             f"convert it to a different selector style.\n\n"
+            f"CRITICAL — how to use a Locator value: every 'Locator' "
+            f"value below is a ready-to-use Playwright locator string "
+            f"(a CSS selector, a bracketed attribute selector like "
+            f"[data-testid='...'], or an XPath starting with '//') — "
+            f"always pass it directly as the first argument to "
+            f"page.fill()/page.click()/page.locator()/etc, exactly "
+            f"as written. NEVER wrap a Locator value in "
+            f"page.get_by_text(...) — get_by_text() only matches "
+            f"real, visible, human-readable text on the page, and a "
+            f"Locator value is NOT visible text. If a Locator value "
+            f"contains an '=' sign, quotation marks around an "
+            f"attribute name (e.g. class=\"...\", id=\"...\"), or "
+            f"starts with '.', '#', '[' or '//', treat it as a "
+            f"selector and use page.locator(that_value) — never "
+            f"get_by_text() with it.\n\n"
             f"STRICT RULES:\n"
             f"- Do NOT write 'def', 'if', 'for', 'while', 'try', "
             f"'with', or any other block/indented statement.\n"

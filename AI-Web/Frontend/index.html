@@ -396,18 +396,22 @@
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
 
   /* ---------- Knowledge Hub workspace ---------- */
-  .kh-workspace{ padding:10px 12px; overflow:auto; }
-  .kh-card{ width:100%; min-width:0; }
-  .kh-card .card-head{ padding:18px 20px; align-items:flex-start; }
-  .kh-section{ border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:18px; margin-bottom:16px; }
+  .kh-workspace{ padding:0; overflow:hidden; }
+  .kh-workspace>.panel{ padding:10px 12px; overflow:hidden; }
+  .kh-workspace>.panel.flush{ padding:0; }
+  .kh-card{ width:100%; min-width:0; flex:1; }
+  .kh-card .card-head{ padding:10px 16px; align-items:center; }
+  .kh-section{ border:1px solid var(--border); border-radius:9px; background:var(--surface); padding:14px; margin-bottom:12px; }
   .kh-section-title{ font-size:13px; font-weight:700; margin:0 0 4px; color:var(--ink); }
   .kh-section-help{ font-size:12px; color:var(--ink-muted); margin-bottom:15px; }
-  .kh-form-grid{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; }
-  .kh-field{ grid-column:span 4; min-width:0; }
-  .kh-field.wide{ grid-column:span 8; }
+  .kh-form-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 16px; }
+  .kh-field,.kh-field.wide{ grid-column:span 1; min-width:0; }
   .kh-field.full{ grid-column:1/-1; }
   .kh-field label{ display:block; font-size:12px; font-weight:650; color:var(--ink-muted); margin-bottom:6px; }
   .kh-field input,.kh-field select,.kh-modal-grid input,.kh-modal-grid select,.kh-modal-grid textarea{ width:100%; border:1px solid var(--border); background:var(--surface); color:var(--ink); border-radius:8px; padding:9px 11px; font:inherit; }
+  #khSmartSuggested .field{ min-width:0; }
+  #khSmartSuggested .field input,#khSmartSuggested .field select,#khSmartResults input,#khSmartResults textarea{ width:100%; border:1px solid var(--border); background:var(--surface); color:var(--ink); border-radius:8px; padding:9px 11px; font:inherit; }
+  #khSmartSuggested[hidden],#khSmartResults[hidden]{ display:none !important; }
   .kh-control-pair{ display:flex; gap:7px; align-items:stretch; }
   .kh-control-pair select{ min-width:0; flex:1; }
   .kh-add-btn{ width:36px; min-width:36px; padding:0; justify-content:center; font-size:18px; }
@@ -427,19 +431,28 @@
   .kh-progress-metric span{ display:block; font-size:10px; color:var(--ink-muted); text-transform:uppercase; }
   .kh-progress-metric strong{ font-size:15px; }
   .kh-upload-log{ margin-top:12px; min-height:120px; max-height:190px; overflow:auto; border:1px solid var(--border); border-radius:8px; background:#111827; color:#d1d5db; padding:11px 13px; font:12px/1.55 Consolas,monospace; white-space:pre-wrap; }
-  .kh-tree{ border:1px solid var(--border); border-radius:9px; overflow:auto; min-height:300px; }
+  #kh-browse .card-body{ padding:0; overflow:hidden; display:flex; min-height:0; }
+  .kh-tree{ overflow:auto; min-height:0; flex:1; border:0; border-radius:0; }
   .kh-tree details{ border-bottom:1px solid var(--border); }
-  .kh-tree details details{ border-bottom:0; border-top:1px solid var(--border); margin-left:16px; }
+  .kh-tree details details{ border-bottom:0; border-top:1px solid color-mix(in srgb,var(--border) 75%,transparent); margin-left:14px; }
   .kh-tree summary{ cursor:pointer; list-style:none; padding:11px 14px; font-weight:650; display:flex; align-items:center; gap:8px; }
   .kh-tree summary::-webkit-details-marker{ display:none; }
   .kh-tree summary::before{ content:'›'; color:var(--ink-muted); transition:transform .15s; }
   .kh-tree details[open]>summary::before{ transform:rotate(90deg); }
-  .kh-tree-leaf{ margin-left:16px; padding:9px 12px; border-top:1px solid var(--border); display:grid; grid-template-columns:minmax(180px,1fr) 90px 100px minmax(260px,auto); gap:10px; align-items:center; }
+  .kh-tree details[data-level="domain"]>summary{ background:var(--accent-soft); color:var(--accent-deep); font-weight:750; }
+  .kh-tree details[data-level="module"]>summary{ background:color-mix(in srgb,var(--accent-soft) 72%,var(--surface)); font-weight:700; }
+  .kh-tree details[data-level="knowledge"]>summary{ background:color-mix(in srgb,var(--accent-soft) 48%,var(--surface)); }
+  .kh-tree details[data-level="version"]>summary{ background:color-mix(in srgb,var(--accent-soft) 28%,var(--surface)); }
+  .kh-tree details[data-level="document"]>summary{ background:color-mix(in srgb,var(--surface-sunken) 55%,var(--surface)); font-weight:600; }
+  .kh-tree-leaf{ min-width:820px; margin-left:14px; padding:9px 12px; border-top:1px solid var(--border); display:grid; grid-template-columns:minmax(220px,1fr) 90px 100px 330px; gap:12px; align-items:center; background:var(--surface); }
   .kh-tree-leaf .row-actions{ display:flex; flex-wrap:nowrap; justify-content:flex-end; gap:6px; }
   .kh-tree-leaf .row-actions .btn{ white-space:nowrap; padding:6px 9px; }
   .kh-tree-meta{ font-size:11.5px; color:var(--ink-muted); }
-  .kh-toolbar{ padding:14px 18px; border-bottom:1px solid var(--border); }
-  .kh-toolbar .fbar-search{ min-width:230px; flex:1; max-width:420px; }
+  .kh-toolbar{ padding:10px 14px; border-bottom:1px solid var(--border); flex-wrap:nowrap; }
+  .kh-toolbar .fbar-search{ min-width:260px; flex:1; max-width:none; height:34px; }
+  .kh-toolbar .field-inline{ min-width:150px; }
+  .kh-toolbar select,.kh-toolbar .btn{ height:34px; }
+  .kh-toolbar-actions{ display:flex; align-items:flex-end; gap:8px; flex-shrink:0; }
   .kh-modal-card{ max-width:720px; max-height:88vh; overflow:auto; }
   .kh-modal-section{ border-top:1px solid var(--border); padding-top:14px; margin-top:14px; }
   .kh-modal-section h4{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); margin:0 0 10px; }
@@ -448,8 +461,8 @@
   .kh-detail-grid dt{ color:var(--ink-muted); font-weight:650; }
   .kh-detail-grid dd{ margin:0; overflow-wrap:anywhere; }
   .kh-empty{ padding:52px 20px; text-align:center; color:var(--ink-muted); }
-  @media(max-width:900px){ .kh-field,.kh-field.wide{grid-column:span 6}.kh-tree-leaf{grid-template-columns:1fr 90px}.kh-tree-leaf>.kh-tree-meta:nth-of-type(n+2){display:none} }
-  @media(max-width:620px){ .kh-field,.kh-field.wide{grid-column:1/-1}.kh-modal-grid{grid-template-columns:1fr}.kh-tree-leaf{grid-template-columns:1fr} }
+  @media(max-width:1000px){.kh-toolbar{flex-wrap:wrap}.kh-toolbar .fbar-search{flex-basis:100%}.kh-toolbar-actions{margin-left:auto}.kh-tree-leaf{grid-template-columns:minmax(220px,1fr) 80px 90px 330px}}
+  @media(max-width:700px){ .kh-form-grid{grid-template-columns:1fr}.kh-modal-grid{grid-template-columns:1fr}.kh-toolbar .field-inline{flex:1}.kh-toolbar-actions{width:100%;margin-left:0}.kh-tree-leaf{min-width:760px} }
 
   /* ---------- Permission-aware sidebar ---------- */
   .nav-item.disabled{ opacity:.38; pointer-events:none; cursor:not-allowed; }
@@ -666,7 +679,7 @@
       <div class="field"><label for="khEndpointName">Name</label><input id="khEndpointName"></div>
       <div class="field" style="grid-column:1/-1;"><label for="khEndpointUrl">URL</label><input id="khEndpointUrl"></div>
       <div class="field"><label for="khEndpointBodyMode">Body mode</label><input id="khEndpointBodyMode"></div>
-      <div class="field" style="grid-column:1/-1;"><label for="khEndpointHeaders">Headers (one Key: Value per line)</label><textarea id="khEndpointHeaders" rows="5"></textarea><div style="display:flex;gap:8px;margin-top:6px;"><button type="button" class="btn" id="khEndpointAddHeader">Add Header</button><button type="button" class="btn" id="khEndpointRemoveHeader">Remove Header</button></div></div>
+      <div class="field" style="grid-column:1/-1;"><label for="khEndpointHeaders">Headers (one Key: Value per line)</label><textarea id="khEndpointHeaders" rows="5"></textarea></div>
       <div class="field" style="grid-column:1/-1;"><label for="khEndpointBody">Request body</label><textarea id="khEndpointBody" rows="7"></textarea></div>
     </div>
     <div class="kh-modal-section" id="khEndpointRunResult" style="display:none;"></div>
@@ -674,9 +687,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="khMergeCompareModal"><div class="modal-card kh-modal-card"><h3 id="khMergeCompareTitle">Knowledge operation</h3><div class="modal-sub" id="khMergeCompareSub"></div><div class="auth-error" id="khMergeCompareError"></div><div class="kh-modal-grid"><div class="field"><label for="khOperationA">First item</label><select id="khOperationA"></select></div><div class="field"><label for="khOperationB">Second item</label><select id="khOperationB"></select></div></div><div class="kh-modal-section" id="khMergeCompareResult" style="display:none;"></div><div class="modal-actions"><button type="button" class="btn" id="khMergeCompareClose">Close</button><button type="button" class="btn btn-primary" id="khMergeCompareRun">Run</button></div></div></div>
-
-<div class="modal-overlay" id="khDiscoveryModal"><div class="modal-card kh-modal-card" style="max-width:900px;"><h3>Guided URL Knowledge Discovery</h3><div class="modal-sub">A server-side Playwright session captures only screens you review and confirm. Credentials remain in memory for authentication only.</div><div class="auth-error" id="khDiscoveryError"></div><div class="kh-modal-grid"><div class="field" style="grid-column:1/-1;"><label for="khDiscoveryUrl">URL</label><input id="khDiscoveryUrl" type="url" placeholder="https://application.example/"></div><div class="field"><label for="khDiscoveryAuth">Authentication</label><select id="khDiscoveryAuth"><option value="NONE">Public / None</option><option value="FORM">Username and password</option></select></div><div class="field"><label for="khDiscoveryUsername">Username</label><input id="khDiscoveryUsername" autocomplete="off"></div><div class="field"><label for="khDiscoveryPassword">Password</label><input id="khDiscoveryPassword" type="password" autocomplete="new-password"></div><div class="field"><label for="khDiscoveryStep">Step name</label><input id="khDiscoveryStep" placeholder="e.g. Login screen"></div><div class="field" style="grid-column:1/-1;"><label for="khDiscoveryNavigateUrl">Next page URL</label><div style="display:flex;gap:8px;"><input id="khDiscoveryNavigateUrl" type="url" placeholder="https://application.example/next" style="flex:1;"><button type="button" class="btn" id="khDiscoveryNavigate" disabled>Navigate</button></div></div></div><div class="kh-modal-section" id="khDiscoveryReview" style="display:none;"></div><div class="kh-modal-section"><h4>Confirmed Steps</h4><div id="khDiscoverySteps" class="muted-small">No confirmed screens.</div></div><div class="modal-actions"><button type="button" class="btn" id="khDiscoveryCancel">Cancel</button><button type="button" class="btn" id="khDiscoveryStart">Analyze Access</button><button type="button" class="btn" id="khDiscoveryCapture" disabled>Capture Current Screen</button><button type="button" class="btn" id="khDiscoveryConfirm" disabled>Confirm Step</button><button type="button" class="btn btn-primary" id="khDiscoverySave" disabled>Save Flow</button></div></div></div>
+<div class="modal-overlay" id="khDiscoveryModal"><div class="modal-card kh-modal-card" style="max-width:900px;"><h3>Guided URL Knowledge Discovery</h3><div class="modal-sub">A server-side Playwright session captures only screens you review and confirm. Credentials remain in memory for authentication only.</div><div class="auth-error" id="khDiscoveryError"></div><div class="kh-modal-grid"><div class="field" style="grid-column:1/-1;"><label for="khDiscoveryUrl">URL</label><input id="khDiscoveryUrl" type="url" placeholder="https://application.example/"></div><div class="field"><label for="khDiscoveryAuth">Authentication</label><select id="khDiscoveryAuth"><option value="NONE">Public / None</option><option value="FORM">Username and password</option></select></div><div class="field"><label for="khDiscoveryUsername">Username</label><input id="khDiscoveryUsername" autocomplete="off"></div><div class="field"><label for="khDiscoveryPassword">Password</label><input id="khDiscoveryPassword" type="password" autocomplete="new-password"></div><div class="field"><label for="khDiscoveryStep">Step name</label><input id="khDiscoveryStep" placeholder="e.g. Login screen"></div></div><div class="kh-modal-section" id="khDiscoveryReview" style="display:none;"></div><div class="kh-modal-section"><h4>Confirmed Steps</h4><div id="khDiscoverySteps" class="muted-small">No confirmed screens.</div></div><div class="modal-actions"><button type="button" class="btn" id="khDiscoveryCancel">Cancel</button><button type="button" class="btn" id="khDiscoveryStart">Analyze Access</button><button type="button" class="btn" id="khDiscoveryCapture" disabled>Capture Current Screen</button><button type="button" class="btn" id="khDiscoveryConfirm" disabled>Confirm Step</button><button type="button" class="btn btn-primary" id="khDiscoverySave" disabled>Save Flow</button></div></div></div>
 
 <!-- ============ MANUAL KNOWLEDGE UPLOAD MODALS ============ -->
 <div class="modal-overlay" id="khAddDomainModal">
@@ -685,6 +696,7 @@
     <div class="modal-sub">Create a Domain for Knowledge Hub uploads.</div>
     <div class="auth-error" id="khAddDomainError"></div>
     <div class="field"><label for="khAddDomainName">Domain name</label><input id="khAddDomainName" autocomplete="off" placeholder="Enter Domain name"></div>
+    <div class="field"><label for="khDeleteDomainSel">Existing Domains</label><div class="kh-control-pair"><select id="khDeleteDomainSel"></select><button type="button" class="btn btn-danger" id="khDeleteDomainBtn">Delete</button></div></div>
     <div class="modal-actions">
       <button type="button" class="btn" id="khAddDomainCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="khAddDomainSave">Create Domain</button>
@@ -698,6 +710,7 @@
     <div class="modal-sub" id="khAddModuleSub">Create a Module under the selected Domain.</div>
     <div class="auth-error" id="khAddModuleError"></div>
     <div class="field"><label for="khAddModuleName">Module name</label><input id="khAddModuleName" autocomplete="off" placeholder="Enter Module name"></div>
+    <div class="field"><label for="khDeleteModuleSel">Existing Modules</label><div class="kh-control-pair"><select id="khDeleteModuleSel"></select><button type="button" class="btn btn-danger" id="khDeleteModuleBtn">Delete</button></div></div>
     <div class="modal-actions">
       <button type="button" class="btn" id="khAddModuleCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="khAddModuleSave">Create Module</button>
@@ -731,6 +744,25 @@
     <div class="modal-actions">
       <button type="button" class="btn" id="newUserCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="createUserBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ QA AUTOMATION: IMPORT TEST CASES MODAL ============ -->
+<div class="modal-overlay" id="tcImportModal">
+  <div class="modal-card" style="max-width:480px;">
+    <h3>Import Test Cases (Excel)</h3>
+    <div class="modal-sub">Reuses the same Excel import format as the rest of QA AI Studio. Malformed rows are reported, never silently skipped.</div>
+    <div class="auth-error" id="tcImportError"></div>
+    <div class="field"><label for="tcImportDomain">Domain</label><input id="tcImportDomain" autocomplete="off"></div>
+    <div class="field"><label for="tcImportModule">Module</label><input id="tcImportModule" autocomplete="off"></div>
+    <div class="field"><label for="tcImportKnowledge">Knowledge name</label><input id="tcImportKnowledge" autocomplete="off"></div>
+    <div class="field"><label for="tcImportVersion">Version</label><input id="tcImportVersion" placeholder="1.0"></div>
+    <div class="field"><label for="tcImportFile">Excel file (.xlsx)</label><input id="tcImportFile" type="file" accept=".xlsx"></div>
+    <div id="tcImportSummary"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="tcImportCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="tcImportRun">Import</button>
     </div>
   </div>
 </div>
@@ -945,255 +977,279 @@
         </button>
         <div>
           <h1 class="page-title">QA Automation</h1>
-          <div class="page-sub">Declaration Management &middot; Trade Single Window</div>
+          <div class="page-sub">Automation Assets &middot; Scripts &middot; Execution &middot; Git</div>
         </div>
         <div class="topbar-spacer"></div>
-        <div class="env-chip"><span class="env-dot"></span>QA-UAT</div>
-        <button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5v14"/></svg>New Test Case</button>
       </div>
 
       <div class="tabstrip">
-        <button class="tab active" data-tab="auto-cases">Test Cases</button>
-        <button class="tab" data-tab="auto-log" id="tabAutoLog">Execution Log</button>
+        <button class="tab active" data-tab="auto-workspace">Workspace</button>
+        <button class="tab" data-tab="auto-cases">Test Cases</button>
+        <button class="tab" data-tab="auto-history" id="tabAutoLog">Execution History</button>
+        <button class="tab" data-tab="auto-git">Git Automation</button>
         <button class="tab" data-tab="auto-env">Environment Settings</button>
       </div>
 
       <div class="workspace">
-        <!-- Test Cases -->
-        <div class="panel active" id="auto-cases" style="gap:12px;">
+        <!-- ============ WORKSPACE (cross-scope landing page) ============ -->
+        <div class="panel active" id="auto-workspace" style="gap:12px;">
           <div class="filterbar">
-            <select><option>Domain: Trade Facilitation</option></select>
-            <select><option>Module: All Modules</option></select>
-            <div class="chip-filter">
-              <span class="chip active" data-chip="all">All (24)</span>
-              <span class="chip" data-chip="pass">Pass 12</span>
-              <span class="chip" data-chip="fail">Fail 3</span>
-              <span class="chip" data-chip="notrun">Not Run 9</span>
+            <select id="wsDomainFilter"><option value="">Domain: All</option></select>
+            <select id="wsModuleFilter"><option value="">Module: All</option></select>
+            <select id="wsTypeFilter">
+              <option value="">Framework: All</option>
+              <option value="Playwright">Playwright</option>
+              <option value="API">API</option>
+              <option value="None">Not automated</option>
+            </select>
+            <select id="wsStatusFilter">
+              <option value="">Status: All</option>
+              <option value="Manual">Manual</option>
+              <option value="Automated">Automated</option>
+            </select>
+            <div class="fbar-spacer"></div>
+            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="wsSearch" placeholder="Search automation assets…"></div>
+            <button class="btn" id="wsRefreshBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+          </div>
+          <div class="card">
+            <div class="table-scroll">
+              <table>
+                <thead><tr>
+                  <th style="width:70px;">TC #</th><th>Domain / Module / Knowledge</th><th style="width:110px;">Framework</th>
+                  <th style="width:100px;">Status</th><th style="width:100px;">Latest Result</th><th style="width:150px;">Latest Run</th>
+                  <th style="width:70px;text-align:right;">Actions</th>
+                </tr></thead>
+                <tbody id="wsTableBody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">Loading…</td></tr></tbody>
+              </table>
             </div>
+            <div class="pg-bar" id="wsPager"></div>
+          </div>
+        </div>
+
+        <!-- ============ TEST CASES / ASSETS ============ -->
+        <div class="panel" id="auto-cases" style="gap:12px;">
+          <div class="filterbar">
+            <select id="tcDomainSel"><option value="">Select Domain…</option></select>
+            <select id="tcModuleSel"><option value="">Select Module…</option></select>
+            <select id="tcKnowledgeSel"><option value="">Select Knowledge…</option></select>
             <div class="fbar-spacer"></div>
             <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="tcSearch" placeholder="Filter test cases…"></div>
-            <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Run Selected</button>
+            <button class="btn" id="tcImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Import (Excel)</button>
           </div>
 
           <div class="split">
             <div class="card">
               <div class="table-scroll">
                 <table>
-                  <thead><tr><th style="width:70px;">TC #</th><th>Scenario</th><th style="width:100px;">Type</th><th style="width:90px;">Result</th><th style="width:110px;">Script Source</th><th style="width:96px;text-align:right;">Actions</th></tr></thead>
-                  <tbody id="tcTable">
-                    <tr class="tc-row" data-tc="tc001">
-                      <td class="mono">TC001</td>
-                      <td class="cell-ellipsis" title="Submit a new goods declaration with valid HS code and duty auto-calculation">Submit new goods declaration, HS code valid</td>
-                      <td><span class="pill pill-neutral">Playwright</span></td>
-                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
-                      <td><span class="pill pill-notrun">AUTO</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                    <tr class="tc-row selected" data-tc="tc003">
-                      <td class="mono">TC003</td>
-                      <td class="cell-ellipsis" title="Initiate payment for an assessed declaration via the Payment Gateway API">Initiate payment for assessed declaration</td>
-                      <td><span class="pill pill-neutral">API</span></td>
-                      <td><span class="pill pill-fail"><span class="pill-dot"></span>Fail</span></td>
-                      <td><span class="pill pill-notrun">AUTO</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                    <tr class="tc-row" data-tc="tc007">
-                      <td class="mono">TC007</td>
-                      <td class="cell-ellipsis" title="Attempt login with an expired session token and confirm redirect to sign-in">Login with expired session token</td>
-                      <td><span class="pill pill-neutral">Playwright</span></td>
-                      <td><span class="pill pill-blocked"><span class="pill-dot"></span>Blocked</span></td>
-                      <td><span class="pill pill-notrun">MANUAL</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                    <tr class="tc-row" data-tc="tc012">
-                      <td class="mono">TC012</td>
-                      <td class="cell-ellipsis" title="Upload cargo manifest CSV and verify line-item count matches header total">Upload cargo manifest, verify totals</td>
-                      <td><span class="pill pill-neutral">Playwright</span></td>
-                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
-                      <td><span class="pill pill-notrun">AUTO</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                    <tr class="tc-row" data-tc="tc019">
-                      <td class="mono">TC019</td>
-                      <td class="cell-ellipsis" title="Verify tariff auto-calculation for a mixed-category shipment">Tariff auto-calculation, mixed category</td>
-                      <td><span class="pill pill-neutral">Playwright</span></td>
-                      <td><span class="pill pill-pass"><span class="pill-dot"></span>Pass</span></td>
-                      <td><span class="pill pill-notrun">AUTO</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                    <tr class="tc-row" data-tc="tc021">
-                      <td class="mono">TC021</td>
-                      <td class="cell-ellipsis" title="Tariff override requires supervisor approval before submission">Tariff override approval flow</td>
-                      <td><span class="pill pill-neutral">Playwright</span></td>
-                      <td><span class="pill pill-notrun">Not Run</span></td>
-                      <td><span class="pill pill-notrun">MANUAL</span></td>
-                      <td><div class="row-actions">
-                        <button data-tip="View Script"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                        <button data-tip="Execute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l14 8-14 8V4Z"/></svg></button>
-                        <button data-tip="Record Manually"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/></svg></button>
-                      </div></td>
-                    </tr>
-                  </tbody>
+                  <thead><tr><th style="width:70px;">TC #</th><th>Scenario</th><th style="width:100px;">Type</th><th style="width:90px;">Result</th><th style="width:88px;text-align:right;">Actions</th></tr></thead>
+                  <tbody id="tcTableBody"><tr><td colspan="5" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above to load test cases.</td></tr></tbody>
                 </table>
               </div>
               <div class="pg-bar" id="tcPager"></div>
             </div>
 
             <!-- Detail panel -->
-            <div class="card">
+            <div class="card" id="tcDetailCard" style="display:none;">
               <div class="detail-head">
-                <div class="tc-id" id="detailId">TC003</div>
-                <h3 id="detailTitle">Initiate payment for assessed declaration</h3>
-                <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">API</span><span class="pill pill-fail" id="detailResult"><span class="pill-dot"></span>Fail</span></div>
+                <div class="tc-id" id="detailId">—</div>
+                <h3 id="detailTitle">Select a test case</h3>
+                <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">—</span><span class="pill pill-notrun" id="detailResult">Not Run</span></div>
               </div>
               <div class="detail-tabs">
                 <button class="dtab active" data-dtab="d-script">Script</button>
-                <button class="dtab" data-dtab="d-request">Request / Response</button>
+                <button class="dtab" data-dtab="d-execute">Execute</button>
                 <button class="dtab" data-dtab="d-history">History</button>
               </div>
               <div class="detail-body">
                 <div class="detail-panel-view active" id="d-script">
-                  <div class="notice notice-warn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-                    <div><strong>Reference only.</strong> "Execute Against Real Server" always rebuilds this request from the original imported endpoint — it does not read this script. Edit the endpoint in <a href="#">Knowledge Hub → API Collection</a>, or use a <code>{{variable}}</code> for values you change often.</div>
+                  <div class="notice notice-warn" id="tcScriptNotice" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div id="tcScriptNoticeText"></div></div>
+                  <div class="field-label">Active source: <span class="pill pill-notrun" id="tcActiveSourcePill">AUTO</span></div>
+                  <div class="btn-row" style="margin:4px 0 8px;">
+                    <button class="btn" id="tcSetSourceAuto">Use AI-Generated Script</button>
+                    <button class="btn" id="tcSetSourceManual">Use Manually Recorded Script</button>
                   </div>
                   <div class="field-label">Automation Script</div>
-                  <pre class="code-block">def test_tc003_initiate_payment(session, env):
-    payload = {
-        "declaration_id": env["declaration_id"],
-        "amount": 15420.00,
-        "currency": "USD",
-        "signature": "{{payment_signature}}",
-    }
-    resp = session.post(env["base_url"] + "/payments/initiate", json=payload)
-    assert resp.status_code == 200, resp.text</pre>
+                  <textarea id="tcScriptEditor" class="code-block" style="width:100%;min-height:220px;font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
+                  <div class="auth-error" id="tcScriptError"></div>
                   <div class="btn-row">
-                    <button class="btn">Edit Script</button>
-                    <button class="btn btn-primary">Execute Against Real Server</button>
+                    <select id="tcGenerateTypeSel" style="max-width:150px;"><option value="Playwright">Playwright</option><option value="API">API</option></select>
+                    <button class="btn" id="tcGenerateBtn">Generate (AI)</button>
+                    <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
+                    <div class="fbar-spacer"></div>
+                    <button class="btn" id="tcValidateBtn">Validate</button>
+                    <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
                   </div>
+                  <div id="tcValidateResult"></div>
                 </div>
 
-                <div class="detail-panel-view" id="d-request">
-                  <div class="field-label">Request</div>
-                  <div class="kv"><dt>Method</dt><dd class="mono">POST</dd><dt>URL</dt><dd class="mono">https://api-uat.example-tsw.gov/payments/initiate</dd></div>
-                  <div class="field-label" style="margin-top:6px;">Headers</div>
-                  <pre class="code-block">Content-Type: application/json
-X-Signature: 8f2a1c9e4b7d0f3a6c5e...(stale)
-X-Client-Id: qa-automation-bot</pre>
-                  <div class="field-label">Body</div>
-                  <pre class="code-block">{
-  "declaration_id": "DCL-88213",
-  "amount": 15420.00,
-  "currency": "USD"
-}</pre>
-                  <div class="field-label" style="color:var(--danger);">Response — 400 Bad Request</div>
-                  <pre class="code-block">{
-  "error": "SIGNATURE_VALIDATION_FAILED",
-  "message": "Signature does not match computed value"
-}</pre>
+                <div class="detail-panel-view" id="d-execute">
+                  <div id="tcExecuteReadiness"></div>
+                  <div class="btn-row">
+                    <button class="btn btn-primary" id="tcExecuteBtn">Execute</button>
+                    <button class="btn btn-primary" id="tcExecuteApiBtn" style="display:none;">Execute Against Real Server</button>
+                    <button class="btn" id="tcCancelBtn" style="display:none; background:var(--danger); color:#fff; border-color:var(--danger);">Cancel Run</button>
+                  </div>
+                  <div id="tcRunLive" style="display:none;">
+                    <div class="kv" id="tcRunLiveKv"></div>
+                  </div>
+                  <div id="tcRunResult"></div>
                 </div>
 
                 <div class="detail-panel-view" id="d-history">
-                  <table>
-                    <thead><tr><th>When</th><th>Result</th><th>By</th></tr></thead>
-                    <tbody>
-                      <tr><td class="num">2 min ago</td><td><span class="pill pill-fail">Fail</span></td><td>Automation Bot</td></tr>
-                      <tr><td class="num">Yesterday</td><td><span class="pill pill-fail">Fail</span></td><td>Automation Bot</td></tr>
-                      <tr><td class="num">3 days ago</td><td><span class="pill pill-pass">Pass</span></td><td>A. Basit</td></tr>
-                    </tbody>
-                  </table>
+                  <div class="table-scroll">
+                    <table>
+                      <thead><tr><th>Started</th><th>Result</th><th>Duration</th><th>By</th><th style="text-align:right;">Actions</th></tr></thead>
+                      <tbody id="tcHistoryTableBody"><tr><td colspan="5" class="muted-small">No runs yet.</td></tr></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Execution Log -->
-        <div class="panel" id="auto-log">
-          <div class="log-shell">
-            <div class="fbar-search" style="width:260px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="execLogSearch" placeholder="Search execution log…"></div>
-            <div class="log-table-wrap">
+        <!-- ============ EXECUTION HISTORY (global) ============ -->
+        <div class="panel" id="auto-history" style="gap:12px;">
+          <div class="filterbar">
+            <select id="histDomainFilter"><option value="">Domain: All</option></select>
+            <select id="histModuleFilter"><option value="">Module: All</option></select>
+            <select id="histStatusFilter">
+              <option value="">Status: All</option>
+              <option value="Queued">Queued</option>
+              <option value="Running">Running</option>
+              <option value="Passed">Passed</option>
+              <option value="Failed">Failed</option>
+              <option value="Error">Error</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+            <div class="fbar-spacer"></div>
+            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="histSearch" placeholder="Search runs…"></div>
+            <button class="btn" id="histRefreshBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+          </div>
+          <div class="card">
+            <div class="table-scroll">
               <table>
-                <thead><tr><th style="width:150px;">Time</th><th style="width:70px;">TC #</th><th>Step</th><th style="width:110px;">Status</th></tr></thead>
-                <tbody id="execLogTableBody">
-                  <tr><td class="num">10:42:03.221</td><td class="mono">TC003</td><td>POST /payments/initiate</td><td><span class="pill pill-fail">Fail — 400</span></td></tr>
-                  <tr><td class="num">10:41:58.100</td><td class="mono">TC003</td><td>Resolve {{payment_signature}} from environment</td><td><span class="pill pill-pass">OK</span></td></tr>
-                  <tr><td class="num">10:38:12.884</td><td class="mono">TC001</td><td>Click "Submit Declaration" (data-testid)</td><td><span class="pill pill-pass">OK</span></td></tr>
-                  <tr><td class="num">10:38:10.045</td><td class="mono">TC001</td><td>Fill HS Code field (class fallback locator)</td><td><span class="pill pill-pass">OK</span></td></tr>
-                  <tr><td class="num">10:22:41.510</td><td class="mono">TC012</td><td>Upload manifest.csv</td><td><span class="pill pill-pass">OK</span></td></tr>
-                </tbody>
+                <thead><tr>
+                  <th style="width:100px;">Run ID</th><th style="width:70px;">TC #</th><th>Domain / Module</th><th style="width:100px;">Result</th>
+                  <th style="width:150px;">Started</th><th style="width:80px;">Duration</th><th style="width:110px;">Executed By</th><th style="width:150px;text-align:right;">Actions</th>
+                </tr></thead>
+                <tbody id="histTableBody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Loading…</td></tr></tbody>
               </table>
             </div>
-            <div class="console-drawer">
-              <div class="console-head"><span>Live Console</span><button class="icon-btn" style="width:26px;height:26px;border-color:#233049;color:#8B96AC;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></button></div>
-              <div class="console-body">
-<div class="dim">[10:42:03] starting step 6/6…</div>
-<div class="err">[10:42:03] AssertionError: expected 200, got 400 — SIGNATURE_VALIDATION_FAILED</div>
-<div class="dim">[10:42:03] run finished — 1 fail</div>
-<div class="ok">[10:38:13] run finished — 6/6 pass</div>
+            <div class="pg-bar" id="histPager"></div>
+          </div>
+          <div class="card" id="histDetailCard" style="display:none;">
+            <div class="card-head"><h3>Run Details</h3><button class="btn" id="histDetailClose" style="margin-left:auto;">Close</button></div>
+            <div class="card-body" id="histDetailBody"></div>
+          </div>
+        </div>
+
+        <!-- ============ GIT AUTOMATION ============ -->
+        <div class="panel" id="auto-git" style="gap:12px;">
+          <div class="env-grid">
+            <div class="card">
+              <div class="card-head"><h3>Repository</h3></div>
+              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+                <div class="field"><label for="gitRemoteUrl">Remote URL / local path</label><input id="gitRemoteUrl" placeholder="https://github.com/org/repo.git" autocomplete="off"></div>
+                <div class="field"><label for="gitBranch">Branch</label><input id="gitBranch" value="main" autocomplete="off"></div>
+                <div class="field"><label for="gitUsername">Username (optional)</label><input id="gitUsername" autocomplete="off"></div>
+                <div class="field"><label for="gitToken">Token / Password (optional)</label><input id="gitToken" type="password" autocomplete="new-password"></div>
+                <div class="btn-row">
+                  <button class="btn btn-primary" id="gitOpenBtn">Open / Clone</button>
+                  <button class="btn" id="gitStatusBtn">Refresh Status</button>
+                </div>
+                <div class="auth-error" id="gitError"></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Status</h3></div>
+              <div class="card-body" id="gitStatusBody"><div class="muted-small">Open a repository to see its status.</div></div>
+            </div>
+          </div>
+
+          <div class="env-grid">
+            <div class="card">
+              <div class="card-head"><h3>Commit</h3></div>
+              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+                <div id="gitChangedFiles" class="muted-small">No changed files loaded — refresh status first.</div>
+                <div class="field"><label for="gitCommitMsg">Commit message</label><textarea id="gitCommitMsg" rows="2"></textarea></div>
+                <div class="btn-row">
+                  <button class="btn" id="gitGenMsgBtn">Suggest Message (AI)</button>
+                  <button class="btn btn-primary" id="gitCommitBtn">Commit Selected Files</button>
+                  <button class="btn" id="gitPullBtn">Pull</button>
+                  <button class="btn" id="gitPushBtn">Push</button>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Merge / Compare / Conflicts</h3></div>
+              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+                <div class="field"><label for="gitMergeSource">Merge source branch/ref</label><input id="gitMergeSource" placeholder="origin/feature-branch"></div>
+                <button class="btn" id="gitMergeBtn">Merge</button>
+                <div style="display:flex; gap:8px;">
+                  <div class="field" style="flex:1;"><label for="gitCompareA">Compare — ref A</label><input id="gitCompareA" placeholder="HEAD~1"></div>
+                  <div class="field" style="flex:1;"><label for="gitCompareB">Compare — ref B</label><input id="gitCompareB" placeholder="HEAD"></div>
+                </div>
+                <button class="btn" id="gitCompareBtn">Compare</button>
+                <pre class="code-block" id="gitCompareResult" style="display:none;max-height:220px;overflow:auto;"></pre>
+                <button class="btn" id="gitConflictsBtn">Check Conflicts</button>
+                <div id="gitConflictsBody"></div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Environment Settings -->
-        <div class="panel" id="auto-env">
-          <div class="filterbar">
-            <div class="chip-filter">
-              <span class="chip active">QA-UAT</span>
-              <span class="chip">Staging</span>
-              <span class="chip">Production</span>
-            </div>
-            <div class="fbar-spacer"></div>
-            <button class="btn btn-primary"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5v14"/></svg>Add Variable</button>
-          </div>
+        <!-- ============ ENVIRONMENT SETTINGS ============ -->
+        <div class="panel" id="auto-env" style="gap:12px;">
           <div class="env-grid">
             <div class="card">
-              <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
-              <div class="var-table-wrap">
-                <table>
-                  <thead><tr><th>Variable</th><th>Value</th><th style="width:40px;"></th></tr></thead>
-                  <tbody>
-                    <tr><td class="var-name">base_url</td><td><input class="cell-input" value="https://api-uat.example-tsw.gov"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
-                    <tr><td class="var-name">declaration_id</td><td><input class="cell-input" value="DCL-88213"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
-                    <tr><td class="var-name">payment_signature</td><td><input class="cell-input" value="8f2a1c9e4b7d0f3a6c5e… (stale)" style="color:var(--danger);"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
-                    <tr><td class="var-name">client_id</td><td><input class="cell-input" value="qa-automation-bot"></td><td><button class="icon-btn" style="width:26px;height:26px;">✕</button></td></tr>
-                  </tbody>
-                </table>
+              <div class="card-head"><h3>Execution Configuration</h3><span style="font-size:11.5px;color:var(--ink-muted);">Applies to the next run — no need to regenerate scripts</span></div>
+              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+                <div class="field"><label for="envBaseUrl">Base URL</label><input id="envBaseUrl" placeholder="https://your-app.example"></div>
+                <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
+                <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+                <div style="display:flex; gap:8px;">
+                  <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
+                  <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
+                </div>
+                <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
+                <div id="envSecretHints" class="muted-small"></div>
+                <button class="btn btn-primary" id="envSaveBtn" style="align-self:flex-start;">Save Configuration</button>
               </div>
             </div>
             <div class="card">
-              <div class="card-head"><h3>Environment Details</h3></div>
-              <div class="card-body">
-                <div class="kv">
-                  <dt>Name</dt><dd>QA-UAT</dd>
-                  <dt>Base URL</dt><dd class="mono">api-uat.example-tsw.gov</dd>
-                  <dt>Auth Mode</dt><dd>Signed request (HMAC)</dd>
-                  <dt>Browser</dt><dd>Chromium (headless)</dd>
-                  <dt>Retry Policy</dt><dd>2 attempts, 1.5s backoff</dd>
-                  <dt>Last Verified</dt><dd class="num">Today, 09:14</dd>
+              <div class="card-head"><h3>API Execution Settings</h3></div>
+              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+                <div class="field"><label for="envApiAuthType">Auth type</label><select id="envApiAuthType"><option value="None">None</option><option value="Bearer Token">Bearer Token</option><option value="Basic Auth">Basic Auth</option><option value="API Key Header">Custom Header</option></select></div>
+                <div class="field"><label for="envApiAuthToken">Bearer token</label><input id="envApiAuthToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+                <div style="display:flex; gap:8px;">
+                  <div class="field" style="flex:1;"><label for="envApiHeaderName">Header name</label><input id="envApiHeaderName"></div>
+                  <div class="field" style="flex:1;"><label for="envApiHeaderValue">Header value</label><input id="envApiHeaderValue" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
                 </div>
+                <div style="display:flex; gap:8px;">
+                  <div class="field" style="flex:1;"><label for="envApiUsername">Basic — username</label><input id="envApiUsername" autocomplete="off"></div>
+                  <div class="field" style="flex:1;"><label for="envApiPassword">Basic — password</label><input id="envApiPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <div class="field" style="flex:1;"><label for="envApiTimeout">Request timeout (s)</label><input id="envApiTimeout" placeholder="30"></div>
+                  <div class="field" style="flex:1;"><label for="envApiBaseOverride">Base URL override</label><input id="envApiBaseOverride" placeholder="(optional)"></div>
+                </div>
+                <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="envApiVerifySsl" checked> Verify SSL certificates</label>
               </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
+            <div class="var-table-wrap">
+              <table>
+                <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+                <tbody id="envVarsTableBody"><tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="btn-row" style="padding:10px;">
+              <input id="envVarName" placeholder="Variable name" style="max-width:180px;">
+              <input id="envVarValue" placeholder="Value" style="max-width:220px;">
+              <button class="btn" id="envVarSaveBtn">Remember Variable</button>
             </div>
           </div>
         </div>
@@ -1227,11 +1283,7 @@ X-Client-Id: qa-automation-bot</pre>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="khSearch" placeholder="Search knowledge, tags, or source…"></div>
               <div class="field-inline"><label>Domain</label><select id="khDomainFilter"><option value="">All domains</option></select></div>
               <div class="field-inline"><label>Module</label><select id="khModuleFilter"><option value="">All modules</option></select></div>
-              <button type="button" class="btn" id="khRefreshBtn">Refresh</button>
-              <button type="button" class="btn" id="khExpandAllBtn">Expand All</button>
-              <button type="button" class="btn" id="khCollapseAllBtn">Collapse All</button>
-              <button type="button" class="btn" id="khMergeBtn">Merge Preview</button>
-              <button type="button" class="btn" id="khCompareBtn">Compare Versions</button>
+              <div class="kh-toolbar-actions"><button type="button" class="btn" id="khRefreshBtn">Refresh</button><button type="button" class="btn" id="khExpandAllBtn">Expand All</button><button type="button" class="btn" id="khCollapseAllBtn">Collapse All</button></div>
             </div>
             <div class="card-body"><div class="kh-tree" id="khTree"><div class="kh-empty">Loading knowledge hierarchy…</div></div></div>
           </div>
@@ -1250,12 +1302,12 @@ X-Client-Id: qa-automation-bot</pre>
                   <div class="kh-field wide"><label for="khUpName">Knowledge Name</label><input id="khUpName" placeholder="e.g. Payment Gateway SRS"></div>
                   <div class="kh-field"><label for="khUpVersion">Version</label><input id="khUpVersion" placeholder="1.0" value="1.0"></div>
                   <div class="kh-field"><label for="khUpDocTypeSel">Document Type</label><select id="khUpDocTypeSel"><option value="SRS">SRS</option><option value="CRF">CRF</option><option value="Test Case">Test Case</option><option value="SOP">SOP</option><option value="API Documentation">API Documentation</option><option value="Release Notes">Release Notes</option><option value="Technical Document">Technical Document</option><option value="Other">Other</option></select></div>
+                  <div class="kh-field"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Release Notes">Release Notes</option><option value="Test Cases">Test Cases</option><option value="SOP Documents">SOP Documents</option><option value="API Collection">API Collection</option><option value="URL">URL / Guided Discovery</option><option value="Images" disabled>Images (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Database Metadata" disabled>Database Metadata (unavailable)</option><option value="Git Repository" disabled>Git Repository (unavailable)</option></select></div>
                 </div>
               </section>
               <section class="kh-section">
                 <h4 class="kh-section-title">Source Selection</h4><div class="kh-section-help">Files and browser folder selection use the existing document upload pipeline. Other source types remain unavailable until their real processing paths exist.</div>
                 <div class="kh-source-actions">
-                  <div class="kh-field" style="min-width:240px;"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Release Notes">Release Notes</option><option value="Test Cases">Test Cases</option><option value="SOP Documents">SOP Documents</option><option value="API Collection">API Collection</option><option value="URL">URL / Guided Discovery</option><option value="Images" disabled>Images (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Database Metadata" disabled>Database Metadata (unavailable)</option><option value="Git Repository" disabled>Git Repository (unavailable)</option></select></div>
                   <input type="file" id="khUpHiddenFile" multiple accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
                   <input type="file" id="khUpHiddenFolder" multiple webkitdirectory directory accept=".pdf,.docx,.txt,.xlsx" style="display:none;">
                   <button type="button" class="btn btn-primary" id="khUpAddSourceBtn">Add Source</button>
@@ -1285,6 +1337,9 @@ X-Client-Id: qa-automation-bot</pre>
             <div class="card-head"><h3>AI Smart Upload</h3></div>
             <div class="card-body">
               <div class="auth-error" id="khSmartError"></div>
+              <section class="kh-section" id="khSmartSuggested" hidden>
+                <h4 class="kh-section-title">Suggested Knowledge Information</h4>
+                <div class="kh-form-grid">
               <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
                 <div style="flex:1;"><label for="khSmartDomainSel">Domain</label><select id="khSmartDomainSel" style="width:100%;"><option value="">Select Domain...</option></select></div>
                 <button type="button" class="btn" id="khSmartOpenAddDomainBtn" style="padding:0 12px; height:34px;">+</button>
@@ -1305,6 +1360,8 @@ X-Client-Id: qa-automation-bot</pre>
                 <option value="Technical Document">Technical Document</option>
                 <option value="Other">Other</option>
               </select></div>
+                </div>
+              </section>
               <div class="field">
                 <label for="khSmartSourceType">Source Type</label>
                 <select id="khSmartSourceType" style="width:220px; margin-bottom:8px;"><option value="Files">Files</option></select>
@@ -1325,7 +1382,7 @@ X-Client-Id: qa-automation-bot</pre>
               <div class="modal-actions" style="margin-top:12px;">
                 <button type="button" class="btn btn-primary" id="khSmartAnalyzeBtn">Analyze With AI</button>
               </div>
-              <div id="khSmartResults" style="display:none; margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+              <section class="kh-section" id="khSmartResults" hidden>
                 <h4>AI Analysis Summary &amp; Metadata Review</h4>
                 <div id="khSmartAnalysisList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;"></div>
                 <div class="field"><label for="khSmartSummary">Summary Override</label><textarea id="khSmartSummary" rows="3" style="width:100%; border:1px solid var(--border); border-radius:6px; padding:8px; font-family:inherit;"></textarea></div>
@@ -1334,7 +1391,7 @@ X-Client-Id: qa-automation-bot</pre>
                 <div class="modal-actions" style="margin-top:12px;">
                   <button type="button" class="btn btn-primary" id="khSmartUploadBtn">Confirm Upload</button>
                 </div>
-              </div>
+              </section>
               <div id="khSmartUploadResult"></div>
             </div>
           </div>
@@ -1580,39 +1637,9 @@ X-Client-Id: qa-automation-bot</pre>
     });
   });
 
-  // Test case row -> detail panel (demo data for 3 rows, others reuse TC003 shape)
-  var demo = {
-    tc001: { id:'TC001', title:'Submit new goods declaration, HS code valid', type:'Playwright', result:'pass', resultLabel:'Pass' },
-    tc003: { id:'TC003', title:'Initiate payment for assessed declaration', type:'API', result:'fail', resultLabel:'Fail' },
-    tc007: { id:'TC007', title:'Login with expired session token', type:'Playwright', result:'blocked', resultLabel:'Blocked' }
-  };
-  var detailId = document.getElementById('detailId');
-  var detailTitle = document.getElementById('detailTitle');
-  var detailType = document.getElementById('detailType');
-  var detailResult = document.getElementById('detailResult');
-
-  // Named so pagination can re-wire these clicks after every re-render —
-  // Test Cases is a "static" grid whose rows still get replaced in the
-  // DOM on each page turn, same as a live grid.
-  function wireTcRowClicks(){
-    document.querySelectorAll('.tc-row').forEach(function(row){
-      row.addEventListener('click', function(){
-        document.querySelectorAll('.tc-row').forEach(function(r){ r.classList.remove('selected'); });
-        row.classList.add('selected');
-        var key = row.getAttribute('data-tc');
-        var d = demo[key];
-        if(!d) return;
-        detailId.textContent = d.id;
-        detailTitle.textContent = d.title;
-        detailType.textContent = d.type;
-        detailResult.className = 'pill pill-' + d.result;
-        detailResult.innerHTML = '<span class="pill-dot"></span>' + d.resultLabel;
-      });
-    });
-  }
-  wireTcRowClicks();
-
-  // Detail sub-tabs
+  // Detail sub-tabs (generic — reused as-is by the real QA Automation
+  // Test Case detail panel added later in this file; matches on DOM
+  // structure only, not on any page-specific IDs).
   document.querySelectorAll('.dtab').forEach(function(dt){
     dt.addEventListener('click', function(){
       var group = dt.closest('.detail-body') ? dt.parentElement.parentElement : null;
@@ -1754,6 +1781,7 @@ X-Client-Id: qa-automation-bot</pre>
     if(hasPermission('knowledge', 'view')) loadKnowledgeHub();
     if(hasPermission('ai_assistant', 'view')) loadAiHistory();
     if(hasPermission('dashboard', 'view')) loadDashboard();
+    if(hasPermission('automation', 'view')) initAutomation();
   }
 
   function loadSession(){
@@ -1958,13 +1986,6 @@ X-Client-Id: qa-automation-bot</pre>
     return controller;
   }
 
-  // Static/demo grids — data captured once, pagination + search apply
-  // exactly like the live grids below. Test Cases re-wires its
-  // row-click-to-detail-panel behavior after every re-render, since
-  // pagination replaces the row DOM nodes just like a live grid would.
-  initStaticGrid('tcTable', 'tcSearch', 'tcPager', 6, wireTcRowClicks);
-  initStaticGrid('execLogTableBody', 'execLogSearch', null, 4);
-
   // ---- Users & Access (Settings) ----
   var RESOURCES = ['knowledge','qa_engineering','automation','ai_assistant','dashboard','settings','users'];
   var ACTIONS = ['view','create','edit','delete','execute'];
@@ -2019,6 +2040,993 @@ X-Client-Id: qa-automation-bot</pre>
     footer: document.getElementById('rolesPager'), colSpan: 5,
     emptyText: 'No roles yet.', onRendered: wireRoleRowActions,
   });
+
+  // ==================================================================
+  // ---- QA Automation ----
+  // Covers: Automation Workspace (cross-scope landing page), Test
+  // Cases (script management + AI generation + Execute + per-TC
+  // History), global Execution History, Git Automation, and
+  // Environment Settings. Every action here calls a REAL backend
+  // endpoint (Core/automation_web_repository.py via
+  // Web/routers/automation_router.py) — no fake/simulated data, no
+  // dead buttons. Server-side permissions (view/create/edit/delete/
+  // execute on the 'automation' resource) are the real enforcement;
+  // the disabled/hidden states below are just a UX convenience layered
+  // on top, matching the pattern already used for Users & Access.
+  // ==================================================================
+  var autoScopes = [];
+  var autoCurrentScope = { domain: '', module: '', knowledge_name: '' };
+  var autoTestCases = [];
+  var autoSelectedTc = null;
+  var autoPollTimer = null;
+  var autoCurrentRunUuid = null;
+
+  function autoCanCreate(){ return hasPermission('automation', 'create'); }
+  function autoCanEdit(){ return hasPermission('automation', 'edit'); }
+  function autoCanDelete(){ return hasPermission('automation', 'delete'); }
+  function autoCanExecute(){ return hasPermission('automation', 'execute'); }
+
+  function resultPillHtml(result, idAttr){
+    var idHtml = idAttr ? ' id="' + idAttr + '"' : '';
+    if(result === 'Pass') return '<span' + idHtml + ' class="pill pill-pass"><span class="pill-dot"></span>Pass</span>';
+    if(result === 'Fail') return '<span' + idHtml + ' class="pill pill-fail"><span class="pill-dot"></span>Fail</span>';
+    if(result === 'Blocked') return '<span' + idHtml + ' class="pill pill-blocked"><span class="pill-dot"></span>Blocked</span>';
+    return '<span' + idHtml + ' class="pill pill-notrun">Not Run</span>';
+  }
+
+  function runStatusPillHtml(status){
+    if(status === 'Passed') return '<span class="pill pill-pass"><span class="pill-dot"></span>Passed</span>';
+    if(status === 'Failed') return '<span class="pill pill-fail"><span class="pill-dot"></span>Failed</span>';
+    if(status === 'Error') return '<span class="pill pill-fail"><span class="pill-dot"></span>Error</span>';
+    if(status === 'Cancelled') return '<span class="pill pill-blocked"><span class="pill-dot"></span>Cancelled</span>';
+    if(status === 'Running') return '<span class="pill pill-neutral"><span class="pill-dot"></span>Running</span>';
+    if(status === 'Queued') return '<span class="pill pill-neutral"><span class="pill-dot"></span>Queued</span>';
+    return '<span class="pill pill-notrun">' + escapeHtml(status || '—') + '</span>';
+  }
+
+  function autoDurationLabel(seconds){
+    if(seconds === null || seconds === undefined) return '—';
+    var n = Number(seconds);
+    if(isNaN(n)) return '—';
+    return n.toFixed(1) + 's';
+  }
+
+  function uniqueVals(arr){
+    var seen = {}, out = [];
+    arr.forEach(function(v){
+      if(v && !seen[v]){ seen[v] = true; out.push(v); }
+    });
+    return out;
+  }
+
+  function fillSelect(sel, values, placeholder){
+    var current = sel.value;
+    sel.innerHTML = '<option value="">' + escapeHtml(placeholder) + '</option>' +
+      values.map(function(v){ return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>'; }).join('');
+    if(values.indexOf(current) !== -1) sel.value = current;
+  }
+
+  function debounce(fn, ms){
+    var t = null;
+    return function(){
+      var args = arguments;
+      clearTimeout(t);
+      t = setTimeout(function(){ fn.apply(null, args); }, ms);
+    };
+  }
+
+  // Fetches an authenticated binary resource (evidence screenshot)
+  // and hands back a blob: URL — plain <img src="/api/..."> can't
+  // carry the Bearer token, so this is the same pattern any
+  // authenticated-download image on this page would need.
+  function autoFetchBlobUrl(path){
+    return fetch(API_BASE + path, { headers: authState.token ? { 'Authorization': 'Bearer ' + authState.token } : {} })
+      .then(function(res){
+        if(!res.ok) throw new Error('Could not load evidence (' + res.status + ')');
+        return res.blob();
+      })
+      .then(function(blob){ return URL.createObjectURL(blob); });
+  }
+
+  // ---- Scopes (Domain / Module / Knowledge cascades) ----
+  function loadAutoScopes(){
+    return apiFetch('/api/automation/scope').then(function(data){
+      autoScopes = data.scopes || [];
+      var domains = uniqueVals(autoScopes.map(function(s){ return s.domain; }));
+      fillSelect(document.getElementById('wsDomainFilter'), domains, 'Domain: All');
+      fillSelect(document.getElementById('tcDomainSel'), domains, 'Select Domain…');
+      fillSelect(document.getElementById('histDomainFilter'), domains, 'Domain: All');
+      refreshWsModuleOptions();
+      refreshTcModuleOptions();
+      refreshHistModuleOptions();
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function refreshWsModuleOptions(){
+    var domain = document.getElementById('wsDomainFilter').value;
+    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
+    fillSelect(document.getElementById('wsModuleFilter'), modules, 'Module: All');
+  }
+  function refreshHistModuleOptions(){
+    var domain = document.getElementById('histDomainFilter').value;
+    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
+    fillSelect(document.getElementById('histModuleFilter'), modules, 'Module: All');
+  }
+  function refreshTcModuleOptions(){
+    var domain = document.getElementById('tcDomainSel').value;
+    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
+    fillSelect(document.getElementById('tcModuleSel'), modules, 'Select Module…');
+    refreshTcKnowledgeOptions();
+  }
+  function refreshTcKnowledgeOptions(){
+    var domain = document.getElementById('tcDomainSel').value;
+    var module = document.getElementById('tcModuleSel').value;
+    var names = uniqueVals(autoScopes.filter(function(s){
+      return (!domain || s.domain === domain) && (!module || s.module === module);
+    }).map(function(s){ return s.knowledge_name; }));
+    fillSelect(document.getElementById('tcKnowledgeSel'), names, 'Select Knowledge…');
+  }
+
+  // ---- Grid controllers ----
+  var wsController = createGridController({
+    name: 'auto-workspace', tbody: document.getElementById('wsTableBody'),
+    footer: document.getElementById('wsPager'), colSpan: 7,
+    emptyText: 'No automation assets match these filters.', onRendered: wireWsRowActions,
+  });
+  var tcController = createGridController({
+    name: 'auto-cases', tbody: document.getElementById('tcTableBody'),
+    searchInput: document.getElementById('tcSearch'),
+    footer: document.getElementById('tcPager'), colSpan: 5,
+    emptyText: 'No test cases in this scope.', onRendered: wireTcTableRowActions,
+  });
+  var histController = createGridController({
+    name: 'auto-history', tbody: document.getElementById('histTableBody'),
+    footer: document.getElementById('histPager'), colSpan: 8,
+    emptyText: 'No execution runs yet.', onRendered: wireHistRowActions,
+  });
+
+  function initAutomation(){
+    loadAutoScopes().then(function(){
+      loadWorkspace();
+      loadHistory();
+    });
+    loadEnvironment();
+  }
+
+  // ---- Workspace ----
+  function loadWorkspace(){
+    var params = new URLSearchParams();
+    var domain = document.getElementById('wsDomainFilter').value;
+    var module = document.getElementById('wsModuleFilter').value;
+    var type = document.getElementById('wsTypeFilter').value;
+    var status = document.getElementById('wsStatusFilter').value;
+    var q = document.getElementById('wsSearch').value.trim();
+    if(domain) params.set('domain', domain);
+    if(module) params.set('module', module);
+    if(type) params.set('automation_type', type);
+    if(status) params.set('status', status);
+    if(q) params.set('q', q);
+    params.set('limit', '200');
+    apiFetch('/api/automation/workspace?' + params.toString()).then(function(data){
+      renderWorkspace(data.test_cases || []);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function renderWorkspace(items){
+    var rows = items.map(function(tc){
+      var latest = tc.latest_run;
+      var scopeLabel = escapeHtml(tc.domain) + ' / ' + escapeHtml(tc.module) + ' / ' + escapeHtml(tc.knowledge_name);
+      var html =
+        '<tr data-tc-id="' + tc.id + '">' +
+          '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
+          '<td>' + scopeLabel + '<div class="muted-small">' + escapeHtml(tc.test_case || tc.scenario || '') + '</div></td>' +
+          '<td>' + escapeHtml(tc.automation_type || 'None') + '</td>' +
+          '<td>' + escapeHtml(tc.status || 'Manual') + '</td>' +
+          '<td>' + resultPillHtml(latest ? latest.outcome : null) + '</td>' +
+          '<td class="num">' + (latest ? formatDateTime(latest.started_at || latest.created_date) : '—') + '</td>' +
+          '<td style="text-align:right;"><button class="btn btn-sm ws-view-btn" data-tc-id="' + tc.id + '">View</button></td>' +
+        '</tr>';
+      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || '') + ' ' + tc.domain + ' ' + tc.module + ' ' + tc.knowledge_name).toLowerCase() };
+    });
+    wsController.setRows(rows);
+  }
+
+  function wireWsRowActions(body){
+    body.querySelectorAll('.ws-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
+        goToTestCaseFromWorkspace(tcId);
+      });
+    });
+  }
+
+  // Workspace rows only carry an id; jump to Test Cases, set the
+  // cascading scope from the test case's own domain/module/knowledge
+  // (fetched fresh — never trusted from stale client state), then
+  // select it once its list has loaded.
+  function goToTestCaseFromWorkspace(tcId){
+    apiFetch('/api/automation/test-cases/' + tcId).then(function(tc){
+      document.querySelector('.tab[data-tab="auto-cases"]').click();
+      document.getElementById('tcDomainSel').value = tc.domain;
+      refreshTcModuleOptions();
+      document.getElementById('tcModuleSel').value = tc.module;
+      refreshTcKnowledgeOptions();
+      document.getElementById('tcKnowledgeSel').value = tc.knowledge_name;
+      loadTestCases().then(function(){
+        selectTestCase(tc);
+      });
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  // ---- Test Cases ----
+  function loadTestCases(){
+    var domain = document.getElementById('tcDomainSel').value;
+    var module = document.getElementById('tcModuleSel').value;
+    var knowledge = document.getElementById('tcKnowledgeSel').value;
+    if(!domain || !module || !knowledge){
+      autoTestCases = [];
+      tcController.setRows([]);
+      return Promise.resolve();
+    }
+    var params = new URLSearchParams({ domain: domain, module: module, knowledge_name: knowledge });
+    return apiFetch('/api/automation/test-cases?' + params.toString()).then(function(data){
+      autoTestCases = data.test_cases || [];
+      renderTestCases(autoTestCases);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function renderTestCases(items){
+    var rows = items.map(function(tc){
+      var html =
+        '<tr data-tc-id="' + tc.id + '">' +
+          '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
+          '<td>' + escapeHtml(tc.test_case || tc.scenario || '') + '</td>' +
+          '<td>' + escapeHtml(tc.automation_type || 'None') + '</td>' +
+          '<td>' + resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result) + '</td>' +
+          '<td style="text-align:right;">' +
+            '<button class="btn btn-sm tc-view-btn" data-tc-id="' + tc.id + '">View</button>' +
+            (autoCanDelete() ? ' <button class="btn btn-sm tc-delete-btn" data-tc-id="' + tc.id + '" style="color:var(--danger);">Delete</button>' : '') +
+          '</td>' +
+        '</tr>';
+      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || '')).toLowerCase() };
+    });
+    tcController.setRows(rows);
+  }
+
+  function wireTcTableRowActions(body){
+    body.querySelectorAll('.tc-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
+        var tc = autoTestCases.find(function(t){ return t.id === tcId; });
+        if(tc) selectTestCase(tc);
+      });
+    });
+    body.querySelectorAll('.tc-delete-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
+        var tc = autoTestCases.find(function(t){ return t.id === tcId; });
+        confirmDelete('Delete test case?', (tc ? tc.tc_number + ' — ' : '') + 'This also removes its execution history association. This cannot be undone.', function(){
+          return apiFetch('/api/automation/test-cases/' + tcId, { method: 'DELETE' }).then(function(){
+            toast('Test case deleted.');
+            if(autoSelectedTc && autoSelectedTc.id === tcId){
+              autoSelectedTc = null;
+              document.getElementById('tcDetailCard').style.display = 'none';
+            }
+            return loadTestCases();
+          });
+        });
+      });
+    });
+  }
+
+  function selectTestCase(tc){
+    autoSelectedTc = tc;
+    stopAutoPoll();
+    document.getElementById('tcDetailCard').style.display = 'flex';
+    document.getElementById('detailId').textContent = tc.tc_number;
+    document.getElementById('detailTitle').textContent = tc.test_case || tc.scenario || '(untitled)';
+    document.getElementById('detailType').textContent = tc.automation_type && tc.automation_type !== 'None' ? tc.automation_type : 'Not automated';
+    document.getElementById('detailResult').outerHTML = resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result, 'detailResult');
+
+    var source = tc.active_script_source || 'AUTO';
+    document.getElementById('tcActiveSourcePill').textContent = source;
+    var editor = document.getElementById('tcScriptEditor');
+    editor.value = (source === 'MANUAL' ? tc.recorded_script : tc.automation_script) || '';
+    editor.disabled = !autoCanEdit();
+    document.getElementById('tcScriptError').textContent = '';
+    document.getElementById('tcValidateResult').innerHTML = '';
+
+    var notice = document.getElementById('tcScriptNotice');
+    if(tc.automation_type === 'API'){
+      notice.style.display = 'flex';
+      document.getElementById('tcScriptNoticeText').textContent =
+        'This is an API test case — the script editor below is for reference/documentation only. Execution uses the real imported API endpoint directly (see the Execute tab), never this script text.';
+    } else {
+      notice.style.display = 'none';
+    }
+
+    document.getElementById('tcSetSourceAuto').disabled = !autoCanEdit();
+    document.getElementById('tcSetSourceManual').disabled = !autoCanEdit();
+    document.getElementById('tcGenerateBtn').disabled = !autoCanCreate();
+    document.getElementById('tcSuggestTypeBtn').disabled = !autoCanCreate();
+    document.getElementById('tcSaveScriptBtn').disabled = !autoCanEdit();
+
+    var isApi = tc.automation_type === 'API';
+    document.getElementById('tcExecuteBtn').style.display = isApi ? 'none' : 'inline-flex';
+    document.getElementById('tcExecuteApiBtn').style.display = isApi ? 'inline-flex' : 'none';
+    document.getElementById('tcExecuteBtn').disabled = !autoCanExecute();
+    document.getElementById('tcExecuteApiBtn').disabled = !autoCanExecute();
+    document.getElementById('tcCancelBtn').style.display = 'none';
+    document.getElementById('tcRunLive').style.display = 'none';
+    document.getElementById('tcRunResult').innerHTML = '';
+
+    refreshExecuteReadiness();
+    loadTcHistory(tc.id);
+  }
+
+  function refreshExecuteReadiness(){
+    if(!autoSelectedTc) return;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/validate').then(function(data){
+      renderReadiness(document.getElementById('tcExecuteReadiness'), data);
+    }).catch(function(err){
+      document.getElementById('tcExecuteReadiness').innerHTML = '<div class="muted-small">' + escapeHtml(err.message) + '</div>';
+    });
+  }
+
+  function renderReadiness(el, data){
+    el.innerHTML =
+      '<div class="notice" style="background:' + (data.ready ? 'var(--success-soft)' : 'var(--warning-soft)') + ';border:1px solid ' + (data.ready ? 'var(--success)' : 'var(--warning)') + ';flex-direction:column;align-items:flex-start;">' +
+        '<strong>' + (data.ready ? 'Ready to execute' : 'Not ready yet') + '</strong>' +
+        data.checks.map(function(c){
+          return '<div style="font-size:12px;">' + (c.ok ? '✓' : '✗') + ' ' + escapeHtml(c.check.replace(/_/g, ' ')) + (c.detail ? ' — ' + escapeHtml(c.detail) : '') + '</div>';
+        }).join('') +
+      '</div>';
+  }
+
+  // ---- Script actions ----
+  document.getElementById('tcSaveScriptBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var text = document.getElementById('tcScriptEditor').value;
+    var source = autoSelectedTc.active_script_source || 'AUTO';
+    var path = '/api/automation/test-cases/' + autoSelectedTc.id + (source === 'MANUAL' ? '/recorded-script' : '/script');
+    document.getElementById('tcScriptError').textContent = '';
+    apiFetch(path, { method: 'PUT', body: JSON.stringify({ script_text: text }) }).then(function(data){
+      autoSelectedTc = data.test_case;
+      if(data.syntax_warning){
+        document.getElementById('tcScriptError').textContent = 'Saved, but with a syntax warning: ' + data.syntax_warning;
+      } else {
+        toast('Script saved.');
+      }
+      refreshExecuteReadiness();
+      loadTestCases();
+    }).catch(function(err){
+      document.getElementById('tcScriptError').textContent = err.message;
+    });
+  });
+
+  function setActiveScriptSource(source){
+    if(!autoSelectedTc) return;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {
+      method: 'PATCH', body: JSON.stringify({ source: source }),
+    }).then(function(tc){
+      selectTestCase(tc);
+      toast('Active script source set to ' + source + '.');
+    }).catch(function(err){ toast(err.message, true); });
+  }
+  document.getElementById('tcSetSourceAuto').addEventListener('click', function(){ setActiveScriptSource('AUTO'); });
+  document.getElementById('tcSetSourceManual').addEventListener('click', function(){ setActiveScriptSource('MANUAL'); });
+
+  document.getElementById('tcGenerateBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var type = document.getElementById('tcGenerateTypeSel').value;
+    var btn = document.getElementById('tcGenerateBtn');
+    btn.disabled = true;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/generate-automation', {
+      method: 'POST',
+      body: JSON.stringify({
+        automation_type: type, domain: autoSelectedTc.domain,
+        module: autoSelectedTc.module, knowledge_name: autoSelectedTc.knowledge_name,
+        version: autoSelectedTc.version || null,
+      }),
+    }).then(function(){
+      return apiFetch('/api/automation/test-cases/' + autoSelectedTc.id);
+    }).then(function(tc){
+      selectTestCase(tc);
+      loadTestCases();
+      toast('Script generated (AI).');
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = !autoCanCreate(); });
+  });
+
+  document.getElementById('tcSuggestTypeBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/suggest-type', { method: 'POST' }).then(function(data){
+      toast('AI suggests: ' + data.suggested_type + ' — ' + data.reason);
+      document.getElementById('tcGenerateTypeSel').value = data.suggested_type;
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  document.getElementById('tcValidateBtn').addEventListener('click', function(){
+    refreshExecuteReadiness();
+  });
+
+  // ---- Execute (Playwright — real background job) ----
+  function stopAutoPoll(){
+    if(autoPollTimer){ clearInterval(autoPollTimer); autoPollTimer = null; }
+    autoCurrentRunUuid = null;
+  }
+
+  function startAutoPoll(runUuid){
+    stopAutoPoll();
+    autoCurrentRunUuid = runUuid;
+    document.getElementById('tcExecuteBtn').disabled = true;
+    document.getElementById('tcCancelBtn').style.display = autoCanExecute() ? 'inline-flex' : 'none';
+    document.getElementById('tcRunLive').style.display = 'block';
+    document.getElementById('tcRunResult').innerHTML = '';
+    function poll(){
+      apiFetch('/api/automation/runs/' + runUuid).then(function(run){
+        renderLiveRun(run);
+        if(['Passed', 'Failed', 'Error', 'Cancelled'].indexOf(run.status) !== -1){
+          stopAutoPoll();
+          document.getElementById('tcExecuteBtn').disabled = !autoCanExecute();
+          document.getElementById('tcCancelBtn').style.display = 'none';
+          renderRunResult(document.getElementById('tcRunResult'), run);
+          if(autoSelectedTc) loadTcHistory(autoSelectedTc.id);
+          refreshExecuteReadiness();
+          loadTestCases();
+        }
+      }).catch(function(err){
+        stopAutoPoll();
+        toast(err.message, true);
+      });
+    }
+    poll();
+    autoPollTimer = setInterval(poll, 1500);
+  }
+
+  function renderLiveRun(run){
+    document.getElementById('tcRunLiveKv').innerHTML =
+      '<div>Run ID</div><div class="mono">' + escapeHtml(run.run_uuid) + '</div>' +
+      '<div>Test Case</div><div>' + escapeHtml(run.tc_number || '') + '</div>' +
+      '<div>Status</div><div>' + runStatusPillHtml(run.status) + '</div>' +
+      '<div>Started</div><div>' + formatDateTime(run.started_at) + '</div>' +
+      '<div>Progress</div><div class="muted-small">Running… this can take up to ~2 minutes for a real browser run.</div>';
+  }
+
+  function renderRunResult(el, run){
+    var html =
+      '<div class="kv">' +
+        '<div>Result</div><div>' + runStatusPillHtml(run.status) + '</div>' +
+        '<div>Started</div><div>' + formatDateTime(run.started_at) + '</div>' +
+        '<div>Finished</div><div>' + formatDateTime(run.finished_at) + '</div>' +
+        '<div>Duration</div><div>' + autoDurationLabel(run.duration_seconds) + '</div>' +
+        '<div>Exit Code</div><div>' + (run.return_code === null || run.return_code === undefined ? '—' : run.return_code) + '</div>' +
+        (run.error_message ? '<div>Error</div><div style="color:var(--danger);">' + escapeHtml(run.error_message) + '</div>' : '') +
+      '</div>';
+    if(run.stdout){
+      html += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">stdout</summary><pre class="code-block" style="max-height:200px;overflow:auto;">' + escapeHtml(run.stdout) + '</pre></details>';
+    }
+    if(run.stderr){
+      html += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">stderr</summary><pre class="code-block" style="max-height:200px;overflow:auto;">' + escapeHtml(run.stderr) + '</pre></details>';
+    }
+    if(run.screenshot_path){
+      html += '<div style="margin-top:8px;"><div class="field-label">Failure Evidence</div><img id="evidenceImg-' + run.run_uuid + '" style="max-width:100%;border:1px solid var(--border);border-radius:6px;" alt="Failure screenshot"></div>';
+    }
+    el.innerHTML = html;
+    if(run.screenshot_path){
+      autoFetchBlobUrl('/api/automation/runs/' + run.run_uuid + '/evidence').then(function(url){
+        var img = document.getElementById('evidenceImg-' + run.run_uuid);
+        if(img) img.src = url;
+      }).catch(function(){ /* evidence genuinely unavailable — no fabricated image */ });
+    }
+  }
+
+  document.getElementById('tcExecuteBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute', { method: 'POST' }).then(function(job){
+      toast('Execution started (Run ' + job.run_uuid.slice(0, 8) + '…).');
+      startAutoPoll(job.run_uuid);
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  document.getElementById('tcCancelBtn').addEventListener('click', function(){
+    if(!autoCurrentRunUuid) return;
+    apiFetch('/api/automation/runs/' + autoCurrentRunUuid + '/cancel', { method: 'POST' }).then(function(){
+      toast('Cancel requested.');
+    }).catch(function(err){
+      // A genuine 409 ("nothing to cancel") surfaces here naturally —
+      // this button reflects real backend state, it never fakes success.
+      toast(err.message, true);
+    });
+  });
+
+  // ---- Execute (API — real HTTP request) ----
+  function runExecuteApi(){
+    if(!autoSelectedTc) return;
+    var btn = document.getElementById('tcExecuteApiBtn');
+    btn.disabled = true;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute-api', { method: 'POST' }).then(function(body){
+      if(!body.executed){
+        renderMissingApiVariables(body);
+      } else {
+        renderApiExecuteResult(body);
+        if(autoSelectedTc) loadTcHistory(autoSelectedTc.id);
+      }
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = !autoCanExecute(); });
+  }
+  document.getElementById('tcExecuteApiBtn').addEventListener('click', runExecuteApi);
+
+  function renderMissingApiVariables(body){
+    var el = document.getElementById('tcRunResult');
+    var vars = body.missing_variables || [];
+    el.innerHTML =
+      '<div class="notice notice-warn"><div>' +
+        '<strong>Missing {{variable}} values</strong>' +
+        '<div style="font-size:12.5px;margin-top:4px;">This endpoint (' + escapeHtml(body.endpoint.method) + ' ' + escapeHtml(body.endpoint.url) + ') needs the following values before it can be sent for real:</div>' +
+        vars.map(function(v){ return '<div style="margin-top:6px;"><input class="api-var-input" data-var="' + escapeHtml(v) + '" placeholder="' + escapeHtml(v) + '" style="max-width:260px;"></div>'; }).join('') +
+        '<button class="btn btn-primary" id="tcApiVarSaveBtn" style="margin-top:8px;">Save Values &amp; Retry</button>' +
+      '</div></div>';
+    document.getElementById('tcApiVarSaveBtn').addEventListener('click', function(){
+      var values = {};
+      el.querySelectorAll('.api-var-input').forEach(function(inp){ values[inp.getAttribute('data-var')] = inp.value; });
+      apiFetch('/api/automation/environment/variables', { method: 'POST', body: JSON.stringify({ variables: values }) }).then(function(){
+        runExecuteApi();
+      }).catch(function(err){ toast(err.message, true); });
+    });
+  }
+
+  function renderApiExecuteResult(body){
+    var r = body.result;
+    var verdictPill = r.auto_verdict === 'Pass' ? resultPillHtml('Pass')
+      : (r.error ? resultPillHtml('Fail') : '<span class="pill pill-notrun">Needs review</span>');
+    document.getElementById('tcRunResult').innerHTML =
+      '<div class="kv">' +
+        '<div>Endpoint</div><div class="mono">' + escapeHtml(body.endpoint.method) + ' ' + escapeHtml(body.endpoint.url) + '</div>' +
+        '<div>Status Code</div><div>' + (r.status_code === null ? '—' : r.status_code) + (r.expected_status ? ' (expected ' + r.expected_status + ')' : '') + '</div>' +
+        '<div>Elapsed</div><div>' + (r.elapsed_ms ? r.elapsed_ms + ' ms' : '—') + '</div>' +
+        '<div>Verdict</div><div>' + verdictPill + '</div>' +
+        (r.error ? '<div>Error</div><div style="color:var(--danger);">' + escapeHtml(r.error) + '</div>' : '') +
+      '</div>' +
+      '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Response Body</summary><pre class="code-block" style="max-height:220px;overflow:auto;">' + escapeHtml(r.response_body_text || '') + '</pre></details>';
+  }
+
+  // ---- Per-test-case History (Execute tab's History sub-tab) ----
+  function loadTcHistory(tcId){
+    apiFetch('/api/automation/runs?test_case_id=' + tcId + '&limit=50').then(function(data){
+      renderTcHistory(data.runs || []);
+    }).catch(function(){ /* non-fatal — history is secondary to the detail view */ });
+  }
+
+  function renderTcHistory(runs){
+    var body = document.getElementById('tcHistoryTableBody');
+    if(!runs.length){
+      body.innerHTML = '<tr><td colspan="5" class="muted-small">No runs yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = runs.map(function(r){
+      return '<tr>' +
+        '<td>' + formatDateTime(r.started_at || r.created_date) + '</td>' +
+        '<td>' + runStatusPillHtml(r.status) + '</td>' +
+        '<td>' + autoDurationLabel(r.duration_seconds) + '</td>' +
+        '<td>' + escapeHtml(r.executed_by_username || '—') + '</td>' +
+        '<td style="text-align:right;">' +
+          '<button class="btn btn-sm tc-hist-view-btn" data-run-id="' + r.run_uuid + '">View</button>' +
+          (autoCanExecute() ? ' <button class="btn btn-sm tc-hist-rerun-btn" data-run-id="' + r.run_uuid + '">Re-run</button>' : '') +
+        '</td>' +
+      '</tr>';
+    }).join('');
+    body.querySelectorAll('.tc-hist-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        document.querySelector('.dtab[data-dtab="d-execute"]').click();
+        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id')).then(function(run){
+          renderRunResult(document.getElementById('tcRunResult'), run);
+        }).catch(function(err){ toast(err.message, true); });
+      });
+    });
+    body.querySelectorAll('.tc-hist-rerun-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id') + '/rerun', { method: 'POST' }).then(function(job){
+          document.querySelector('.dtab[data-dtab="d-execute"]').click();
+          toast('Re-run started.');
+          startAutoPoll(job.run_uuid);
+        }).catch(function(err){ toast(err.message, true); });
+      });
+    });
+  }
+
+  // ---- Import Test Cases (Excel) ----
+  document.getElementById('tcImportBtn').addEventListener('click', function(){
+    document.getElementById('tcImportError').textContent = '';
+    document.getElementById('tcImportSummary').innerHTML = '';
+    document.getElementById('tcImportDomain').value = document.getElementById('tcDomainSel').value || '';
+    document.getElementById('tcImportModule').value = document.getElementById('tcModuleSel').value || '';
+    document.getElementById('tcImportKnowledge').value = document.getElementById('tcKnowledgeSel').value || '';
+    document.getElementById('tcImportVersion').value = '1.0';
+    document.getElementById('tcImportFile').value = '';
+    document.getElementById('tcImportModal').classList.add('show');
+  });
+  document.getElementById('tcImportCancel').addEventListener('click', function(){
+    document.getElementById('tcImportModal').classList.remove('show');
+  });
+  document.getElementById('tcImportRun').addEventListener('click', function(){
+    var domain = document.getElementById('tcImportDomain').value.trim();
+    var module = document.getElementById('tcImportModule').value.trim();
+    var knowledge = document.getElementById('tcImportKnowledge').value.trim();
+    var version = document.getElementById('tcImportVersion').value.trim();
+    var fileInput = document.getElementById('tcImportFile');
+    var errBox = document.getElementById('tcImportError');
+    errBox.textContent = '';
+    if(!domain || !module || !knowledge){ errBox.textContent = 'Domain, Module and Knowledge name are required.'; return; }
+    if(!fileInput.files.length){ errBox.textContent = 'Choose an .xlsx file to import.'; return; }
+    var formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('domain', domain);
+    formData.append('module', module);
+    formData.append('knowledge_name', knowledge);
+    if(version) formData.append('version', version);
+    var runBtn = document.getElementById('tcImportRun');
+    runBtn.disabled = true;
+    fetch(API_BASE + '/api/automation/test-cases/import', {
+      method: 'POST',
+      headers: authState.token ? { 'Authorization': 'Bearer ' + authState.token } : {},
+      body: formData,
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!res.ok) throw new Error(data.detail || ('Import failed (' + res.status + ')'));
+        return data;
+      });
+    }).then(function(result){
+      document.getElementById('tcImportSummary').innerHTML =
+        '<div class="muted-small">Imported ' + (result.imported || 0) + ', skipped ' + (result.skipped || 0) + '.' +
+        (result.errors && result.errors.length ? '<br>' + result.errors.map(escapeHtml).join('<br>') : '') + '</div>';
+      toast('Imported ' + (result.imported || 0) + ' test case(s).');
+      return loadAutoScopes().then(function(){
+        document.getElementById('tcDomainSel').value = domain;
+        refreshTcModuleOptions();
+        document.getElementById('tcModuleSel').value = module;
+        refreshTcKnowledgeOptions();
+        document.getElementById('tcKnowledgeSel').value = knowledge;
+        return loadTestCases();
+      });
+    }).then(function(){
+      document.getElementById('tcImportModal').classList.remove('show');
+    }).catch(function(err){
+      errBox.textContent = err.message;
+    }).then(function(){ runBtn.disabled = false; });
+  });
+
+  // ---- Global Execution History ----
+  function loadHistory(){
+    var params = new URLSearchParams();
+    var domain = document.getElementById('histDomainFilter').value;
+    var module = document.getElementById('histModuleFilter').value;
+    var status = document.getElementById('histStatusFilter').value;
+    var q = document.getElementById('histSearch').value.trim();
+    if(domain) params.set('domain', domain);
+    if(module) params.set('module', module);
+    if(status) params.set('status', status);
+    if(q) params.set('q', q);
+    params.set('limit', '200');
+    apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
+      renderHistory(data.runs || []);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function renderHistory(runs){
+    var rows = runs.map(function(r){
+      var html =
+        '<tr>' +
+          '<td class="mono">' + escapeHtml((r.run_uuid || '').slice(0, 8)) + '</td>' +
+          '<td class="mono">' + escapeHtml(r.tc_number || '') + '</td>' +
+          '<td>' + escapeHtml(r.domain || '') + ' / ' + escapeHtml(r.module || '') + '</td>' +
+          '<td>' + runStatusPillHtml(r.status) + '</td>' +
+          '<td class="num">' + formatDateTime(r.started_at || r.created_date) + '</td>' +
+          '<td class="num">' + autoDurationLabel(r.duration_seconds) + '</td>' +
+          '<td>' + escapeHtml(r.executed_by_username || '—') + '</td>' +
+          '<td style="text-align:right;">' +
+            '<button class="btn btn-sm hist-view-btn" data-run-id="' + r.run_uuid + '">View</button>' +
+            (autoCanExecute() ? ' <button class="btn btn-sm hist-rerun-btn" data-run-id="' + r.run_uuid + '">Re-run</button>' : '') +
+          '</td>' +
+        '</tr>';
+      return { html: html, search: (r.run_uuid + ' ' + r.tc_number + ' ' + r.domain + ' ' + r.module).toLowerCase() };
+    });
+    histController.setRows(rows);
+  }
+
+  function wireHistRowActions(body){
+    body.querySelectorAll('.hist-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id')).then(function(run){
+          document.getElementById('histDetailCard').style.display = 'block';
+          renderRunResult(document.getElementById('histDetailBody'), run);
+        }).catch(function(err){ toast(err.message, true); });
+      });
+    });
+    body.querySelectorAll('.hist-rerun-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id') + '/rerun', { method: 'POST' }).then(function(){
+          toast('Re-run started.');
+          loadHistory();
+        }).catch(function(err){ toast(err.message, true); });
+      });
+    });
+  }
+  document.getElementById('histDetailClose').addEventListener('click', function(){
+    document.getElementById('histDetailCard').style.display = 'none';
+  });
+
+  // ---- Git Automation ----
+  // Fields are re-read from their inputs on every call — a token is
+  // never cached in JS state beyond the current page session.
+  function gitPayloadBase(){
+    return {
+      remote_url: document.getElementById('gitRemoteUrl').value.trim(),
+      branch: document.getElementById('gitBranch').value.trim() || 'main',
+      username: document.getElementById('gitUsername').value.trim(),
+      token: document.getElementById('gitToken').value,
+    };
+  }
+  function gitShowError(msg){ document.getElementById('gitError').textContent = msg; }
+  function gitClearError(){ document.getElementById('gitError').textContent = ''; }
+
+  document.getElementById('gitOpenBtn').addEventListener('click', function(){
+    gitClearError();
+    var payload = gitPayloadBase();
+    if(!payload.remote_url){ gitShowError('Remote URL / local path is required.'); return; }
+    apiFetch('/api/automation/git/open', { method: 'POST', body: JSON.stringify(payload) }).then(function(data){
+      toast('Repository opened on branch ' + (data.active_branch || payload.branch) + '.');
+      refreshGitStatus();
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitStatusBtn').addEventListener('click', refreshGitStatus);
+  function refreshGitStatus(){
+    gitClearError();
+    var payload = gitPayloadBase();
+    if(!payload.remote_url){ gitShowError('Remote URL / local path is required.'); return; }
+    apiFetch('/api/automation/git/status', { method: 'POST', body: JSON.stringify(payload) }).then(function(status){
+      renderGitStatus(status);
+    }).catch(function(err){ gitShowError(err.message); });
+  }
+
+  function renderGitStatus(status){
+    document.getElementById('gitStatusBody').innerHTML =
+      '<div class="kv">' +
+        '<div>Branch</div><div class="mono">' + escapeHtml(status.branch) + '</div>' +
+        '<div>Dirty</div><div>' + (status.is_dirty ? 'Yes' : 'No') + '</div>' +
+        '<div>Staged</div><div>' + (status.staged.length || 0) + '</div>' +
+        '<div>Modified</div><div>' + (status.modified.length || 0) + '</div>' +
+        '<div>Untracked</div><div>' + (status.untracked.length || 0) + '</div>' +
+      '</div>';
+    var changed = (status.modified || []).concat(status.untracked || []);
+    var changedEl = document.getElementById('gitChangedFiles');
+    if(!changed.length){
+      changedEl.innerHTML = '<div class="muted-small">No changed files.</div>';
+    } else {
+      changedEl.innerHTML = uniqueVals(changed).map(function(f){
+        return '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" class="git-file-check" value="' + escapeHtml(f) + '" checked>' + escapeHtml(f) + '</label>';
+      }).join('');
+    }
+  }
+
+  document.getElementById('gitCommitBtn').addEventListener('click', function(){
+    gitClearError();
+    var files = Array.prototype.slice.call(document.querySelectorAll('.git-file-check:checked')).map(function(cb){ return cb.value; });
+    var message = document.getElementById('gitCommitMsg').value.trim();
+    if(!files.length){ gitShowError('Select at least one changed file to commit.'); return; }
+    if(!message){ gitShowError('A commit message is required.'); return; }
+    var payload = Object.assign(gitPayloadBase(), { files: files, message: message });
+    apiFetch('/api/automation/git/commit', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
+      if(!result.success){ gitShowError(result.error || 'Commit failed.'); return; }
+      toast('Committed ' + (result.commit_hash || '').slice(0, 8) + '.');
+      document.getElementById('gitCommitMsg').value = '';
+      refreshGitStatus();
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitPullBtn').addEventListener('click', function(){
+    gitClearError();
+    apiFetch('/api/automation/git/pull', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
+      if(!result.success){
+        if(result.conflict) renderGitConflicts(result.conflicted_files || []);
+        gitShowError(result.error || 'Pull failed.');
+        return;
+      }
+      toast('Pull complete.');
+      refreshGitStatus();
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitPushBtn').addEventListener('click', function(){
+    gitClearError();
+    apiFetch('/api/automation/git/push', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
+      if(!result.success){ gitShowError(result.error || 'Push failed.'); return; }
+      toast('Push complete.');
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitMergeBtn').addEventListener('click', function(){
+    gitClearError();
+    var source = document.getElementById('gitMergeSource').value.trim();
+    if(!source){ gitShowError('Merge source branch/ref is required.'); return; }
+    var payload = Object.assign(gitPayloadBase(), { source_branch: source });
+    apiFetch('/api/automation/git/merge', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
+      if(!result.success){
+        if(result.conflict) renderGitConflicts(result.conflicted_files || []);
+        gitShowError(result.error || 'Merge failed.');
+        return;
+      }
+      toast('Merge complete.');
+      refreshGitStatus();
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitCompareBtn').addEventListener('click', function(){
+    gitClearError();
+    var refA = document.getElementById('gitCompareA').value.trim();
+    var refB = document.getElementById('gitCompareB').value.trim();
+    if(!refA || !refB){ gitShowError('Both ref A and ref B are required.'); return; }
+    var payload = Object.assign(gitPayloadBase(), { ref_a: refA, ref_b: refB });
+    apiFetch('/api/automation/git/compare', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
+      var pre = document.getElementById('gitCompareResult');
+      pre.style.display = 'block';
+      pre.textContent = result.diff;
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  document.getElementById('gitConflictsBtn').addEventListener('click', function(){
+    gitClearError();
+    apiFetch('/api/automation/git/conflicts', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(data){
+      renderGitConflicts(data.conflicts || []);
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  function renderGitConflicts(files){
+    var el = document.getElementById('gitConflictsBody');
+    if(!files.length){ el.innerHTML = '<div class="muted-small">No conflicts.</div>'; return; }
+    el.innerHTML = files.map(function(f){
+      return '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:4px;">' +
+        '<span class="mono">' + escapeHtml(f) + '</span>' +
+        '<button class="btn btn-sm git-resolve-btn" data-file="' + escapeHtml(f) + '" data-strategy="ours">Keep Ours</button>' +
+        '<button class="btn btn-sm git-resolve-btn" data-file="' + escapeHtml(f) + '" data-strategy="theirs">Keep Theirs</button>' +
+      '</div>';
+    }).join('');
+    el.querySelectorAll('.git-resolve-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var payload = Object.assign(gitPayloadBase(), { file_path: btn.getAttribute('data-file'), strategy: btn.getAttribute('data-strategy') });
+        apiFetch('/api/automation/git/resolve-conflict', { method: 'POST', body: JSON.stringify(payload) }).then(function(){
+          toast('Resolved ' + payload.file_path + ' (' + payload.strategy + ').');
+          return apiFetch('/api/automation/git/conflicts', { method: 'POST', body: JSON.stringify(gitPayloadBase()) });
+        }).then(function(data){
+          renderGitConflicts(data.conflicts || []);
+          refreshGitStatus();
+        }).catch(function(err){ gitShowError(err.message); });
+      });
+    });
+  }
+
+  document.getElementById('gitGenMsgBtn').addEventListener('click', function(){
+    gitClearError();
+    apiFetch('/api/automation/git/generate-commit-message', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
+      if(!result.success){ gitShowError(result.error || 'Could not generate a message.'); return; }
+      document.getElementById('gitCommitMsg').value = result.message;
+    }).catch(function(err){ gitShowError(err.message); });
+  });
+
+  // ---- Environment Settings ----
+  function loadEnvironment(){
+    apiFetch('/api/automation/environment').then(function(env){
+      document.getElementById('envBaseUrl').value = env.base_url || '';
+      document.getElementById('envUsername').value = env.username || '';
+      document.getElementById('envPassword').value = '';
+      document.getElementById('envSlowMo').value = env.slow_mo_ms || '';
+      document.getElementById('envTimeout').value = env.default_timeout_ms || '';
+      document.getElementById('envNotes').value = env.notes || '';
+      document.getElementById('envApiAuthType').value = env.api_auth_type || 'None';
+      document.getElementById('envApiAuthToken').value = '';
+      document.getElementById('envApiHeaderName').value = env.api_auth_header_name || '';
+      document.getElementById('envApiHeaderValue').value = '';
+      document.getElementById('envApiUsername').value = env.api_username || '';
+      document.getElementById('envApiPassword').value = '';
+      document.getElementById('envApiTimeout').value = env.api_timeout_seconds || '';
+      document.getElementById('envApiBaseOverride').value = env.api_base_url_override || '';
+      document.getElementById('envApiVerifySsl').checked = env.api_verify_ssl !== false;
+
+      var hints = [];
+      if(env.password_is_set) hints.push('Password is set (unchanged unless you type a new one).');
+      if(env.api_auth_token_is_set) hints.push('Bearer token is set (unchanged unless you type a new one).');
+      if(env.api_auth_header_value_is_set) hints.push('Custom header value is set (unchanged unless you type a new one).');
+      if(env.api_password_is_set) hints.push('Basic auth password is set (unchanged unless you type a new one).');
+      document.getElementById('envSecretHints').textContent = hints.join(' ');
+
+      var canEdit = autoCanEdit();
+      ['envBaseUrl','envUsername','envPassword','envSlowMo','envTimeout','envNotes',
+       'envApiAuthType','envApiAuthToken','envApiHeaderName','envApiHeaderValue',
+       'envApiUsername','envApiPassword','envApiTimeout','envApiBaseOverride','envApiVerifySsl',
+       'envSaveBtn','envVarName','envVarValue','envVarSaveBtn'].forEach(function(id){
+        document.getElementById(id).disabled = !canEdit;
+      });
+
+      renderEnvVariables(env.api_variables || {});
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function renderEnvVariables(vars){
+    var body = document.getElementById('envVarsTableBody');
+    var names = Object.keys(vars);
+    if(!names.length){
+      body.innerHTML = '<tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = names.map(function(name){
+      return '<tr><td class="mono">' + escapeHtml(name) + '</td><td>' + escapeHtml(vars[name]) + '</td></tr>';
+    }).join('');
+  }
+
+  document.getElementById('envSaveBtn').addEventListener('click', function(){
+    var payload = {
+      base_url: document.getElementById('envBaseUrl').value,
+      username: document.getElementById('envUsername').value,
+      notes: document.getElementById('envNotes').value,
+      slow_mo_ms: document.getElementById('envSlowMo').value,
+      default_timeout_ms: document.getElementById('envTimeout').value,
+      api_auth_type: document.getElementById('envApiAuthType').value,
+      api_auth_header_name: document.getElementById('envApiHeaderName').value,
+      api_username: document.getElementById('envApiUsername').value,
+      api_timeout_seconds: document.getElementById('envApiTimeout').value,
+      api_base_url_override: document.getElementById('envApiBaseOverride').value,
+      api_verify_ssl: document.getElementById('envApiVerifySsl').checked,
+    };
+    // Secret fields: only sent if the operator actually typed something —
+    // an empty/untouched secret field must never overwrite what's stored.
+    var pw = document.getElementById('envPassword').value;
+    if(pw) payload.password = pw;
+    var tok = document.getElementById('envApiAuthToken').value;
+    if(tok) payload.api_auth_token = tok;
+    var hv = document.getElementById('envApiHeaderValue').value;
+    if(hv) payload.api_auth_header_value = hv;
+    var apw = document.getElementById('envApiPassword').value;
+    if(apw) payload.api_password = apw;
+
+    apiFetch('/api/automation/environment', { method: 'PUT', body: JSON.stringify(payload) }).then(function(){
+      toast('Environment settings saved.');
+      loadEnvironment();
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  document.getElementById('envVarSaveBtn').addEventListener('click', function(){
+    var name = document.getElementById('envVarName').value.trim();
+    var value = document.getElementById('envVarValue').value;
+    if(!name){ toast('Variable name is required.', true); return; }
+    apiFetch('/api/automation/environment/variables', { method: 'POST', body: JSON.stringify({ variables: { [name]: value } }) }).then(function(){
+      document.getElementById('envVarName').value = '';
+      document.getElementById('envVarValue').value = '';
+      toast('Variable remembered.');
+      loadEnvironment();
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  // ---- Filter / cascade wiring ----
+  document.getElementById('wsDomainFilter').addEventListener('change', function(){ refreshWsModuleOptions(); loadWorkspace(); });
+  document.getElementById('wsModuleFilter').addEventListener('change', loadWorkspace);
+  document.getElementById('wsTypeFilter').addEventListener('change', loadWorkspace);
+  document.getElementById('wsStatusFilter').addEventListener('change', loadWorkspace);
+  document.getElementById('wsSearch').addEventListener('input', debounce(loadWorkspace, 350));
+  document.getElementById('wsRefreshBtn').addEventListener('click', function(){ loadAutoScopes().then(loadWorkspace); });
+
+  document.getElementById('tcDomainSel').addEventListener('change', function(){ refreshTcModuleOptions(); loadTestCases(); });
+  document.getElementById('tcModuleSel').addEventListener('change', function(){ refreshTcKnowledgeOptions(); loadTestCases(); });
+  document.getElementById('tcKnowledgeSel').addEventListener('change', loadTestCases);
+
+  document.getElementById('histDomainFilter').addEventListener('change', function(){ refreshHistModuleOptions(); loadHistory(); });
+  document.getElementById('histModuleFilter').addEventListener('change', loadHistory);
+  document.getElementById('histStatusFilter').addEventListener('change', loadHistory);
+  document.getElementById('histSearch').addEventListener('input', debounce(loadHistory, 350));
+  document.getElementById('histRefreshBtn').addEventListener('click', loadHistory);
+
   // ---- Knowledge Hub (Milestone 1) ----
   var khCache = [];
   var khDomains = [];
@@ -2033,8 +3041,19 @@ X-Client-Id: qa-automation-bot</pre>
       renderKnowledgeItems(khCache);
       populateKhDomainFilter(khDomains);
       populateKhDomainList(khDomains);
+      var moduleLoads=[];
+      var uploadDomain=document.getElementById('khUpDomainSel').value;
+      var smartDomain=document.getElementById('khSmartDomainSel').value;
+      if(uploadDomain)moduleLoads.push(loadKhModulesInto(document.getElementById('khUpModuleSel'),uploadDomain,document.getElementById('khUpModuleSel').value));
+      if(smartDomain)moduleLoads.push(loadKhModulesInto(document.getElementById('khSmartModuleSel'),smartDomain,document.getElementById('khSmartModuleSel').value));
+      return Promise.all(moduleLoads);
     }).catch(function(err){ toast(err.message, true); });
   }
+
+  function enterManageKnowledge(){return loadKnowledgeHub();}
+  function enterManualUpload(){return loadKnowledgeHub();}
+  function enterSmartUpload(){khSmartAnalyses={};khSmartSources.forEach(function(source){source.status='Pending';source.message='Ready for analysis';});resetKhSmartReview();renderKhSmartSources();return loadKnowledgeHub();}
+  function enterKnowledgeHub(){var active=document.querySelector('[data-page-content="knowledge"] .tab.active');var target=active&&active.getAttribute('data-tab');if(target==='kh-upload')return enterManualUpload();if(target==='kh-smart')return enterSmartUpload();return enterManageKnowledge();}
 
   function populateKhDomainFilter(domains){
     var sel = document.getElementById('khDomainFilter');
@@ -2130,7 +3149,7 @@ X-Client-Id: qa-automation-bot</pre>
       grouped[domain][module][name][version][type] = grouped[domain][module][name][version][type] || [];
       grouped[domain][module][name][version][type].push(item);
     });
-    function node(label, children, open){ return '<details' + (open ? ' open' : '') + '><summary>' + escapeHtml(label) + '</summary>' + children + '</details>'; }
+    function node(label, children, open, level){ return '<details data-level="' + escapeHtml(level || 'structured') + '"' + (open ? ' open' : '') + '><summary>' + escapeHtml(label) + '</summary>' + children + '</details>'; }
     var html = '';
     Object.keys(grouped).sort().forEach(function(domain){
       var moduleHtml = '';
@@ -2144,19 +3163,19 @@ X-Client-Id: qa-automation-bot</pre>
               var leaves = grouped[domain][module][name][version][type].map(function(item){
                 var sourceName = item.source_type === 'API_COLLECTION' ? 'Imported API Collection' : (item.file_name || 'Unnamed source');
                 var leaf='<div class="kh-tree-leaf"><div class="kh-source-name" title="' + escapeHtml(sourceName) + '"><strong>' + escapeHtml(sourceName) + '</strong><div class="kh-tree-meta">Updated ' + escapeHtml(fmtDate(item.modified_date)) + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button type="button" class="btn" title="View details" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button type="button" class="btn" title="Edit knowledge" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button type="button" class="btn" title="View versions" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button type="button" class="btn" style="color:var(--danger);" title="Delete knowledge" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
-                (item.api_collections||[]).forEach(function(collection){leaf+=node('API Collection · '+collection.name,(collection.endpoints||[]).map(function(endpoint){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml((endpoint.method||'GET').toUpperCase())+' · '+escapeHtml(endpoint.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(endpoint.folder_path||'Root')+' · '+escapeHtml(endpoint.url||'Unresolved URL')+'</div></div><div></div><div class="kh-tree-meta">Endpoint</div><div class="row-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+endpoint.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+endpoint.id+'">Run Now</button></div></div>';}).join(''),!!query);});
+                (item.api_collections||[]).forEach(function(collection){leaf+=node('API Collection · '+collection.name,(collection.endpoints||[]).map(function(endpoint){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml((endpoint.method||'GET').toUpperCase())+' · '+escapeHtml(endpoint.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(endpoint.folder_path||'Root')+' · '+escapeHtml(endpoint.url||'Unresolved URL')+'</div></div><div></div><div class="kh-tree-meta">Endpoint</div><div class="row-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+endpoint.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+endpoint.id+'">Run Now</button></div></div>';}).join(''),!!query,'structured');});
                 (item.captured_flows||[]).forEach(function(flow){var steps=(flow.steps||[]).map(function(step){var elements=(step.elements||[]).map(function(element){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml(element.name||element.element_type||'Control')+'</strong><div class="kh-tree-meta" title="'+escapeHtml(element.locator||'')+'">'+escapeHtml(element.locator_strategy||'locator')+' · '+escapeHtml(element.locator||'—')+'</div></div><div></div><div class="kh-tree-meta">Control</div><div></div></div>';}).join('');return node((step.step_order||'')+' · '+(step.step_name||step.page_name||'Step'),elements,!!query);}).join('');leaf+=node('Captured Flow · '+(flow.business_process_name||'Process')+' / '+(flow.variant_name||'Variant'),steps,!!query);});
                 return leaf;
               }).join('');
-              typeHtml += node(type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query);
+              typeHtml += node(type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query, 'document');
             });
-            versionHtml += node('Version ' + version, typeHtml, !!query);
+            versionHtml += node('Version ' + version, typeHtml, !!query, 'version');
           });
-          nameHtml += node(name, versionHtml, !!query);
+          nameHtml += node(name, versionHtml, !!query, 'knowledge');
         });
-        moduleHtml += node(module, nameHtml, !!query);
+        moduleHtml += node(module, nameHtml, !!query, 'module');
       });
-      html += node(domain, moduleHtml, true);
+      html += node(domain, moduleHtml, true, 'domain');
     });
     tree.innerHTML = html;
     wireKhRowActions(tree);
@@ -2244,8 +3263,6 @@ X-Client-Id: qa-automation-bot</pre>
     apiFetch('/api/knowledge/api-endpoints/'+id+'/run',{method:'POST',body:JSON.stringify({})}).then(function(result){var request=result.request||{};document.getElementById('khEndpointRunResult').innerHTML='<h4>Execution Result</h4><dl class="kh-detail-grid"><dt>Request</dt><dd>'+escapeHtml((request.method||'')+' '+(request.url||''))+'</dd><dt>Status</dt><dd>'+escapeHtml(result.status_code==null?'No response':result.status_code)+'</dd><dt>Duration</dt><dd>'+escapeHtml(result.elapsed_ms==null?'—':result.elapsed_ms+' ms')+'</dd><dt>Error</dt><dd>'+escapeHtml(result.error||'—')+'</dd><dt>Response</dt><dd><pre style="white-space:pre-wrap;max-height:260px;overflow:auto;">'+escapeHtml(result.response_body_text||'—')+'</pre></dd></dl>';}).catch(function(err){document.getElementById('khEndpointRunResult').innerHTML='<div class="auth-error show">'+escapeHtml(err.message)+'</div>';});
   }
   document.getElementById('khEndpointCancel').addEventListener('click',function(){document.getElementById('khEndpointModal').classList.remove('show');});
-  document.getElementById('khEndpointAddHeader').addEventListener('click',function(){var input=document.getElementById('khEndpointHeaders');input.value+=(input.value&&!input.value.endsWith('\n')?'\n':'')+'Header-Name: value';input.focus();input.setSelectionRange(input.value.length-5,input.value.length);});
-  document.getElementById('khEndpointRemoveHeader').addEventListener('click',function(){var input=document.getElementById('khEndpointHeaders'),start=input.value.lastIndexOf('\n',Math.max(0,input.selectionStart-1))+1,end=input.value.indexOf('\n',input.selectionEnd);if(end<0)end=input.value.length;input.value=input.value.slice(0,start)+input.value.slice(end+(end<input.value.length?1:0));input.focus();});
   document.getElementById('khEndpointRun').addEventListener('click',function(){if(khEndpointId)runKhEndpoint(khEndpointId);});
   document.getElementById('khEndpointSave').addEventListener('click',function(){var button=this,error=document.getElementById('khEndpointError'),payload={method:document.getElementById('khEndpointMethod').value,name:document.getElementById('khEndpointName').value.trim(),url_raw:document.getElementById('khEndpointUrl').value.trim(),url_resolved:document.getElementById('khEndpointUrl').value.trim(),headers:endpointHeadersFromText(document.getElementById('khEndpointHeaders').value),body_mode:document.getElementById('khEndpointBodyMode').value.trim(),body_raw:document.getElementById('khEndpointBody').value};if(!payload.name||!payload.url_raw){error.textContent='Name and URL are required.';error.classList.add('show');return;}button.disabled=true;apiFetch('/api/knowledge/api-endpoints/'+khEndpointId,{method:'PATCH',body:JSON.stringify(payload)}).then(function(){document.getElementById('khEndpointModal').classList.remove('show');loadKnowledgeHub();toast('Endpoint saved.');}).catch(function(err){error.textContent=err.message;error.classList.add('show');}).finally(function(){button.disabled=false;});});
 
@@ -2261,7 +3278,7 @@ X-Client-Id: qa-automation-bot</pre>
       document.getElementById('khVersionsBody').innerHTML = versions.length ? versions.map(function(version){
         return '<tr><td><strong>' + escapeHtml(version.version) + '</strong><div class="muted-small">'+escapeHtml(version.source||'—')+' · '+escapeHtml(version.status||'—')+'</div></td><td>' + escapeHtml(fmtDate(version.created_date)) + '</td><td class="mono" title="' + escapeHtml(version.sha256 || '') + '">' + escapeHtml((version.sha256 || '').slice(0,12) || '—') + '</td><td>' + escapeHtml(version.storage_location || '—') + '</td><td><button class="btn" data-version-details="' + version.knowledge_id + '">View Details</button></td></tr>';
       }).join('') : '<tr><td colspan="5" class="kh-empty">No version records found.</td></tr>';
-      document.querySelectorAll('[data-version-details]').forEach(function(button){ button.addEventListener('click',function(){ document.getElementById('khVersionsModal').classList.remove('show'); openKhDetails(id); }); });
+      document.querySelectorAll('[data-version-details]').forEach(function(button){ button.addEventListener('click',function(){ document.getElementById('khVersionsModal').classList.remove('show'); openKhDetails(parseInt(button.getAttribute('data-version-details'),10)); }); });
     }).catch(function(err){ error.textContent=err.message; error.classList.add('show'); });
   }
 
@@ -2309,12 +3326,7 @@ X-Client-Id: qa-automation-bot</pre>
   document.getElementById('khRefreshBtn').addEventListener('click', function(){ loadKnowledgeHub().then(function(){ toast('Knowledge refreshed.'); }); });
   document.getElementById('khExpandAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=true; }); });
   document.getElementById('khCollapseAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=false; }); });
-  var khOperation='merge';
-  function openKhOperation(operation){
-    khOperation=operation;var options=khCache.map(function(item){return '<option value="'+item.id+'">'+escapeHtml(item.domain+' / '+item.module+' / '+item.knowledge_name+' / v'+item.version+' / '+item.file_name)+'</option>';}).join('');document.getElementById('khOperationA').innerHTML=options;document.getElementById('khOperationB').innerHTML=options;if(khCache.length>1)document.getElementById('khOperationB').selectedIndex=1;document.getElementById('khMergeCompareTitle').textContent=operation==='merge'?'Merge Knowledge Preview':'Compare Versions';document.getElementById('khMergeCompareSub').textContent=operation==='merge'?'Preview only. This does not store or modify Knowledge.':'Compare two actual persisted Knowledge items.';document.getElementById('khMergeCompareResult').style.display='none';document.getElementById('khMergeCompareError').classList.remove('show');document.getElementById('khMergeCompareModal').classList.add('show');
-  }
-  document.getElementById('khMergeBtn').addEventListener('click',function(){openKhOperation('merge');});document.getElementById('khCompareBtn').addEventListener('click',function(){openKhOperation('compare');});document.getElementById('khMergeCompareClose').addEventListener('click',function(){document.getElementById('khMergeCompareModal').classList.remove('show');});
-  document.getElementById('khMergeCompareRun').addEventListener('click',function(){var a=Number(document.getElementById('khOperationA').value),b=Number(document.getElementById('khOperationB').value),error=document.getElementById('khMergeCompareError'),result=document.getElementById('khMergeCompareResult');if(!a||!b||a===b){error.textContent='Select two different Knowledge items.';error.classList.add('show');return;}var path=khOperation==='merge'?'/api/knowledge/merge':'/api/knowledge/compare',payload=khOperation==='merge'?{knowledge_ids:[a,b]}:{knowledge_id_a:a,knowledge_id_b:b};apiFetch(path,{method:'POST',body:JSON.stringify(payload)}).then(function(data){result.style.display='block';if(khOperation==='merge'){result.innerHTML='<h4>Preview Result</h4><div><strong>Summary</strong><pre style="white-space:pre-wrap;">'+escapeHtml(data.summary||'—')+'</pre><strong>Tags</strong><div>'+escapeHtml((data.tags||[]).join(', ')||'—')+'</div><button type="button" class="btn" id="khCopyMerge">Copy Result</button></div>';document.getElementById('khCopyMerge').addEventListener('click',function(){navigator.clipboard.writeText((data.summary||'')+'\n\n'+(data.tags||[]).join(', '));});}else{var changes=data.changes||{};result.innerHTML='<h4>Field Differences</h4><div class="kh-source-table"><table><thead><tr><th>Field</th><th>First</th><th>Second</th><th>Result</th></tr></thead><tbody>'+Object.keys(changes).map(function(field){return '<tr><td>'+escapeHtml(field)+'</td><td>'+escapeHtml(changes[field].old==null?'—':changes[field].old)+'</td><td>'+escapeHtml(changes[field].new==null?'—':changes[field].new)+'</td><td>Changed</td></tr>';}).join('')+'</tbody></table></div>';}}).catch(function(err){error.textContent=err.message;error.classList.add('show');});});
+  document.querySelectorAll('[data-page-content="knowledge"] .tabstrip .tab[data-tab]').forEach(function(tab){tab.addEventListener('click',function(){var target=tab.getAttribute('data-tab');if(target==='kh-browse')enterManageKnowledge();else if(target==='kh-upload')enterManualUpload();else if(target==='kh-smart')enterSmartUpload();});});
   function switchToKhTab(tabName){
     var strip = document.querySelector('[data-page-content="knowledge"] .tabstrip');
     var btn = strip && strip.querySelector('[data-tab="' + tabName + '"]');
@@ -2448,10 +3460,9 @@ X-Client-Id: qa-automation-bot</pre>
   var khDiscoverySessionId=null,khDiscoveryScan=null,khDiscoverySteps=[];
   function khDiscoveryError(message){var box=document.getElementById('khDiscoveryError');box.textContent=message||'';box.classList.toggle('show',!!message);}
   function closeKhDiscovery(){var session=khDiscoverySessionId;khDiscoverySessionId=null;document.getElementById('khDiscoveryPassword').value='';document.getElementById('khDiscoveryModal').classList.remove('show');if(session)apiFetch('/api/knowledge/discovery/sessions/'+session,{method:'DELETE'}).catch(function(){});}
-  function openKhDiscovery(){if(!document.getElementById('khUpDomainSel').value||!document.getElementById('khUpModuleSel').value||!document.getElementById('khUpName').value.trim()){showKhUploadError('Select Domain, Module, and enter Knowledge Name before guided discovery.');return;}khDiscoverySteps=[];khDiscoveryScan=null;khDiscoveryError('');document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoverySteps').textContent='No confirmed screens.';document.getElementById('khDiscoveryNavigateUrl').value='';document.getElementById('khDiscoveryNavigate').disabled=true;document.getElementById('khDiscoveryCapture').disabled=true;document.getElementById('khDiscoveryConfirm').disabled=true;document.getElementById('khDiscoverySave').disabled=true;document.getElementById('khDiscoveryModal').classList.add('show');}
+  function openKhDiscovery(){if(!document.getElementById('khUpDomainSel').value||!document.getElementById('khUpModuleSel').value||!document.getElementById('khUpName').value.trim()){showKhUploadError('Select Domain, Module, and enter Knowledge Name before guided discovery.');return;}khDiscoverySteps=[];khDiscoveryScan=null;khDiscoveryError('');document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoverySteps').textContent='No confirmed screens.';document.getElementById('khDiscoveryCapture').disabled=true;document.getElementById('khDiscoveryConfirm').disabled=true;document.getElementById('khDiscoverySave').disabled=true;document.getElementById('khDiscoveryModal').classList.add('show');}
   document.getElementById('khDiscoveryCancel').addEventListener('click',closeKhDiscovery);
-  document.getElementById('khDiscoveryStart').addEventListener('click',function(){var url=document.getElementById('khDiscoveryUrl').value.trim(),auth=document.getElementById('khDiscoveryAuth').value,button=this;if(!url){khDiscoveryError('URL is required.');return;}button.disabled=true;khDiscoveryError('');apiFetch('/api/knowledge/discovery/sessions',{method:'POST',body:JSON.stringify({url:url,authentication_type:auth})}).then(function(created){khDiscoverySessionId=created.session_id;return apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/authenticate',{method:'POST',body:JSON.stringify({credentials:{username:document.getElementById('khDiscoveryUsername').value,password:document.getElementById('khDiscoveryPassword').value},analysis:{authentication_type:auth}})});}).then(function(result){document.getElementById('khDiscoveryPassword').value='';if(!result.success)throw new Error(result.error||'Access could not be established.');document.getElementById('khDiscoveryNavigateUrl').value=result.url||url;document.getElementById('khDiscoveryNavigate').disabled=false;document.getElementById('khDiscoveryCapture').disabled=false;toast('Discovery session ready.');}).catch(function(error){khDiscoveryError(error.message);closeKhDiscovery();}).finally(function(){button.disabled=false;});});
-  document.getElementById('khDiscoveryNavigate').addEventListener('click',function(){var url=document.getElementById('khDiscoveryNavigateUrl').value.trim(),button=this;if(!khDiscoverySessionId||!url){khDiscoveryError('Enter the next HTTP or HTTPS page URL.');return;}button.disabled=true;khDiscoveryError('');apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/navigate',{method:'POST',body:JSON.stringify({url:url})}).then(function(result){document.getElementById('khDiscoveryNavigateUrl').value=result.url||url;document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoveryConfirm').disabled=true;khDiscoveryScan=null;toast('Discovery session navigated. Capture the current screen when ready.');}).catch(function(error){khDiscoveryError(error.message);}).finally(function(){button.disabled=false;});});
+  document.getElementById('khDiscoveryStart').addEventListener('click',function(){var url=document.getElementById('khDiscoveryUrl').value.trim(),auth=document.getElementById('khDiscoveryAuth').value,button=this;if(!url){khDiscoveryError('URL is required.');return;}button.disabled=true;khDiscoveryError('');apiFetch('/api/knowledge/discovery/sessions',{method:'POST',body:JSON.stringify({url:url,authentication_type:auth})}).then(function(created){khDiscoverySessionId=created.session_id;return apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/authenticate',{method:'POST',body:JSON.stringify({credentials:{username:document.getElementById('khDiscoveryUsername').value,password:document.getElementById('khDiscoveryPassword').value},analysis:{authentication_type:auth}})});}).then(function(result){document.getElementById('khDiscoveryPassword').value='';if(!result.success)throw new Error(result.error||'Access could not be established.');document.getElementById('khDiscoveryCapture').disabled=false;toast('Discovery session ready.');}).catch(function(error){khDiscoveryError(error.message);closeKhDiscovery();}).finally(function(){button.disabled=false;});});
   document.getElementById('khDiscoveryCapture').addEventListener('click',function(){var button=this;if(!khDiscoverySessionId)return;button.disabled=true;apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/scan',{method:'POST',body:JSON.stringify({label:document.getElementById('khDiscoveryStep').value.trim()})}).then(function(scan){if(!scan.success)throw new Error(scan.error||'Screen capture failed.');khDiscoveryScan=scan;var candidates=[].concat(scan.fields||[],scan.buttons||[],scan.links||[],scan.tabs||[]);document.getElementById('khDiscoveryReview').style.display='block';document.getElementById('khDiscoveryReview').innerHTML='<h4>Review Captured Controls</h4><div class="muted-small">'+escapeHtml(scan.page_title||scan.url||'Current page')+'</div>'+candidates.map(function(item,index){return '<label style="display:flex;gap:8px;margin:7px 0;"><input type="checkbox" class="kh-discovery-element" value="'+index+'" checked><span>'+escapeHtml(item.text||item.label||item.name||item.placeholder||item.tag||'Unnamed control')+' · '+escapeHtml(item.locator_strategy||item.strategy||'locator')+'</span></label>';}).join('');document.getElementById('khDiscoveryConfirm').disabled=false;}).catch(function(error){khDiscoveryError(error.message);}).finally(function(){button.disabled=false;});});
   document.getElementById('khDiscoveryConfirm').addEventListener('click',function(){if(!khDiscoveryScan)return;var candidates=[].concat(khDiscoveryScan.fields||[],khDiscoveryScan.buttons||[],khDiscoveryScan.links||[],khDiscoveryScan.tabs||[]),selected={};document.querySelectorAll('.kh-discovery-element:checked').forEach(function(box){selected[box.value]=true;});var elements=candidates.filter(function(item,index){return selected[String(index)];}).map(function(item){return {name:item.text||item.label||item.name||item.placeholder||item.tag||'Unnamed control',element_type:item.element_type||item.tag||item.type||'control',locator:item.locator||'',locator_strategy:item.locator_strategy||item.strategy||'',alternate_locators:item.alternate_locators||[],placeholder:item.placeholder||'',is_required:!!item.is_required};}).filter(function(item){return item.locator;});khDiscoverySteps.push({step_name:document.getElementById('khDiscoveryStep').value.trim()||'Step '+(khDiscoverySteps.length+1),page_name:khDiscoveryScan.page_title||'Page '+(khDiscoverySteps.length+1),page_url:khDiscoveryScan.url,page_title:khDiscoveryScan.page_title||'',tab_name:'(scanned view)',is_end_step:false,elements:elements});document.getElementById('khDiscoverySteps').textContent=khDiscoverySteps.map(function(step,index){return (index+1)+'. '+step.step_name+' ('+step.elements.length+' controls)';}).join(' · ');document.getElementById('khDiscoveryReview').style.display='none';document.getElementById('khDiscoveryConfirm').disabled=true;document.getElementById('khDiscoverySave').disabled=false;khDiscoveryScan=null;});
   document.getElementById('khDiscoverySave').addEventListener('click',function(){if(!khDiscoverySessionId||!khDiscoverySteps.length)return;khDiscoverySteps[khDiscoverySteps.length-1].is_end_step=true;var hierarchy={domain:document.getElementById('khUpDomainSel').value,module:document.getElementById('khUpModuleSel').value,knowledge_name:document.getElementById('khUpName').value.trim(),version:document.getElementById('khUpVersion').value.trim()||'1.0'};var button=this;button.disabled=true;apiFetch('/api/knowledge/discovery/sessions/'+khDiscoverySessionId+'/save',{method:'POST',body:JSON.stringify({steps:khDiscoverySteps,hierarchy:hierarchy})}).then(function(){khDiscoverySessionId=null;document.getElementById('khDiscoveryModal').classList.remove('show');loadKnowledgeHub();toast('Captured business flow saved.');}).catch(function(error){khDiscoveryError(error.message);}).finally(function(){button.disabled=false;});});
@@ -2484,12 +3495,15 @@ X-Client-Id: qa-automation-bot</pre>
     khCreateContext = context;
     document.getElementById('khAddDomainName').value = '';
     document.getElementById('khAddDomainError').classList.remove('show');
+    document.getElementById('khDeleteDomainSel').innerHTML=khDomains.length?khDomains.map(function(name){return '<option value="'+escapeHtml(name)+'">'+escapeHtml(name)+'</option>';}).join(''):'<option value="">No Domains available</option>';
+    document.getElementById('khDeleteDomainBtn').disabled=!khDomains.length;
     document.getElementById('khAddDomainModal').classList.add('show');
     document.getElementById('khAddDomainName').focus();
   }
   document.getElementById('khOpenAddDomainBtn').addEventListener('click', function(){ openKhAddDomain('upload'); });
   document.getElementById('khEditAddDomain').addEventListener('click', function(){ openKhAddDomain('edit'); });
   document.getElementById('khAddDomainCancel').addEventListener('click', function(){ document.getElementById('khAddDomainModal').classList.remove('show'); });
+  document.getElementById('khDeleteDomainBtn').addEventListener('click',function(){var name=document.getElementById('khDeleteDomainSel').value,error=document.getElementById('khAddDomainError'),button=this;if(!name)return;button.disabled=true;error.classList.remove('show');apiFetch('/api/knowledge/domains/'+encodeURIComponent(name),{method:'DELETE'}).then(enterKnowledgeHub).then(function(){document.getElementById('khAddDomainModal').classList.remove('show');toast('Domain deleted.');}).catch(function(err){error.textContent=err.message;error.classList.add('show');}).finally(function(){button.disabled=false;});});
   document.getElementById('khAddDomainSave').addEventListener('click', function(){
     var name = document.getElementById('khAddDomainName').value.trim();
     var error = document.getElementById('khAddDomainError');
@@ -2513,7 +3527,7 @@ X-Client-Id: qa-automation-bot</pre>
         }
         document.getElementById('khUpDomainSel').value = name;
         return loadKhUploadModules(name);
-      }).then(function(){ document.getElementById('khAddDomainModal').classList.remove('show'); toast('Domain created.'); })
+      }).then(function(){return enterKnowledgeHub();}).then(function(){ document.getElementById('khAddDomainModal').classList.remove('show'); toast('Domain created.'); })
       .catch(function(err){ error.textContent = err.message; error.classList.add('show'); })
       .finally(function(){ button.disabled = false; });
   });
@@ -2527,6 +3541,7 @@ X-Client-Id: qa-automation-bot</pre>
     document.getElementById('khAddModuleSub').textContent = 'Create a Module under "' + domain + '".';
     document.getElementById('khAddModuleError').classList.remove('show');
     document.getElementById('khAddModuleModal').classList.add('show');
+    loadKhModulesInto(document.getElementById('khDeleteModuleSel'),domain).then(function(modules){document.getElementById('khDeleteModuleBtn').disabled=!modules.length;}).catch(function(err){document.getElementById('khAddModuleError').textContent=err.message;document.getElementById('khAddModuleError').classList.add('show');});
     document.getElementById('khAddModuleName').focus();
   }
   document.getElementById('khOpenAddModuleBtn').addEventListener('click', function(){ openKhAddModule('upload'); });
@@ -2534,6 +3549,7 @@ X-Client-Id: qa-automation-bot</pre>
   document.getElementById('khSmartOpenAddDomainBtn').addEventListener('click', function(){ openKhAddDomain('smart'); });
   document.getElementById('khSmartOpenAddModuleBtn').addEventListener('click', function(){ openKhAddModule('smart'); });
   document.getElementById('khAddModuleCancel').addEventListener('click', function(){ document.getElementById('khAddModuleModal').classList.remove('show'); });
+  document.getElementById('khDeleteModuleBtn').addEventListener('click',function(){var domainId=khCreateContext==='edit'?'khEditDomain':(khCreateContext==='smart'?'khSmartDomainSel':'khUpDomainSel'),domain=document.getElementById(domainId).value,name=document.getElementById('khDeleteModuleSel').value,error=document.getElementById('khAddModuleError'),button=this;if(!domain||!name)return;button.disabled=true;error.classList.remove('show');apiFetch('/api/knowledge/domains/'+encodeURIComponent(domain)+'/modules/'+encodeURIComponent(name),{method:'DELETE'}).then(enterKnowledgeHub).then(function(){document.getElementById('khAddModuleModal').classList.remove('show');toast('Module deleted.');}).catch(function(err){error.textContent=err.message;error.classList.add('show');}).finally(function(){button.disabled=false;});});
   document.getElementById('khAddModuleSave').addEventListener('click', function(){
     var domainId = khCreateContext === 'edit' ? 'khEditDomain' : (khCreateContext === 'smart' ? 'khSmartDomainSel' : 'khUpDomainSel');
     var domain = document.getElementById(domainId).value;
@@ -2544,7 +3560,7 @@ X-Client-Id: qa-automation-bot</pre>
     var button = this;
     apiFetch('/api/knowledge/domains/' + encodeURIComponent(domain) + '/modules', { method: 'POST', body: JSON.stringify({ name: name }) })
       .then(function(){ if(khCreateContext === 'edit') return loadKhModulesInto(document.getElementById('khEditModule'),domain,name); if(khCreateContext === 'smart') return loadKhModulesInto(document.getElementById('khSmartModuleSel'),domain,name); return loadKhUploadModules(domain,name); })
-      .then(function(){ document.getElementById('khAddModuleModal').classList.remove('show'); toast('Module created.'); })
+      .then(function(){return enterKnowledgeHub();}).then(function(){ document.getElementById('khAddModuleModal').classList.remove('show'); toast('Module created.'); })
       .catch(function(err){ error.textContent = err.message; error.classList.add('show'); })
       .finally(function(){ button.disabled = false; });
   });
@@ -2635,7 +3651,8 @@ X-Client-Id: qa-automation-bot</pre>
 
   // ---- AI Smart Upload Handlers ----
   var khSmartSources = [], khSmartSourceSequence = 0;
-  function setKhSmartBusy(busy){['khSmartAddSourceBtn','khSmartRemoveSelectedBtn','khSmartClearBtn','khSmartAnalyzeBtn','khSmartUploadBtn','khSmartDomainSel','khSmartModuleSel','khSmartName','khSmartVersion','khSmartDocTypeSel','khSmartSummary','khSmartTags'].forEach(function(id){var control=document.getElementById(id);if(control)control.disabled=busy;});document.querySelectorAll('.kh-smart-check').forEach(function(box){box.disabled=busy;});}
+  function setKhSmartReviewVisible(visible){document.getElementById('khSmartSuggested').hidden=!visible;document.getElementById('khSmartResults').hidden=!visible;}
+  function resetKhSmartReview(){if(!Object.keys(khSmartAnalyses||{}).length){setKhSmartReviewVisible(false);document.getElementById('khSmartDomainSel').value='';document.getElementById('khSmartModuleSel').innerHTML='<option value="">Select a Domain first...</option>';document.getElementById('khSmartModuleSel').disabled=true;document.getElementById('khSmartName').value='';document.getElementById('khSmartVersion').value='1.0';document.getElementById('khSmartSummary').value='';document.getElementById('khSmartTags').value='';document.getElementById('khSmartConfidence').textContent='—';}}
   function renderKhSmartSources(){
     var body=document.getElementById('khSmartSourcesTableBody');
     if(!khSmartSources.length){body.innerHTML='<tr><td colspan="6" class="muted-small" style="text-align:center;">No sources added yet.</td></tr>';return;}
@@ -2647,24 +3664,24 @@ X-Client-Id: qa-automation-bot</pre>
   document.getElementById('khSmartRemoveSelectedBtn').addEventListener('click', function(){
     var selected={};document.querySelectorAll('.kh-smart-check:checked').forEach(function(box){selected[box.dataset.id]=true;});khSmartSources=khSmartSources.filter(function(source){if(selected[String(source.id)])delete khSmartAnalyses[source.key];return !selected[String(source.id)];});renderKhSmartSources();
   });
-  document.getElementById('khSmartClearBtn').addEventListener('click', function(){khSmartSources=[];khSmartAnalyses={};document.getElementById('khSmartHiddenFile').value='';document.getElementById('khSmartResults').style.display='none';renderKhSmartSources();});
+  document.getElementById('khSmartClearBtn').addEventListener('click', function(){khSmartSources=[];khSmartAnalyses={};document.getElementById('khSmartHiddenFile').value='';resetKhSmartReview();renderKhSmartSources();});
   document.getElementById('khSmartHiddenFile').addEventListener('change', function(){
     var known={};khSmartSources.forEach(function(source){known[source.key]=true;});Array.prototype.forEach.call(this.files||[],function(file){var key=uploadSourceKey(file);if(known[key]||khSupportedUploadExtensions.indexOf(fileExtension(file))===-1)return;known[key]=true;khSmartSources.push({id:++khSmartSourceSequence,key:key,file:file,status:'Pending',message:'Ready for analysis'});});this.value='';renderKhSmartSources();
   });
   var khSmartAnalyses = {};
   function runKhSmartAnalysis(files){
-    var sequence=Promise.resolve(), successful=[];
+    var sequence=Promise.resolve(), successful=[], failures=[];
     Array.prototype.forEach.call(files,function(file,index){
       sequence=sequence.then(function(){
         var source=khSmartSources[index],row=document.querySelector('.kh-smart-check[data-id="'+source.id+'"]').closest('tr');file=source.file;
         if(row){row.cells[4].textContent='Analyzing';row.cells[5].textContent='AI analysis in progress';}
         var form=new FormData();form.append('file',file);var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;
-        return fetch(API_BASE+'/api/knowledge/suggest-classification',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Analysis failed.');return data;});}).then(function(result){khSmartAnalyses[source.key]=result;source.status='Analyzed';source.message='Analysis complete';successful.push({file:file,result:result});renderKhSmartSources();}).catch(function(error){source.status='Failed';source.message=error.message;renderKhSmartSources();});
+        source.status='Analyzing';source.message='AI analysis in progress';renderKhSmartSources();return fetch(API_BASE+'/api/knowledge/suggest-classification',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||('Analysis failed ('+response.status+').'));return data;});}).then(function(result){khSmartAnalyses[source.key]=result;source.status='Analyzed';source.message='Analysis complete';successful.push({file:file,result:result});renderKhSmartSources();}).catch(function(error){source.status='Failed';source.message=error.message;failures.push(source.file.name+': '+error.message);renderKhSmartSources();});
       });
     });
     return sequence.then(function(){
-      if(!successful.length)throw new Error('AI analysis failed for every selected source.');
-      var first=successful[0];document.getElementById('khSmartResults').style.display='block';document.getElementById('khSmartAnalysisList').innerHTML=khSmartSources.map(function(source){return '<div><strong>'+escapeHtml(source.file.name)+'</strong> — '+escapeHtml(source.status)+(source.message?' · '+escapeHtml(source.message):'')+'</div>';}).join('');
+      if(!successful.length){setKhSmartReviewVisible(false);throw new Error('Analysis failed:\n- '+failures.join('\n- '));}
+      var first=successful[0];setKhSmartReviewVisible(true);document.getElementById('khSmartAnalysisList').innerHTML=khSmartSources.map(function(source){return '<div><strong>'+escapeHtml(source.file.name)+'</strong> — '+escapeHtml(source.status)+(source.message?' · '+escapeHtml(source.message):'')+'</div>';}).join('');
       document.getElementById('khSmartDomainSel').value=khDomains.indexOf(first.result.domain)!==-1?first.result.domain:'';
       return loadKhModulesInto(document.getElementById('khSmartModuleSel'),document.getElementById('khSmartDomainSel').value,first.result.module||'').then(function(){document.getElementById('khSmartName').value=first.result.knowledge_name||first.file.name.replace(/\.[^/.]+$/,'').replace(/[_-]/g,' ');document.getElementById('khSmartVersion').value=first.result.version||'1.0';document.getElementById('khSmartDocTypeSel').value=first.result.document_type||'Other';document.getElementById('khSmartSummary').value=first.result.summary||'';document.getElementById('khSmartTags').value=(first.result.tags||[]).join(', ');document.getElementById('khSmartConfidence').textContent=Math.round(Number(first.result.confidence||0)*100)+'%';});
     });
@@ -2679,7 +3696,7 @@ X-Client-Id: qa-automation-bot</pre>
       errBox.classList.add('show');
       return;
     }
-    var smartAnalyzeButton=this;setKhSmartBusy(true);smartAnalyzeButton.textContent='Analyzing with AI…';runKhSmartAnalysis(khSmartSources.map(function(source){return source.file;})).then(function(){toast('AI analysis completed.');}).catch(function(error){errBox.textContent=error.message;errBox.classList.add('show');}).finally(function(){setKhSmartBusy(false);smartAnalyzeButton.textContent='Analyze With AI';});
+    setKhSmartReviewVisible(false);var smartAnalyzeButton=this;smartAnalyzeButton.disabled=true;smartAnalyzeButton.textContent='Analyzing with AI…';runKhSmartAnalysis(khSmartSources.map(function(source){return source.file;})).then(function(){toast('AI analysis completed.');}).catch(function(error){errBox.style.whiteSpace='pre-line';errBox.textContent=error.message;errBox.classList.add('show');}).finally(function(){smartAnalyzeButton.disabled=false;smartAnalyzeButton.textContent='Analyze With AI';});
     return;
   });
 
@@ -2704,9 +3721,9 @@ X-Client-Id: qa-automation-bot</pre>
     }
     var smartFiles=khSmartSources.filter(function(source){return !!khSmartAnalyses[source.key];}).map(function(source){return source.file;}),smartButton=this;
     if(!smartFiles.length){errBox.textContent='Analyze at least one source before confirming upload.';errBox.classList.add('show');return;}
-    setKhSmartBusy(true);smartButton.textContent='Uploading…';var smartSequence=Promise.resolve(),smartSuccessful=0,smartFailed=0;
-    smartFiles.forEach(function(candidate){smartSequence=smartSequence.then(function(){var source=khSmartSources.filter(function(row){return row.key===uploadSourceKey(candidate);})[0],reviewed=khSmartAnalyses[uploadSourceKey(candidate)]||{},form=new FormData();if(source){source.status='Uploading';source.message='Upload in progress';renderKhSmartSources();}form.append('file',candidate);form.append('domain',domain);form.append('module',module);form.append('knowledge_name',name);form.append('version',version);form.append('document_type',docType);form.append('source_type','SMART_UPLOAD');form.append('reviewed_summary',summary);form.append('reviewed_tags',JSON.stringify(tags));form.append('reviewed_confidence',String(reviewed.confidence||0));var requestHeaders={};if(authState.token)requestHeaders.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/upload',{method:'POST',headers:requestHeaders,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Upload failed.');return data;});}).then(function(){smartSuccessful++;delete khSmartAnalyses[uploadSourceKey(candidate)];if(source){source.status='Uploaded';source.message='Stored and indexed';}}).catch(function(error){smartFailed++;if(source){source.status='Upload failed';source.message=error.message;}}).finally(renderKhSmartSources);});});
-    smartSequence.then(function(){document.getElementById('khSmartUploadResult').innerHTML='<div class="kh-section"><strong>Smart Upload completed</strong><div class="muted-small">Successful: '+smartSuccessful+' · Failed: '+smartFailed+'</div></div>';khSmartSources=khSmartSources.filter(function(source){return source.status!=='Uploaded';});renderKhSmartSources();loadKnowledgeHub();toast(smartSuccessful+' source(s) saved.',smartFailed>0);}).finally(function(){setKhSmartBusy(false);smartButton.textContent='Confirm Upload';});
+    smartButton.disabled=true;smartButton.textContent='Uploading…';var smartSequence=Promise.resolve(),smartSuccessful=0,smartFailed=0;
+    smartFiles.forEach(function(candidate){smartSequence=smartSequence.then(function(){var source=khSmartSources.filter(function(row){return row.key===uploadSourceKey(candidate);})[0],reviewed=khSmartAnalyses[uploadSourceKey(candidate)]||{},form=new FormData();if(source){source.status='Uploading';source.message='Upload in progress';renderKhSmartSources();}form.append('file',candidate);form.append('domain',domain);form.append('module',module);form.append('knowledge_name',name);form.append('version',version);form.append('document_type',docType);form.append('source_type','SMART_UPLOAD');form.append('reviewed_summary',summary);form.append('reviewed_tags',JSON.stringify(tags));form.append('reviewed_confidence',String(reviewed.confidence||0));var requestHeaders={};if(authState.token)requestHeaders.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/upload',{method:'POST',headers:requestHeaders,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Upload failed.');return data;});}).then(function(){smartSuccessful++;delete khSmartAnalyses[uploadSourceKey(candidate)];if(source){source.status='Uploaded';source.message='Stored and indexed';}}).catch(function(error){smartFailed++;if(source){source.status='Failed';source.message=error.message;}}).finally(renderKhSmartSources);});});
+    smartSequence.then(function(){document.getElementById('khSmartUploadResult').innerHTML='<div class="kh-section"><strong>Smart Upload completed</strong><div class="muted-small">Successful: '+smartSuccessful+' · Failed: '+smartFailed+'</div></div>';khSmartSources=khSmartSources.filter(function(source){return source.status!=='Uploaded';});renderKhSmartSources();if(!Object.keys(khSmartAnalyses).length)resetKhSmartReview();return loadKnowledgeHub();}).then(function(){toast(smartSuccessful+' source(s) saved.',smartFailed>0);}).finally(function(){smartButton.disabled=false;smartButton.textContent='Confirm Upload';});
     return;
   });
 
@@ -3252,7 +4269,7 @@ X-Client-Id: qa-automation-bot</pre>
   navItems.forEach(function(item){
     item.addEventListener('click', function(){
       if(item.getAttribute('data-page') === 'usermgmt' && hasPermission('users', 'view')) loadUsersAndAccess();
-      if(item.getAttribute('data-page') === 'knowledge' && hasPermission('knowledge', 'view')) loadKnowledgeHub();
+      if(item.getAttribute('data-page') === 'knowledge' && hasPermission('knowledge', 'view')) enterKnowledgeHub();
       if(item.getAttribute('data-page') === 'ai_assistant' && hasPermission('ai_assistant', 'view')) loadAiHistory();
       if(item.getAttribute('data-page') === 'dashboard' && hasPermission('dashboard', 'view')) loadDashboard();
     });

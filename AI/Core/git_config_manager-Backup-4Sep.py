@@ -22,18 +22,7 @@ from pathlib import Path
 from Core.logger import Logger
 
 
-# BUGFIX (ported from the Web port after being caught there — see
-# AI-Web/Core/git_config_manager.py's matching comment): a bare
-# relative Path("Config") resolves against the process's current
-# working directory, not this file's own location — if the app is
-# ever launched from a different working directory (a shortcut, a
-# packaged .exe, a different shell), this would silently read/write
-# the wrong file (or a fresh, empty one) instead of erroring loudly.
-# Anchored to this file's own location instead, matching every other
-# CWD-relative path already fixed this way (Web's own equivalent,
-# and playwright_runner.py / test_execution_manager.py /
-# test_environment_config.py below).
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "Config" / "git_config.json"
+CONFIG_PATH = Path("Config") / "git_config.json"
 
 
 class GitConfigManager:

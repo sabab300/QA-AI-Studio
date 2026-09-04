@@ -43,7 +43,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-RECORDINGS_FOLDER = Path("Output") / "Recordings"
+# BUGFIX (ported from the Web port — see
+# AI-Web/Core/test_execution_manager.py's matching comment): anchored
+# to this file's own location instead of the process's current
+# working directory (see Core/git_config_manager.py's matching
+# comment for why a bare relative path here is unsafe).
+RECORDINGS_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "Recordings"
 
 class TestExecutionManager:
 
