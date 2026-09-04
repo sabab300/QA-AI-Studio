@@ -36,7 +36,9 @@ class KnowledgeDiscoverySessions:
                 "runtime": URLAuthenticatedSession(headless=True),
                 "executor": ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"kh-discovery-{session_id[:8]}"),
                 "touched": time.time(),
+                "timer": None,
             }
+            cls._arm_timeout(session_id, cls._sessions[session_id])
         return {"session_id": session_id, "url": url, "status": "Pending"}
 
     @classmethod
@@ -47,7 +49,18 @@ class KnowledgeDiscoverySessions:
             if not state:
                 raise KeyError("Discovery session not found or expired.")
             state["touched"] = time.time()
+            cls._arm_timeout(session_id, state)
             return state
+
+    @classmethod
+    def _arm_timeout(cls, session_id, state):
+        timer = state.get("timer")
+        if timer:
+            timer.cancel()
+        timer = threading.Timer(cls.timeout_seconds, cls.close, args=(session_id,))
+        timer.daemon = True
+        state["timer"] = timer
+        timer.start()
 
     @classmethod
     def authenticate(cls, session_id, credentials=None, analysis=None):
@@ -112,6 +125,9 @@ class KnowledgeDiscoverySessions:
         with cls._lock:
             state = cls._sessions.pop(session_id, None)
         if state:
+            timer = state.get("timer")
+            if timer and timer is not threading.current_thread():
+                timer.cancel()
             try:
                 state["executor"].submit(state["runtime"].close).result(timeout=15)
             finally:

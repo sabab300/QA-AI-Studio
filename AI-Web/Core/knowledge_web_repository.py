@@ -205,6 +205,18 @@ class KnowledgeRepository:
         sha256 = str(item.get("sha256") or "")
         ids = []
 
+        if item.get("source_type") == "API_COLLECTION":
+            from Core.api_collection_repository import ApiCollectionRepository
+            collection_ids = {
+                str(collection["id"])
+                for collection in ApiCollectionRepository().list_collections()
+                if collection.get("linked_knowledge_item_id") == item.get("id")
+            }
+            return [
+                str(doc_id) for doc_id in data.get("ids", [])
+                if any(str(doc_id).startswith(f"apicollection_{collection_id}_") for collection_id in collection_ids)
+            ]
+
         for doc_id, metadata in zip(
             data.get("ids", []), data.get("metadatas", [])
         ):
@@ -453,6 +465,25 @@ class KnowledgeRepository:
 
             raise ValueError(f"Required and missing: {problem}.")
 
+        safe_name = Path(original_filename or "upload").name or "upload"
+        duplicate = next(
+            (
+                item for row in self.metadata.list_all()
+                if (item := _row_to_dict(row))
+                if item.get("domain") == domain
+                and item.get("module") == module
+                and item.get("knowledge_name") == knowledge_name
+                and item.get("version") == version
+                and item.get("file_name") == safe_name
+            ),
+            None,
+        )
+        if duplicate:
+            raise ValueError(
+                "This source already exists in the selected Knowledge version. "
+                "Use a new version or remove the existing source first."
+            )
+
         # A plain NamedTemporaryFile gets a random generated basename
         # (e.g. "tmpXXXXXX.txt") — RepositoryManager.save_file() names
         # the file it copies into the repo after whatever path it's
@@ -461,8 +492,6 @@ class KnowledgeRepository:
         # writing the file under its REAL original name keeps the
         # repo folder and the metadata grid showing the name the user
         # actually uploaded.
-        safe_name = Path(original_filename or "upload").name or "upload"
-
         temp_dir = tempfile.mkdtemp(prefix="qaais_upload_")
         temp_path = Path(temp_dir) / safe_name
 

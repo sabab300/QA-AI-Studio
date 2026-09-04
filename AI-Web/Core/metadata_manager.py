@@ -1344,6 +1344,38 @@ class MetadataManager:
                     (resolved_version, knowledge_id),
                 )
 
+            # Placeholder Knowledge rows are the authoritative logical scope
+            # for their linked structured sources. Keep those source records
+            # aligned so search/tree reloads cannot show stale hierarchy.
+            cursor.execute(
+                """
+                UPDATE api_collections
+                SET domain=?, module=?, knowledge_name=?, version=?, modified_date=?
+                WHERE linked_knowledge_item_id=?
+                """,
+                (
+                    resolved_domain, resolved_module, resolved_name,
+                    resolved_version, datetime.now().isoformat(), knowledge_id,
+                ),
+            )
+
+            resolved_domain_id = updates.get("domain_id", current["domain_id"])
+            resolved_module_id = updates.get("module_id", current["module_id"])
+            cursor.execute(
+                """
+                UPDATE discovery_business_processes
+                SET linked_domain_id=?, linked_module_id=?, modified_date=?
+                WHERE id IN (
+                    SELECT business_process_id FROM discovery_variants
+                    WHERE linked_knowledge_item_id=?
+                )
+                """,
+                (
+                    resolved_domain_id, resolved_module_id,
+                    datetime.now().isoformat(), knowledge_id,
+                ),
+            )
+
             conn.commit()
             return cursor.rowcount >= 0
 

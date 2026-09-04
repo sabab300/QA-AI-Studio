@@ -1,3 +1,10 @@
 fastapi
 uvicorn[standard]
 python-multipart
+pypdf
+python-docx
+openpyxl
+requests
+chromadb
+sentence-transformers
+playwright
