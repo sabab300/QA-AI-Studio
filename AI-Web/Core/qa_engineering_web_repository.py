@@ -3,7 +3,7 @@
 import json
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from Core.knowledge_web_repository import KnowledgeRepository
 from Core.test_case_repository import TestCaseRepository
@@ -37,8 +37,13 @@ class QaEngineeringWeb:
 
     def reconcile_stale_jobs(self):
         now = datetime.now().isoformat()
+        stale_before = (datetime.now() - timedelta(minutes=10)).isoformat()
         conn = self.db.get_connection()
-        rows = conn.execute("SELECT job_id, logs_json FROM qa_generation_jobs WHERE status IN ('queued','running')").fetchall()
+        rows = conn.execute(
+            "SELECT job_id, logs_json FROM qa_generation_jobs "
+            "WHERE status IN ('queued','running') AND started_at<?",
+            (stale_before,),
+        ).fetchall()
         for job_id, raw_logs in rows:
             logs = self._loads(raw_logs, [])
             logs.append(self._event("Failed", "Generation interrupted by server restart."))
@@ -83,13 +88,22 @@ class QaEngineeringWeb:
         conn.close()
         return self._decode_job(row) if row else None
 
-    def list_jobs(self, limit=20, offset=0):
+    def list_jobs(self, limit=20, offset=0, q=None, started_from=None, started_to=None):
         conn = self.db.get_connection()
         conn.row_factory = self._dict_factory
-        total = conn.execute("SELECT COUNT(*) AS count FROM qa_generation_jobs").fetchone()["count"]
+        conditions, params = [], []
+        if q:
+            conditions.append("(job_id LIKE ? OR domain LIKE ? OR module LIKE ? OR knowledge_name LIKE ? OR message LIKE ?)")
+            params.extend([f"%{q}%"] * 5)
+        if started_from:
+            conditions.append("started_at>=?"); params.append(started_from)
+        if started_to:
+            conditions.append("started_at<=?"); params.append(started_to)
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        total = conn.execute(f"SELECT COUNT(*) AS count FROM qa_generation_jobs {where}", params).fetchone()["count"]
         rows = conn.execute(
-            "SELECT * FROM qa_generation_jobs ORDER BY started_at DESC LIMIT ? OFFSET ?",
-            (max(1, min(int(limit), 100)), max(0, int(offset))),
+            f"SELECT * FROM qa_generation_jobs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            [*params, max(1, min(int(limit), 100)), max(0, int(offset))],
         ).fetchall()
         conn.close()
         return {"jobs": [self._decode_job(row, include_result=False) for row in rows], "total": total}
@@ -125,7 +139,7 @@ class QaEngineeringWeb:
         self._set_job(job_id, status="running", message="Loading Knowledge")
         self._append_log(job_id, "Loading Knowledge", "Retrieving grounded Knowledge context.")
         try:
-            from Core.test_case_generator import TestCaseGenerator
+            from Core.test_case_generator import TestCaseGenerator, normalize_test_types
             requested = payload.get("number_of_cases", "all")
             batch_sizes = self._batch_sizes(requested)
             all_rows, references = [], []
@@ -158,6 +172,10 @@ class QaEngineeringWeb:
                 if not result.get("success"):
                     raise RuntimeError(result.get("error") or "Generation failed.")
                 rows = result.get("rows") or []
+                for row in rows:
+                    normalize_test_types(row, payload.get("test_types"))
+                    row["source_knowledge_ids"] = list(source_ids)
+                self._append_log(job_id, "Normalizing Test Types", f"Normalized {len(rows)} row(s) to canonical selected Test Types.")
                 all_rows.extend(rows)
                 references.extend(result.get("references") or [])
                 provider, model = result.get("provider"), result.get("model")
@@ -168,6 +186,7 @@ class QaEngineeringWeb:
                 "case_count": len(all_rows), "rows": all_rows, "test_case_ids": [],
                 "references": references, "provider": provider, "model": model,
             }
+            self._append_log(job_id, "Saving Draft Result", f"Stored {len(all_rows)} generated row(s) in the job result for review.")
             self._set_job(job_id, status="finished", message="Completed",
                           generated_count=len(all_rows), result=final_result,
                           finished_at=datetime.now().isoformat())

@@ -50,6 +50,23 @@ ALL_TEST_TYPES = [
 ]
 
 
+def normalize_test_types(row, requested_types):
+    """Keep AI output canonical, using the requested types as fallback."""
+    requested = [value for value in (requested_types or []) if value in ALL_TEST_TYPES]
+    raw = row.get("test_types") or row.get("test_type") or []
+    if isinstance(raw, str):
+        raw = [value.strip() for value in raw.replace(";", ",").split(",")]
+    valid = []
+    for value in raw:
+        value = str(value).strip()
+        if value in ALL_TEST_TYPES and value not in valid:
+            valid.append(value)
+    normalized = valid or requested
+    row["test_types"] = normalized
+    row["test_type"] = ", ".join(normalized)
+    return row
+
+
 class TestCaseGenerator:
 
     def __init__(self):
@@ -202,6 +219,7 @@ class TestCaseGenerator:
                 }
 
             for row in rows:
+                normalize_test_types(row, test_types)
                 self._add_execution_metadata(row)
 
             if create_exports:

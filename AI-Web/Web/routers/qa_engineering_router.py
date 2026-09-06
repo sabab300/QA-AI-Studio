@@ -44,6 +44,7 @@ class TestCaseDraft(BaseModel):
     expected_result: str = ""
     execution_type: str = "Manual"
     execution_tool: str = ""
+    source_knowledge_ids: list[int] = Field(default_factory=list)
 
 
 class SaveJobRequest(BaseModel):
@@ -64,6 +65,7 @@ class ReviewSaveRequest(BaseModel):
     document_type: str = Field(min_length=1)
     source_knowledge_ids: list[int] = Field(min_length=1)
     test_case_document_name: str = ""
+    reviewed_file_name: str = Field(min_length=1, max_length=220)
     operations: list[ReviewOperation] = Field(min_length=1)
 
 
@@ -78,9 +80,8 @@ class ExportRequest(BaseModel):
     version: str | None = Field(default=None, max_length=100)
     document_type: str | None = Field(default=None, max_length=200)
     file_name: str | None = Field(default=None, max_length=220)
-    folder: str | None = Field(default=None, max_length=500)
-    q: str | None = Field(default=None, max_length=500)
     format: str
+    rows: list[dict] = Field(min_length=1)
 
 
 def _audit(current_user, action, detail):
@@ -107,6 +108,18 @@ def _validate_test_types(values):
     allowed_tools = {item["label"] for item in TestCaseRepository().list_execution_tools()}
     if execution_tool not in ({""} | allowed_tools):
         raise HTTPException(status_code=422, detail="Unsupported Execution Tool.")
+
+
+def _validate_required_case_fields(values):
+    required = (
+        ("Importance", "importance"), ("Execution Type", "execution_type"),
+        ("Test Types", "test_types"), ("Scenario", "scenario"),
+        ("Preconditions", "pre_conditions"), ("Test Case", "test_case"),
+        ("Steps", "steps"), ("Expected Result", "expected_result"),
+    )
+    missing = [label for label, key in required if not values.get(key) or (isinstance(values.get(key), str) and not values[key].strip())]
+    if missing:
+        raise HTTPException(status_code=422, detail="Required: " + ", ".join(missing) + ".")
 
 
 @router.get("/execution-tools")
@@ -192,9 +205,10 @@ def get_job(
 
 
 @router.get("/jobs")
-def list_jobs(limit: int = 20, offset: int = 0,
+def list_jobs(limit: int = 20, offset: int = 0, q: str | None = None,
+              started_from: str | None = None, started_to: str | None = None,
               current_user=Depends(require_permission("qa_engineering", "view"))):
-    return QaEngineeringWeb().list_jobs(limit, offset)
+    return QaEngineeringWeb().list_jobs(limit, offset, q, started_from, started_to)
 
 
 @router.post("/jobs/{job_id}/save")
@@ -203,6 +217,7 @@ def save_job(job_id: str, payload: SaveJobRequest,
     rows = [row.model_dump() if hasattr(row, "model_dump") else row.dict() for row in payload.rows]
     for row in rows:
         _validate_test_types(row)
+        _validate_required_case_fields(row)
     try:
         ids = QaEngineeringWeb().save_job(job_id, rows)
     except ValueError as error:
@@ -214,10 +229,12 @@ def save_job(job_id: str, payload: SaveJobRequest,
 @router.post("/review-save")
 def review_save(payload: ReviewSaveRequest,
                 current_user=Depends(require_permission("qa_engineering", "create"))):
+    if len(payload.source_knowledge_ids) != len(set(payload.source_knowledge_ids)):
+        raise HTTPException(status_code=422, detail="Duplicate Knowledge/source relationships are not allowed.")
     if any(operation.action == "delete" for operation in payload.operations):
         permissions = UserRepository().get_permissions_for_role(current_user["role_id"])
         if "delete" not in permissions.get("qa_engineering", set()):
-            raise HTTPException(status_code=403, detail="Delete permission is required to finalize persisted deletions.")
+            raise HTTPException(status_code=403, detail="Delete permission is required to finalize pending Test Case deletions.")
     operations = []
     for index, operation in enumerate(payload.operations, start=1):
         values = None
@@ -225,17 +242,30 @@ def review_save(payload: ReviewSaveRequest,
             values = operation.values.model_dump() if hasattr(operation.values, "model_dump") else operation.values.dict()
             try:
                 _validate_test_types(values)
-                if not values.get("steps", "").strip() or not values.get("expected_result", "").strip():
-                    raise HTTPException(status_code=422, detail="Test Steps and Expected Result are required.")
+                _validate_required_case_fields(values)
+                row_sources = set(values.get("source_knowledge_ids") or [])
+                selected_sources = set(payload.source_knowledge_ids)
+                valid_sources = row_sources == selected_sources if operation.action == "insert" else selected_sources.issubset(row_sources)
+                if not valid_sources:
+                    raise HTTPException(status_code=422, detail="Selected Knowledge/source relationships do not match the reviewed hierarchy context.")
             except HTTPException as error:
                 raise HTTPException(status_code=422, detail=f"Row {index}: {error.detail}")
         if operation.action != "insert" and not operation.id:
             raise HTTPException(status_code=422, detail=f"Row {index}: persisted record ID is required.")
         operations.append({"action": operation.action, "id": operation.id, "values": values or {}})
-    scope = payload.model_dump(exclude={"operations"}) if hasattr(payload, "model_dump") else payload.dict(exclude={"operations"})
+    scope = payload.model_dump(exclude={"operations", "reviewed_file_name"}) if hasattr(payload, "model_dump") else payload.dict(exclude={"operations", "reviewed_file_name"})
     try:
-        result = TestCaseRepository().review_save(scope, operations)
-    except ValueError as error:
+        repository = TestCaseRepository()
+        result = repository.review_save(scope, operations)
+        persisted_rows = repository.list_context_test_cases(scope)
+        reviewed_file = QaEngineeringExportService().export(
+            persisted_rows, "xlsx", scope, file_name=payload.reviewed_file_name,
+            allow_empty=True,
+        )
+        repository.set_reviewed_workbook([row["id"] for row in persisted_rows], reviewed_file["relative_path"])
+        result["items"] = persisted_rows
+        result["reviewed_file"] = reviewed_file
+    except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error))
     _audit(current_user, "REVIEW_SAVE_TEST_CASES", f"Applied {len(operations)} selected Test Case change(s)")
     return result
@@ -265,6 +295,7 @@ def update_test_case(test_case_id: int, payload: UpdateTestCaseRequest,
                      current_user=Depends(require_permission("qa_engineering", "edit"))):
     values = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
     _validate_test_types(values)
+    _validate_required_case_fields(values)
     item = TestCaseRepository().update_test_case(test_case_id, values)
     if not item:
         raise HTTPException(status_code=404, detail="Test case not found.")
@@ -294,19 +325,20 @@ def create_export(payload: ExportRequest,
     fmt = payload.format.lower()
     if fmt not in EXPORT_FORMATS:
         raise HTTPException(status_code=422, detail="Unsupported export format.")
-    result = TestCaseRepository().list_all_test_cases(
-        domain=payload.domain, module=payload.module,
-        knowledge_name=payload.knowledge_name, version=payload.version,
-        q=payload.q, limit=10000,
-    )
+    rows = payload.rows
+    for index, row in enumerate(rows, start=1):
+        try:
+            _validate_test_types(row)
+            _validate_required_case_fields(row)
+        except HTTPException as error:
+            raise HTTPException(status_code=422, detail=f"Row {index}: {error.detail}")
     try:
         exported = QaEngineeringExportService().export(
-            result["test_cases"], fmt,
+            rows, fmt,
             {"domain": payload.domain, "module": payload.module,
              "knowledge_name": payload.knowledge_name, "version": payload.version,
              "document_type": payload.document_type},
             file_name=payload.file_name,
-            relative_folder=payload.folder,
         )
     except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error))

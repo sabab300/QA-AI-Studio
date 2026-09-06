@@ -46,11 +46,11 @@ class QaEngineeringExportService:
         CONFIG_FILE.write_text(json.dumps({"path": str(location)}, indent=2), encoding="utf-8")
         return location
 
-    def export(self, rows, file_format, scope, file_name=None, relative_folder=None):
+    def export(self, rows, file_format, scope, file_name=None, relative_folder=None, allow_empty=False):
         fmt = file_format.lower()
         if fmt not in {"xlsx", "csv", "pdf", "html"}:
             raise ValueError("Unsupported export format.")
-        if not rows:
+        if not rows and not allow_empty:
             raise ValueError("No saved test cases match the selected scope or filter.")
         folder = self.get_location(relative_folder)
         folder.mkdir(parents=True, exist_ok=True)

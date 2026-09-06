@@ -154,6 +154,7 @@ class TestCaseRepository:
             "ALTER TABLE test_cases ADD COLUMN document_type TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN source_type TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN legacy_origin TEXT",
+            "ALTER TABLE test_cases ADD COLUMN reviewed_workbook_path TEXT DEFAULT ''",
         ):
 
             try:
@@ -500,12 +501,32 @@ class TestCaseRepository:
                     raise ValueError(f"Selected source {source['id']} does not match {key}.")
 
     def _validate_case(self, values, cursor):
+        if not str(values.get("importance") or "").strip(): raise ValueError("Importance is required.")
+        if not str(values.get("execution_type") or "").strip(): raise ValueError("Execution Type is required.")
+        if not str(values.get("scenario") or "").strip(): raise ValueError("Scenario is required.")
+        if not str(values.get("pre_conditions") or "").strip(): raise ValueError("Preconditions are required.")
         if not str(values.get("test_case") or "").strip(): raise ValueError("Test Case is required.")
         if not str(values.get("steps") or "").strip(): raise ValueError("Test Steps are required.")
         if not str(values.get("expected_result") or "").strip(): raise ValueError("Expected Result is required.")
         if not self._serialize_test_types(values): raise ValueError("At least one Test Type is required.")
         if self._execution_type(values) == "Automatable" and not self._execution_tool(values, cursor):
             raise ValueError("Execution Tool is required for an Automatable Test Case.")
+
+    def set_reviewed_workbook(self, test_case_ids, relative_path):
+        """Associate the reviewed workbook with exactly its saved batch."""
+        ids = [int(value) for value in test_case_ids]
+        if not ids:
+            return
+        conn = self.db.get_connection()
+        try:
+            marks = ",".join("?" for _ in ids)
+            conn.execute(
+                f"UPDATE test_cases SET reviewed_workbook_path=? WHERE id IN ({marks})",
+                [str(relative_path), *ids],
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     @staticmethod
     def _segment(value):
@@ -794,6 +815,21 @@ class TestCaseRepository:
         conn.close()
 
         return rows
+
+    def list_context_test_cases(self, scope):
+        """Return persisted rows visible in one QA Engineering source context."""
+        result = self.list_all_test_cases(
+            domain=scope.get("domain"), module=scope.get("module"),
+            knowledge_name=scope.get("knowledge_name"), version=scope.get("version"),
+            limit=10000,
+        )
+        source_ids = {int(value) for value in scope.get("source_knowledge_ids") or []}
+        document_type = scope.get("document_type") or ""
+        return [
+            row for row in result["test_cases"]
+            if (not document_type or row.get("document_type") == document_type)
+            and source_ids.intersection(int(value) for value in row.get("source_knowledge_ids") or [])
+        ]
 
     def delete_test_case(self, test_case_id):
         """
