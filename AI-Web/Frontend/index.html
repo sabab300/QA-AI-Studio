@@ -513,6 +513,23 @@
   .role-block-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
   .role-block-head h4{ margin:0; font-size:13.5px; }
   .muted-small{ font-size:11.5px; color:var(--ink-muted); }
+  /* Dense reusable engineering grids; currently applied only to QA Engineering. */
+  .dense-grid{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+  .dense-grid .table-scroll{max-height:330px;overflow:auto}.dense-grid table{width:100%;font-size:12px}
+  .dense-grid th{padding:6px 8px;position:sticky;top:0;z-index:1}.dense-grid td{padding:5px 8px;vertical-align:top}
+  .qe-page{padding:8px 10px 10px;gap:8px;flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}.qe-toolbar,.qe-scope{display:flex;align-items:end;gap:6px;flex-wrap:wrap}
+  .qe-scope .field{margin:0;min-width:125px;flex:1}.qe-scope .field:nth-child(3){flex:1.5}.qe-scope select{height:30px;padding:3px 8px}
+  .qe-types{display:flex;gap:5px 12px;flex-wrap:wrap;padding:8px;min-height:50px;align-content:flex-start}.qe-types label{font-size:12px;white-space:nowrap}
+  .qe-source-list{display:flex;gap:5px 12px;flex-wrap:wrap;max-height:76px;overflow:auto;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}.qe-source-list label{font-size:11.5px;white-space:nowrap}
+  .qe-status{font-size:12px;padding:4px 8px;border-left:3px solid var(--line)}.qe-status.running{border-color:var(--info);color:var(--info)}.qe-status.completed{border-color:var(--success);color:var(--success)}.qe-status.failed{border-color:var(--danger);color:var(--danger)}
+  .qe-clamp{max-width:340px;max-height:48px;overflow:hidden;white-space:pre-wrap}.qe-actionbar{display:flex;gap:6px;align-items:center;padding:6px}
+  .qe-actionbar .fbar-search{flex:1;max-width:420px}.qe-section-head{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line)}.qe-section-head h3{margin:0;font-size:13px}
+  .qe-large-modal{width:min(94vw,1120px);height:min(90vh,850px);max-width:none;display:flex;flex-direction:column;padding:0;overflow:hidden}
+  .qe-modal-head{padding:14px 16px 10px;border-bottom:1px solid var(--line);flex:0 0 auto}.qe-modal-body{padding:12px 16px;overflow:auto;flex:1}.qe-modal-foot{padding:10px 16px;border-top:1px solid var(--line);flex:0 0 auto;display:flex;justify-content:flex-end;gap:8px}
+  .qe-edit-grid{display:grid;grid-template-columns:1fr 140px 140px;gap:8px}.qe-edit-grid .wide{grid-column:1/-1}.qe-edit-grid textarea{resize:vertical}.qe-editor-lg{min-height:132px}.qe-editor-md{min-height:88px}
+  .qe-multiselect{position:relative}.qe-multiselect-summary{width:100%;text-align:left}.qe-multiselect-menu{display:none;position:absolute;z-index:5;top:100%;left:0;width:min(520px,90vw);padding:8px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);grid-template-columns:repeat(3,1fr);gap:5px}.qe-multiselect.open .qe-multiselect-menu{display:grid}
+  .qe-log-lines{font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap}.qe-log-line{padding:7px 2px;border-bottom:1px solid var(--line)}
+  @media(max-width:900px){.qe-scope .field{min-width:160px}.qe-edit-grid{grid-template-columns:1fr}.qe-edit-grid .wide{grid-column:1}.qe-multiselect-menu{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -767,6 +784,40 @@
   </div>
 </div>
 
+<!-- ============ QA ENGINEERING MODALS ============ -->
+<div class="modal-overlay" id="qeEditModal"><div class="modal-card qe-large-modal">
+  <div class="qe-modal-head"><h3 id="qeEditHeading">Edit Test Case</h3><div class="modal-sub" id="qeEditSub"></div></div>
+  <div class="qe-modal-body"><div class="auth-error" id="qeEditError"></div><div class="qe-edit-grid">
+    <div class="field"><label for="qeEditId">Test Case ID</label><input id="qeEditId" disabled></div>
+    <div class="field"><label for="qeEditImportance">Importance</label><select id="qeEditImportance"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+    <div class="field"><label for="qeEditExecutionType">Execution Type</label><select id="qeEditExecutionType"><option>Manual</option><option>Automatable</option></select></div>
+    <div class="field"><label for="qeEditExecutionTool">Execution Tool</label><select id="qeEditExecutionTool"><option value="">N/A</option></select></div>
+    <div class="field wide"><label>Test Types</label><div class="qe-multiselect" id="qeEditTypes"><button type="button" class="btn qe-multiselect-summary" id="qeEditTypesSummary">Select Test Types</button><div class="qe-multiselect-menu" id="qeEditTypesMenu"></div></div></div>
+    <div class="field wide"><label for="qeEditScenario">Scenario</label><textarea id="qeEditScenario" class="qe-editor-md"></textarea></div>
+    <div class="field wide"><label for="qeEditPreconditions">Preconditions</label><textarea id="qeEditPreconditions" rows="4"></textarea></div>
+    <div class="field wide"><label for="qeEditTitleInput">Test Case</label><textarea id="qeEditTitleInput" class="qe-editor-lg"></textarea></div>
+    <div class="field wide"><label for="qeEditSteps">Test Steps</label><textarea id="qeEditSteps" class="qe-editor-lg"></textarea></div>
+    <div class="field wide"><label for="qeEditExpected">Expected Result</label><textarea id="qeEditExpected" class="qe-editor-md"></textarea></div>
+  </div></div>
+  <div class="qe-modal-foot"><button type="button" class="btn" id="qeEditCancel">Cancel</button><button type="button" class="btn btn-primary" id="qeEditSave">Save</button></div>
+</div></div>
+
+<div class="modal-overlay" id="qeLogModal"><div class="modal-card qe-large-modal">
+  <div class="qe-modal-head"><h3>Generation Detail Log</h3><div class="modal-sub" id="qeLogSub"></div></div>
+  <div class="qe-modal-body"><div class="qe-log-lines" id="qeLogLines"></div></div>
+  <div class="qe-modal-foot"><button type="button" class="btn btn-primary" id="qeLogClose">Close</button></div>
+</div></div>
+
+<div class="modal-overlay" id="qeExportResultModal"><div class="modal-card" style="max-width:620px">
+  <h3>Export Complete</h3><div id="qeExportResultBody"></div>
+  <div class="modal-actions"><button type="button" class="btn" id="qeExportResultClose">Close</button><button type="button" class="btn btn-primary" id="qeExportDownload">Download</button></div>
+</div></div>
+<div class="modal-overlay" id="qeExportFolderModal"><div class="modal-card" style="max-width:620px">
+  <h3>Choose Export Folder</h3><div class="modal-sub">Select an existing folder under AI-Web / Output. Arbitrary filesystem paths are not accepted.</div>
+  <label for="qeExportFolderSelect">Allowed folder</label><select id="qeExportFolderSelect" style="width:100%"></select>
+  <div class="modal-actions"><button type="button" class="btn" id="qeExportFolderCancel">Cancel</button><button type="button" class="btn btn-primary" id="qeExportFolderApply">Use Folder</button></div>
+</div></div>
+
 <div class="shell" id="shell" style="display:none;">
   <!-- SIDEBAR -->
   <aside class="sidebar">
@@ -787,6 +838,10 @@
       <a class="nav-item" data-page="knowledge" data-resource="knowledge">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5C4 4.67 4.67 4 5.5 4H12v16H5.5A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M20 5.5c0-.83-.67-1.5-1.5-1.5H12v16h6.5a1.5 1.5 0 0 0 1.5-1.5v-13Z"/></svg>
         <span class="label">Knowledge Hub</span>
+      </a>
+      <a class="nav-item" data-page="qa_engineering" data-resource="qa_engineering">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+        <span class="label">QA Engineering</span>
       </a>
       <a class="nav-item" data-page="automation" data-resource="automation">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3h6M10 3v4.2a2 2 0 0 1-.4 1.2L5.9 13.8A3 3 0 0 0 5 15.9V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.1a3 3 0 0 0-.9-2.1L13.4 8.4A2 2 0 0 1 13 7.2V3"/><path d="M7.5 14.5h9"/></svg>
@@ -969,6 +1024,37 @@
       </div>
     </div>
 
+    <!-- ============ QA ENGINEERING PAGE ============ -->
+    <div class="page" data-page-content="qa_engineering" style="display:none;">
+      <div class="topbar"><button class="collapse-btn generic-collapse" title="Collapse navigation"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button><div><h1 class="page-title">QA Engineering</h1><div class="page-sub">Grounded test design, review, and reusable QA artifacts</div></div></div>
+      <div class="page-body qe-page">
+        <div class="qe-scope">
+          <div class="field"><label for="qeDomain">Domain</label><select id="qeDomain"><option value="">Select Domain…</option></select></div>
+          <div class="field"><label for="qeModule">Module</label><select id="qeModule" disabled><option value="">Select Module…</option></select></div>
+          <div class="field"><label for="qeKnowledge">Knowledge</label><select id="qeKnowledge" disabled><option value="">Select Knowledge…</option></select></div>
+          <div class="field"><label for="qeVersion">Version</label><select id="qeVersion" disabled><option value="">Select Version…</option></select></div>
+          <div class="field"><label for="qeDocumentType">Document Type</label><select id="qeDocumentType" disabled><option value="">Select Document Type…</option></select></div>
+          <div class="field" style="flex-basis:320px"><label>Source File(s)</label><div class="qe-source-list" id="qeSources"><span class="muted-small">Select a Document Type.</span></div></div>
+          <div class="field"><label for="qeDocumentName">Test Case Document Name</label><input id="qeDocumentName" placeholder="e.g. Payment Validation Test Cases"></div>
+          <div class="field" style="max-width:145px"><label for="qeCaseCount">Number of Cases</label><select id="qeCaseCount"><option>5</option><option selected>10</option><option>20</option><option>50</option><option>100</option></select></div>
+          <button class="btn" id="qeRefreshBtn">Refresh</button><button class="btn btn-primary" id="qeGenerateBtn">Generate Test Cases</button>
+        </div>
+        <div class="dense-grid"><div class="qe-section-head"><h3>Test Types</h3><span class="muted-small">Select relevant coverage categories</span></div><div class="qe-types" id="qeTypes"></div></div>
+        <div class="qe-status" id="qeGenerationStatus">Idle</div>
+
+        <div class="dense-grid" id="qeDraftSection">
+          <div class="qe-actionbar"><strong>Generated / Draft Test Cases</strong><span class="muted-small" id="qeSavedCount">Saved: 00</span><span class="muted-small" id="qeSavedContext"></span><span class="muted-small" id="qeTrace"></span><div class="fbar-spacer"></div><div class="fbar-search"><input id="qeSearch" placeholder="Filter workspace…"></div><button class="btn btn-sm" id="qeAddCaseBtn">Add Test Case</button><button class="btn btn-sm" id="qeDiscardBtn">Discard Draft Changes</button><button class="btn btn-sm btn-primary" id="qeSaveDraftBtn">Review / Save</button><select id="qeExportFormat" style="width:95px"><option value="xlsx">Excel</option><option value="csv">CSV</option><option value="pdf">PDF</option><option value="html">HTML</option></select><button class="btn btn-sm" id="qeExportFolderBtn" title="AI-Web/Output/Test Cases">Folder</button><input id="qeExportFileName" style="width:190px" placeholder="Export filename"><button class="btn btn-sm" id="qeExportBtn">Export</button></div>
+          <div class="table-scroll"><table><thead><tr><th style="width:28px"><input type="checkbox" id="qeDraftSelectAll" aria-label="Select all workspace rows"></th><th style="width:155px">TC ID / Draft ID</th><th>Scenario / Test Case</th><th style="width:130px">Test Types</th><th>Test Steps</th><th>Expected Result</th><th style="width:90px">Execution Type</th><th style="width:105px">Execution Tool</th><th style="width:95px">State</th><th style="width:115px">Actions</th></tr></thead><tbody id="qeDraftBody"><tr><td colspan="10" class="muted-small">Select the complete Knowledge hierarchy and source context.</td></tr></tbody></table></div>
+        </div>
+
+        <div class="dense-grid">
+          <div class="qe-section-head"><h3>Generation Logs</h3><span class="muted-small">Persisted AI generation history</span><div class="fbar-spacer"></div><button class="btn btn-sm" id="qeLogsClear">Clear</button></div>
+          <div class="table-scroll" style="max-height:230px"><table><thead><tr><th style="width:145px">Started</th><th style="width:85px">Job ID</th><th>Scope</th><th style="width:90px">Status</th><th style="width:75px">Generated</th><th style="width:80px">Duration</th><th>Message</th><th style="width:70px"></th></tr></thead><tbody id="qeLogsBody"><tr><td colspan="8" class="muted-small">No generation history.</td></tr></tbody></table></div>
+          <div class="pg-bar" id="qeLogsPager"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ QA AUTOMATION PAGE ============ -->
     <div class="page" data-page-content="automation" style="display:none;">
       <div class="topbar">
@@ -977,282 +1063,421 @@
         </button>
         <div>
           <h1 class="page-title">QA Automation</h1>
-          <div class="page-sub">Automation Assets &middot; Scripts &middot; Execution &middot; Git</div>
+          <div class="page-sub">Playwright &middot; API &middot; SQL — automation assets, scripts &amp; execution</div>
         </div>
         <div class="topbar-spacer"></div>
       </div>
 
+      <!-- QA-AUTOMATION-FINAL-ARCHITECTURE-04: exactly 3 primary tabs.
+           Git Automation, ClickUp Automation and Test Manager Automation
+           are no longer separate QA Automation tabs — see this task's
+           completion report for where each one's reusable backend code
+           still lives (nothing was deleted, only unwired from this
+           page's navigation). ClickUp now appears only as a per-row
+           contextual action on FAILED rows (the "ClickUp" column below). -->
       <div class="tabstrip">
-        <button class="tab active" data-tab="auto-workspace">Workspace</button>
-        <button class="tab" data-tab="auto-cases">Test Cases</button>
-        <button class="tab" data-tab="auto-history" id="tabAutoLog">Execution History</button>
-        <button class="tab" data-tab="auto-git">Git Automation</button>
-        <button class="tab" data-tab="auto-env">Environment Settings</button>
+        <button class="tab active" data-tab="auto-playwright">Playwright Automation</button>
+        <button class="tab" data-tab="auto-api">API Automation</button>
+        <button class="tab" data-tab="auto-sql">SQL Automation</button>
       </div>
 
       <div class="workspace">
-        <!-- ============ WORKSPACE (cross-scope landing page) ============ -->
-        <div class="panel active" id="auto-workspace" style="gap:12px;">
+        <!-- ============ PLAYWRIGHT AUTOMATION ============ -->
+        <div class="panel active auto-type-panel" id="auto-playwright" data-automation-type="Playwright" style="gap:10px;">
           <div class="filterbar">
-            <select id="wsDomainFilter"><option value="">Domain: All</option></select>
-            <select id="wsModuleFilter"><option value="">Module: All</option></select>
-            <select id="wsTypeFilter">
-              <option value="">Framework: All</option>
-              <option value="Playwright">Playwright</option>
-              <option value="API">API</option>
-              <option value="None">Not automated</option>
+            <select class="at-domain">
+              <option value="">Select Domain…</option>
             </select>
-            <select id="wsStatusFilter">
-              <option value="">Status: All</option>
-              <option value="Manual">Manual</option>
-              <option value="Automated">Automated</option>
-            </select>
+            <select class="at-module"><option value="">Select Module…</option></select>
+            <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <button class="btn btn-primary at-load">Load Test Cases</button>
             <div class="fbar-spacer"></div>
-            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="wsSearch" placeholder="Search automation assets…"></div>
-            <button class="btn" id="wsRefreshBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+            <button class="btn" id="pwImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Import (Excel)</button>
+            <button class="btn" id="pwTemplateBtn">Download Sample Template</button>
+            <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
+
           <div class="card">
+            <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
+              <button class="btn btn-sm at-select-all">Select All</button>
+              <button class="btn btn-sm at-clear-all">Clear All</button>
+              <div class="fbar-spacer"></div>
+              <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
+            </div>
             <div class="table-scroll">
               <table>
                 <thead><tr>
-                  <th style="width:70px;">TC #</th><th>Domain / Module / Knowledge</th><th style="width:110px;">Framework</th>
-                  <th style="width:100px;">Status</th><th style="width:100px;">Latest Result</th><th style="width:150px;">Latest Run</th>
-                  <th style="width:70px;text-align:right;">Actions</th>
+                  <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
+                  <th style="width:62px;">TC #</th>
+                  <th>Test Case</th>
+                  <th style="width:90px;">Status</th>
+                  <th style="width:80px;">Result</th>
+                  <th style="width:72px;">Script</th>
+                  <th style="width:72px;">Record</th>
+                  <th style="width:96px;">Active Script</th>
+                  <th style="width:120px;">AI Auto Generate</th>
+                  <th style="width:76px;">ClickUp</th>
                 </tr></thead>
-                <tbody id="wsTableBody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">Loading…</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="10" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
               </table>
             </div>
-            <div class="pg-bar" id="wsPager"></div>
+            <div class="pg-bar at-pager"></div>
           </div>
-        </div>
 
-        <!-- ============ TEST CASES / ASSETS ============ -->
-        <div class="panel" id="auto-cases" style="gap:12px;">
-          <div class="filterbar">
-            <select id="tcDomainSel"><option value="">Select Domain…</option></select>
-            <select id="tcModuleSel"><option value="">Select Module…</option></select>
-            <select id="tcKnowledgeSel"><option value="">Select Knowledge…</option></select>
+          <div class="btn-row">
+            <button class="btn btn-primary at-exec-selected">Execute Selected</button>
+            <button class="btn at-exec-all">Execute All</button>
             <div class="fbar-spacer"></div>
-            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="tcSearch" placeholder="Filter test cases…"></div>
-            <button class="btn" id="tcImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Import (Excel)</button>
+            <button class="btn" id="pwEnvBtn">Test Environment Setting</button>
           </div>
 
-          <div class="split">
-            <div class="card">
-              <div class="table-scroll">
-                <table>
-                  <thead><tr><th style="width:70px;">TC #</th><th>Scenario</th><th style="width:100px;">Type</th><th style="width:90px;">Result</th><th style="width:88px;text-align:right;">Actions</th></tr></thead>
-                  <tbody id="tcTableBody"><tr><td colspan="5" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above to load test cases.</td></tr></tbody>
-                </table>
-              </div>
-              <div class="pg-bar" id="tcPager"></div>
-            </div>
-
-            <!-- Detail panel -->
-            <div class="card" id="tcDetailCard" style="display:none;">
-              <div class="detail-head">
-                <div class="tc-id" id="detailId">—</div>
-                <h3 id="detailTitle">Select a test case</h3>
-                <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">—</span><span class="pill pill-notrun" id="detailResult">Not Run</span></div>
-              </div>
-              <div class="detail-tabs">
-                <button class="dtab active" data-dtab="d-script">Script</button>
-                <button class="dtab" data-dtab="d-execute">Execute</button>
-                <button class="dtab" data-dtab="d-history">History</button>
-              </div>
-              <div class="detail-body">
-                <div class="detail-panel-view active" id="d-script">
-                  <div class="notice notice-warn" id="tcScriptNotice" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div id="tcScriptNoticeText"></div></div>
-                  <div class="field-label">Active source: <span class="pill pill-notrun" id="tcActiveSourcePill">AUTO</span></div>
-                  <div class="btn-row" style="margin:4px 0 8px;">
-                    <button class="btn" id="tcSetSourceAuto">Use AI-Generated Script</button>
-                    <button class="btn" id="tcSetSourceManual">Use Manually Recorded Script</button>
-                  </div>
-                  <div class="field-label">Automation Script</div>
-                  <textarea id="tcScriptEditor" class="code-block" style="width:100%;min-height:220px;font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
-                  <div class="auth-error" id="tcScriptError"></div>
-                  <div class="btn-row">
-                    <select id="tcGenerateTypeSel" style="max-width:150px;"><option value="Playwright">Playwright</option><option value="API">API</option></select>
-                    <button class="btn" id="tcGenerateBtn">Generate (AI)</button>
-                    <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
-                    <div class="fbar-spacer"></div>
-                    <button class="btn" id="tcValidateBtn">Validate</button>
-                    <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
-                  </div>
-                  <div id="tcValidateResult"></div>
-                </div>
-
-                <div class="detail-panel-view" id="d-execute">
-                  <div id="tcExecuteReadiness"></div>
-                  <div class="btn-row">
-                    <button class="btn btn-primary" id="tcExecuteBtn">Execute</button>
-                    <button class="btn btn-primary" id="tcExecuteApiBtn" style="display:none;">Execute Against Real Server</button>
-                    <button class="btn" id="tcCancelBtn" style="display:none; background:var(--danger); color:#fff; border-color:var(--danger);">Cancel Run</button>
-                  </div>
-                  <div id="tcRunLive" style="display:none;">
-                    <div class="kv" id="tcRunLiveKv"></div>
-                  </div>
-                  <div id="tcRunResult"></div>
-                </div>
-
-                <div class="detail-panel-view" id="d-history">
-                  <div class="table-scroll">
-                    <table>
-                      <thead><tr><th>Started</th><th>Result</th><th>Duration</th><th>By</th><th style="text-align:right;">Actions</th></tr></thead>
-                      <tbody id="tcHistoryTableBody"><tr><td colspan="5" class="muted-small">No runs yet.</td></tr></tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+          <div class="card" style="flex:1;min-height:220px;">
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="table-scroll" style="max-height:340px;">
+              <table>
+                <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
+                <tbody class="at-log-tbody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">No runs yet.</td></tr></tbody>
+              </table>
             </div>
           </div>
         </div>
 
-        <!-- ============ EXECUTION HISTORY (global) ============ -->
-        <div class="panel" id="auto-history" style="gap:12px;">
+        <!-- ============ API AUTOMATION ============ -->
+        <div class="panel auto-type-panel" id="auto-api" data-automation-type="API" style="gap:10px;">
           <div class="filterbar">
-            <select id="histDomainFilter"><option value="">Domain: All</option></select>
-            <select id="histModuleFilter"><option value="">Module: All</option></select>
-            <select id="histStatusFilter">
-              <option value="">Status: All</option>
-              <option value="Queued">Queued</option>
-              <option value="Running">Running</option>
-              <option value="Passed">Passed</option>
-              <option value="Failed">Failed</option>
-              <option value="Error">Error</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
+            <select class="at-domain"><option value="">Select Domain…</option></select>
+            <select class="at-module"><option value="">Select Module…</option></select>
+            <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <button class="btn btn-primary at-load">Load APIs</button>
             <div class="fbar-spacer"></div>
-            <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="histSearch" placeholder="Search runs…"></div>
-            <button class="btn" id="histRefreshBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+            <button class="btn" id="apiGenFromCollectionBtn">Generate Automation from API Collection</button>
+            <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
+
           <div class="card">
+            <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
+              <button class="btn btn-sm at-select-all">Select All</button>
+              <button class="btn btn-sm at-clear-all">Clear All</button>
+              <div class="fbar-spacer"></div>
+              <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
+            </div>
             <div class="table-scroll">
               <table>
                 <thead><tr>
-                  <th style="width:100px;">Run ID</th><th style="width:70px;">TC #</th><th>Domain / Module</th><th style="width:100px;">Result</th>
-                  <th style="width:150px;">Started</th><th style="width:80px;">Duration</th><th style="width:110px;">Executed By</th><th style="width:150px;text-align:right;">Actions</th>
+                  <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
+                  <th style="width:62px;">TC #</th>
+                  <th>Test Case / API</th>
+                  <th style="width:90px;">Status</th>
+                  <th style="width:80px;">Result</th>
+                  <th style="width:72px;">Script</th>
+                  <th style="width:96px;">Active Script</th>
+                  <th style="width:120px;">AI Auto Generate</th>
+                  <th style="width:76px;">ClickUp</th>
                 </tr></thead>
-                <tbody id="histTableBody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Loading…</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="9" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
               </table>
             </div>
-            <div class="pg-bar" id="histPager"></div>
-          </div>
-          <div class="card" id="histDetailCard" style="display:none;">
-            <div class="card-head"><h3>Run Details</h3><button class="btn" id="histDetailClose" style="margin-left:auto;">Close</button></div>
-            <div class="card-body" id="histDetailBody"></div>
-          </div>
-        </div>
-
-        <!-- ============ GIT AUTOMATION ============ -->
-        <div class="panel" id="auto-git" style="gap:12px;">
-          <div class="env-grid">
-            <div class="card">
-              <div class="card-head"><h3>Repository</h3></div>
-              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-                <div class="field"><label for="gitRemoteUrl">Remote URL / local path</label><input id="gitRemoteUrl" placeholder="https://github.com/org/repo.git" autocomplete="off"></div>
-                <div class="field"><label for="gitBranch">Branch</label><input id="gitBranch" value="main" autocomplete="off"></div>
-                <div class="field"><label for="gitUsername">Username (optional)</label><input id="gitUsername" autocomplete="off"></div>
-                <div class="field"><label for="gitToken">Token / Password (optional)</label><input id="gitToken" type="password" autocomplete="new-password"></div>
-                <div class="btn-row">
-                  <button class="btn btn-primary" id="gitOpenBtn">Open / Clone</button>
-                  <button class="btn" id="gitStatusBtn">Refresh Status</button>
-                </div>
-                <div class="auth-error" id="gitError"></div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Status</h3></div>
-              <div class="card-body" id="gitStatusBody"><div class="muted-small">Open a repository to see its status.</div></div>
-            </div>
+            <div class="pg-bar at-pager"></div>
           </div>
 
-          <div class="env-grid">
-            <div class="card">
-              <div class="card-head"><h3>Commit</h3></div>
-              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-                <div id="gitChangedFiles" class="muted-small">No changed files loaded — refresh status first.</div>
-                <div class="field"><label for="gitCommitMsg">Commit message</label><textarea id="gitCommitMsg" rows="2"></textarea></div>
-                <div class="btn-row">
-                  <button class="btn" id="gitGenMsgBtn">Suggest Message (AI)</button>
-                  <button class="btn btn-primary" id="gitCommitBtn">Commit Selected Files</button>
-                  <button class="btn" id="gitPullBtn">Pull</button>
-                  <button class="btn" id="gitPushBtn">Push</button>
-                </div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Merge / Compare / Conflicts</h3></div>
-              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-                <div class="field"><label for="gitMergeSource">Merge source branch/ref</label><input id="gitMergeSource" placeholder="origin/feature-branch"></div>
-                <button class="btn" id="gitMergeBtn">Merge</button>
-                <div style="display:flex; gap:8px;">
-                  <div class="field" style="flex:1;"><label for="gitCompareA">Compare — ref A</label><input id="gitCompareA" placeholder="HEAD~1"></div>
-                  <div class="field" style="flex:1;"><label for="gitCompareB">Compare — ref B</label><input id="gitCompareB" placeholder="HEAD"></div>
-                </div>
-                <button class="btn" id="gitCompareBtn">Compare</button>
-                <pre class="code-block" id="gitCompareResult" style="display:none;max-height:220px;overflow:auto;"></pre>
-                <button class="btn" id="gitConflictsBtn">Check Conflicts</button>
-                <div id="gitConflictsBody"></div>
-              </div>
+          <div class="btn-row">
+            <button class="btn btn-primary at-exec-selected">Execute Selected</button>
+            <button class="btn at-exec-all">Execute All</button>
+            <div class="fbar-spacer"></div>
+            <button class="btn" id="apiEnvBtn">Test Environment Setting</button>
+          </div>
+
+          <div class="card" style="flex:1;min-height:220px;">
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">API runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="table-scroll" style="max-height:340px;">
+              <table>
+                <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
+                <tbody class="at-log-tbody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">No runs yet.</td></tr></tbody>
+              </table>
             </div>
           </div>
         </div>
 
-        <!-- ============ ENVIRONMENT SETTINGS ============ -->
-        <div class="panel" id="auto-env" style="gap:12px;">
-          <div class="env-grid">
-            <div class="card">
-              <div class="card-head"><h3>Execution Configuration</h3><span style="font-size:11.5px;color:var(--ink-muted);">Applies to the next run — no need to regenerate scripts</span></div>
-              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-                <div class="field"><label for="envBaseUrl">Base URL</label><input id="envBaseUrl" placeholder="https://your-app.example"></div>
-                <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
-                <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-                <div style="display:flex; gap:8px;">
-                  <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
-                  <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
-                </div>
-                <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
-                <div id="envSecretHints" class="muted-small"></div>
-                <button class="btn btn-primary" id="envSaveBtn" style="align-self:flex-start;">Save Configuration</button>
+        <!-- ============ SQL AUTOMATION ============ -->
+        <div class="panel auto-type-panel" id="auto-sql" data-automation-type="SQL" style="gap:10px;">
+          <div class="filterbar">
+            <select class="at-domain"><option value="">Select Domain…</option></select>
+            <select class="at-module"><option value="">Select Module…</option></select>
+            <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <button class="btn btn-primary at-load">Load Test Cases</button>
+            <div class="fbar-spacer"></div>
+            <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
+          </div>
+
+          <div class="notice notice-warn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+            <div>SQL Automation is read-only by design — only a single SELECT/WITH query is ever allowed to run (see Test Environment Setting), enforced on the server regardless of what the configured database account itself permits.</div>
+          </div>
+
+          <div class="card">
+            <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
+              <button class="btn btn-sm at-select-all">Select All</button>
+              <button class="btn btn-sm at-clear-all">Clear All</button>
+              <div class="fbar-spacer"></div>
+              <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr>
+                  <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
+                  <th style="width:62px;">TC #</th>
+                  <th>Test Case</th>
+                  <th style="width:90px;">Status</th>
+                  <th style="width:80px;">Result</th>
+                  <th style="width:72px;">SQL</th>
+                  <th style="width:96px;">Active Script</th>
+                  <th style="width:120px;">AI Auto Generate SQL</th>
+                  <th style="width:76px;">ClickUp</th>
+                </tr></thead>
+                <tbody class="at-tbody"><tr><td colspan="9" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pg-bar at-pager"></div>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-primary at-exec-selected">Execute Selected</button>
+            <button class="btn at-exec-all">Execute All</button>
+            <div class="fbar-spacer"></div>
+            <button class="btn" id="sqlEnvBtn">Test Environment Setting</button>
+          </div>
+
+          <div class="card" style="flex:1;min-height:220px;">
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">SQL runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="table-scroll" style="max-height:340px;">
+              <table>
+                <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
+                <tbody class="at-log-tbody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">No runs yet.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SHARED TEST CASE DETAIL MODAL ============ -->
+    <!-- One shared modal for all 3 automation types (only one test case
+         can be open at a time regardless of which tab it was opened
+         from) — its Script/Execute panels switch behavior based on the
+         open test case's own automation_type. -->
+    <div class="modal-overlay" id="tcDetailModal">
+      <div class="modal-card" style="max-width:820px;">
+        <div class="detail-head">
+          <div class="tc-id" id="detailId">—</div>
+          <h3 id="detailTitle" style="flex:1;">Select a test case</h3>
+          <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">—</span><span class="pill pill-notrun" id="detailResult">Not Run</span></div>
+          <button class="btn btn-sm" id="tcDetailCloseBtn">Close</button>
+        </div>
+        <div class="detail-tabs">
+          <button class="dtab active" data-dtab="d-script">Script</button>
+          <button class="dtab" data-dtab="d-execute">Execute</button>
+          <button class="dtab" data-dtab="d-history">History</button>
+        </div>
+        <div class="detail-body">
+          <div class="detail-panel-view active" id="d-script">
+            <div class="notice notice-warn" id="tcScriptNotice" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div id="tcScriptNoticeText"></div></div>
+            <div class="field-label" id="tcActiveSourceRow">Active source: <span class="pill pill-notrun" id="tcActiveSourcePill">AUTO</span></div>
+            <div class="btn-row" id="tcSourceButtons" style="margin:4px 0 8px;">
+              <button class="btn" id="tcSetSourceAuto">Use AI-Generated Script</button>
+              <button class="btn" id="tcSetSourceManual">Use Manually Recorded Script</button>
+            </div>
+
+            <div class="field-label" id="tcScriptLabel">Automation Script</div>
+            <textarea id="tcScriptEditor" class="code-block" style="width:100%;min-height:200px;font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
+
+            <!-- SQL-only assertion fields — hidden for Playwright/API -->
+            <div id="tcSqlAssertionRow" style="display:none;gap:8px;margin-top:8px;">
+              <div class="field" style="flex:1;">
+                <label for="tcSqlAssertionType">Assertion</label>
+                <select id="tcSqlAssertionType">
+                  <option value="row_exists">Row exists</option>
+                  <option value="no_rows">No rows returned</option>
+                  <option value="row_count_equals">Row count equals</option>
+                  <option value="scalar_equals">First value equals</option>
+                  <option value="value_equals">Column value equals</option>
+                </select>
+              </div>
+              <div class="field" style="flex:1;">
+                <label for="tcSqlAssertionColumn">Column (for "Column value equals")</label>
+                <input id="tcSqlAssertionColumn" placeholder="e.g. status">
+              </div>
+              <div class="field" style="flex:1;">
+                <label for="tcSqlAssertionValue">Expected value</label>
+                <input id="tcSqlAssertionValue" placeholder="e.g. Approved">
               </div>
             </div>
-            <div class="card">
-              <div class="card-head"><h3>API Execution Settings</h3></div>
-              <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-                <div class="field"><label for="envApiAuthType">Auth type</label><select id="envApiAuthType"><option value="None">None</option><option value="Bearer Token">Bearer Token</option><option value="Basic Auth">Basic Auth</option><option value="API Key Header">Custom Header</option></select></div>
-                <div class="field"><label for="envApiAuthToken">Bearer token</label><input id="envApiAuthToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-                <div style="display:flex; gap:8px;">
-                  <div class="field" style="flex:1;"><label for="envApiHeaderName">Header name</label><input id="envApiHeaderName"></div>
-                  <div class="field" style="flex:1;"><label for="envApiHeaderValue">Header value</label><input id="envApiHeaderValue" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-                </div>
-                <div style="display:flex; gap:8px;">
-                  <div class="field" style="flex:1;"><label for="envApiUsername">Basic — username</label><input id="envApiUsername" autocomplete="off"></div>
-                  <div class="field" style="flex:1;"><label for="envApiPassword">Basic — password</label><input id="envApiPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-                </div>
-                <div style="display:flex; gap:8px;">
-                  <div class="field" style="flex:1;"><label for="envApiTimeout">Request timeout (s)</label><input id="envApiTimeout" placeholder="30"></div>
-                  <div class="field" style="flex:1;"><label for="envApiBaseOverride">Base URL override</label><input id="envApiBaseOverride" placeholder="(optional)"></div>
-                </div>
-                <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="envApiVerifySsl" checked> Verify SSL certificates</label>
+
+            <div class="auth-error" id="tcScriptError"></div>
+            <div class="btn-row">
+              <select id="tcGenerateTypeSel" style="max-width:150px;"><option value="Playwright">Playwright</option><option value="API">API</option></select>
+              <button class="btn" id="tcGenerateBtn">Generate (AI)</button>
+              <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
+              <div class="fbar-spacer"></div>
+              <button class="btn" id="tcValidateBtn">Validate</button>
+              <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
+            </div>
+            <div id="tcValidateResult"></div>
+          </div>
+
+          <div class="detail-panel-view" id="d-execute">
+            <div id="tcExecuteReadiness"></div>
+            <div class="btn-row">
+              <button class="btn btn-primary" id="tcExecuteBtn">Execute</button>
+              <button class="btn btn-primary" id="tcExecuteApiBtn" style="display:none;">Execute Against Real Server</button>
+              <button class="btn btn-primary" id="tcExecuteSqlBtn" style="display:none;">Execute Query</button>
+              <button class="btn" id="tcCancelBtn" style="display:none; background:var(--danger); color:#fff; border-color:var(--danger);">Cancel Run</button>
+              <div class="fbar-spacer"></div>
+              <button class="btn" id="tcClickUpBtn" style="display:none;">Create ClickUp Bug</button>
+            </div>
+            <div id="tcRunLive" style="display:none;">
+              <div class="kv" id="tcRunLiveKv"></div>
+            </div>
+            <div id="tcRunResult"></div>
+          </div>
+
+          <div class="detail-panel-view" id="d-history">
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Started</th><th>Result</th><th>Duration</th><th>By</th><th style="text-align:right;">Actions</th></tr></thead>
+                <tbody id="tcHistoryTableBody"><tr><td colspan="5" class="muted-small">No runs yet.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TEST ENVIRONMENT SETTING — Playwright / API ============ -->
+    <div class="modal-overlay" id="envModal">
+      <div class="modal-card" style="max-width:720px;">
+        <h3>Test Environment Setting — Playwright &amp; API</h3>
+        <div class="modal-sub">Applies to the next run — no need to regenerate scripts.</div>
+        <div class="env-grid">
+          <div class="card">
+            <div class="card-head"><h3>Playwright</h3></div>
+            <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+              <div class="field"><label for="envBaseUrl">Base URL</label><input id="envBaseUrl" placeholder="https://your-app.example"></div>
+              <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
+              <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              <div style="display:flex; gap:8px;">
+                <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
+                <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
               </div>
+              <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
             </div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
-            <div class="var-table-wrap">
-              <table>
-                <thead><tr><th>Variable</th><th>Value</th></tr></thead>
-                <tbody id="envVarsTableBody"><tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr></tbody>
-              </table>
-            </div>
-            <div class="btn-row" style="padding:10px;">
-              <input id="envVarName" placeholder="Variable name" style="max-width:180px;">
-              <input id="envVarValue" placeholder="Value" style="max-width:220px;">
-              <button class="btn" id="envVarSaveBtn">Remember Variable</button>
+            <div class="card-head"><h3>API Execution</h3></div>
+            <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+              <div class="field"><label for="envApiAuthType">Auth type</label><select id="envApiAuthType"><option value="None">None</option><option value="Bearer Token">Bearer Token</option><option value="Basic Auth">Basic Auth</option><option value="API Key Header">Custom Header</option></select></div>
+              <div class="field"><label for="envApiAuthToken">Bearer token</label><input id="envApiAuthToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              <div style="display:flex; gap:8px;">
+                <div class="field" style="flex:1;"><label for="envApiHeaderName">Header name</label><input id="envApiHeaderName"></div>
+                <div class="field" style="flex:1;"><label for="envApiHeaderValue">Header value</label><input id="envApiHeaderValue" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <div class="field" style="flex:1;"><label for="envApiUsername">Basic — username</label><input id="envApiUsername" autocomplete="off"></div>
+                <div class="field" style="flex:1;"><label for="envApiPassword">Basic — password</label><input id="envApiPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <div class="field" style="flex:1;"><label for="envApiTimeout">Request timeout (s)</label><input id="envApiTimeout" placeholder="30"></div>
+                <div class="field" style="flex:1;"><label for="envApiBaseOverride">Base URL override</label><input id="envApiBaseOverride" placeholder="(optional)"></div>
+              </div>
+              <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="envApiVerifySsl" checked> Verify SSL certificates</label>
             </div>
           </div>
         </div>
+        <div class="card">
+          <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
+          <div class="var-table-wrap">
+            <table>
+              <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+              <tbody id="envVarsTableBody"><tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="btn-row" style="padding:10px;">
+            <input id="envVarName" placeholder="Variable name" style="max-width:180px;">
+            <input id="envVarValue" placeholder="Value" style="max-width:220px;">
+            <button class="btn" id="envVarSaveBtn">Remember Variable</button>
+          </div>
+        </div>
+        <!-- ClickUp is a single global integration (not per Domain/Module),
+             so it is configured once, here, rather than duplicated across
+             the Playwright/API/SQL Test Environment Setting modals. It is
+             only ever used to create a bug task for a FAILED test case's
+             ClickUp column/button — see the "ClickUp" grid column and the
+             tcClickUpBtn in the test case detail modal. -->
+        <div class="card">
+          <div class="card-head"><h3>ClickUp Integration</h3><span class="muted-small" id="clickupStatusText" style="margin-left:auto;">Checking status…</span></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="clickupApiToken">API token</label><input id="clickupApiToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              <div class="field" style="flex:1;"><label for="clickupListId">List ID</label><input id="clickupListId" autocomplete="off"></div>
+            </div>
+            <div class="btn-row"><button class="btn" id="clickupSaveBtn">Save ClickUp Configuration</button></div>
+          </div>
+        </div>
+        <div id="envSecretHints" class="muted-small"></div>
+        <div class="modal-actions">
+          <button class="btn" id="envCloseBtn">Close</button>
+          <button class="btn btn-primary" id="envSaveBtn">Save Configuration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TEST ENVIRONMENT SETTING — SQL ============ -->
+    <div class="modal-overlay" id="sqlEnvModal">
+      <div class="modal-card" style="max-width:520px;">
+        <h3>SQL Test Environment Setting</h3>
+        <div class="modal-sub">The target database SQL Automation connects to — never the QA AI Studio application's own database. Use a read-only test/UAT account.</div>
+        <div class="card-body" style="display:flex; flex-direction:column; gap:8px;padding:0;">
+          <div class="field"><label for="sqlEnvDbType">Database type</label>
+            <select id="sqlEnvDbType">
+              <option value="sqlite">SQLite</option>
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="mssql">SQL Server (MSSQL)</option>
+              <option value="oracle">Oracle</option>
+            </select>
+          </div>
+          <div class="field" id="sqlEnvSqlitePathRow"><label for="sqlEnvSqlitePath">SQLite file path</label><input id="sqlEnvSqlitePath" placeholder="/path/to/database.db"></div>
+          <div id="sqlEnvNetworkFields" style="display:none;flex-direction:column;gap:8px;">
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="sqlEnvHost">Host</label><input id="sqlEnvHost"></div>
+              <div class="field" style="flex:1;"><label for="sqlEnvPort">Port</label><input id="sqlEnvPort"></div>
+            </div>
+            <div class="field"><label for="sqlEnvDatabase">Database</label><input id="sqlEnvDatabase"></div>
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="sqlEnvUsername">Username</label><input id="sqlEnvUsername" autocomplete="off"></div>
+              <div class="field" style="flex:1;"><label for="sqlEnvPassword">Password</label><input id="sqlEnvPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <div class="field" style="flex:1;"><label for="sqlEnvTimeout">Query timeout (s)</label><input id="sqlEnvTimeout" placeholder="30"></div>
+            <div class="field" style="flex:1;"><label for="sqlEnvMaxRows">Max rows returned</label><input id="sqlEnvMaxRows" placeholder="200"></div>
+          </div>
+          <div id="sqlEnvSecretHints" class="muted-small"></div>
+          <div class="auth-error" id="sqlEnvTestResult"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="sqlEnvTestBtn">Test Connection</button>
+          <button class="btn" id="sqlEnvCloseBtn">Close</button>
+          <button class="btn btn-primary" id="sqlEnvSaveBtn">Save Configuration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ RUN DETAILS ============ -->
+    <div class="modal-overlay" id="runDetailModal">
+      <div class="modal-card" style="max-width:640px;">
+        <h3>Run Details</h3>
+        <div class="card-body" id="runDetailBody" style="padding:0;"></div>
+        <div class="modal-actions"><button class="btn" id="runDetailCloseBtn">Close</button></div>
       </div>
     </div>
 
@@ -1301,8 +1526,8 @@
                   <div class="kh-field"><label for="khUpModuleSel">Module</label><div class="kh-control-pair"><select id="khUpModuleSel" disabled><option value="">Select a Domain first...</option></select><button type="button" class="btn kh-add-btn" id="khOpenAddModuleBtn">+</button></div></div>
                   <div class="kh-field wide"><label for="khUpName">Knowledge Name</label><input id="khUpName" placeholder="e.g. Payment Gateway SRS"></div>
                   <div class="kh-field"><label for="khUpVersion">Version</label><input id="khUpVersion" placeholder="1.0" value="1.0"></div>
-                  <div class="kh-field"><label for="khUpDocTypeSel">Document Type</label><select id="khUpDocTypeSel"><option value="SRS">SRS</option><option value="CRF">CRF</option><option value="Test Case">Test Case</option><option value="SOP">SOP</option><option value="API Documentation">API Documentation</option><option value="Release Notes">Release Notes</option><option value="Technical Document">Technical Document</option><option value="Other">Other</option></select></div>
-                  <div class="kh-field"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="Release Notes">Release Notes</option><option value="Test Cases">Test Cases</option><option value="SOP Documents">SOP Documents</option><option value="API Collection">API Collection</option><option value="URL">URL / Guided Discovery</option><option value="Images" disabled>Images (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Database Metadata" disabled>Database Metadata (unavailable)</option><option value="Git Repository" disabled>Git Repository (unavailable)</option></select></div>
+                  <div class="kh-field"><label for="khUpDocTypeSel">Document Type</label><select id="khUpDocTypeSel"><option value="SRS">SRS</option><option value="CRF">CRF</option><option value="BRS">BRS</option><option value="FSD">FSD</option><option value="Test Cases">Test Cases</option><option value="Test Case">Test Case (legacy)</option><option value="SOP">SOP</option><option value="API Documentation">API Documentation</option><option value="Release Notes">Release Notes</option><option value="Technical Document">Technical Document</option><option value="Integration Document">Integration Document</option><option value="Other">Other</option></select></div>
+                  <div class="kh-field"><label for="khUpSourceType">Source Type</label><select id="khUpSourceType"><option value="Files">Files</option><option value="Folder">Folder</option><option value="API Collection">API Collection</option><option value="URL">URL / Guided Discovery</option><option value="Images" disabled>Images (unavailable)</option><option value="SQL Script" disabled>SQL Script (unavailable)</option><option value="Git Repository" disabled>Git Repository (unavailable)</option><option value="SQA Script" disabled>SQA Script (unavailable)</option></select></div>
                 </div>
               </section>
               <section class="kh-section">
@@ -1353,11 +1578,15 @@
               <div class="field"><label for="khSmartDocTypeSel">Document Type</label><select id="khSmartDocTypeSel" style="width:100%;">
                 <option value="SRS">SRS</option>
                 <option value="CRF">CRF</option>
+                <option value="BRS">BRS</option>
+                <option value="FSD">FSD</option>
+                <option value="Test Cases">Test Cases</option>
                 <option value="Test Case">Test Case</option>
                 <option value="SOP">SOP</option>
                 <option value="API Documentation">API Documentation</option>
                 <option value="Release Notes">Release Notes</option>
                 <option value="Technical Document">Technical Document</option>
+                <option value="Integration Document">Integration Document</option>
                 <option value="Other">Other</option>
               </select></div>
                 </div>
@@ -1782,6 +2011,7 @@
     if(hasPermission('ai_assistant', 'view')) loadAiHistory();
     if(hasPermission('dashboard', 'view')) loadDashboard();
     if(hasPermission('automation', 'view')) initAutomation();
+    if(hasPermission('qa_engineering', 'view')) initQaEngineering();
   }
 
   function loadSession(){
@@ -2054,12 +2284,78 @@
   // the disabled/hidden states below are just a UX convenience layered
   // on top, matching the pattern already used for Users & Access.
   // ==================================================================
-  var autoScopes = [];
-  var autoCurrentScope = { domain: '', module: '', knowledge_name: '' };
-  var autoTestCases = [];
+  // QA-AUTOMATION-FINAL-ARCHITECTURE-04: exactly 3 automation-type
+  // tabs (Playwright / API / SQL), each a self-contained Select ->
+  // Grid -> Action -> Log workspace. AUTO_TYPES drives all 3 —
+  // one small config object instead of near-duplicated per-tab code.
+  var AUTO_TYPES = {
+    Playwright: { panel: 'auto-playwright' },
+    API: { panel: 'auto-api' },
+    SQL: { panel: 'auto-sql' },
+  };
+  var autoScopesByType = { Playwright: [], API: [], SQL: [] };
+  var autoTestCasesByType = { Playwright: [], API: [], SQL: [] };
+  var autoGridControllers = {};
+  var autoLogControllers = {};
   var autoSelectedTc = null;
   var autoPollTimer = null;
   var autoCurrentRunUuid = null;
+
+  function panelFor(type){ return document.getElementById(AUTO_TYPES[type].panel); }
+
+  // ---- Scopes (Domain / Module / Knowledge cascades), per tab ----
+  function loadTypeScopes(type){
+    return apiFetch('/api/automation/scope').then(function(data){
+      autoScopesByType[type] = data.scopes || [];
+      var panel = panelFor(type);
+      var domains = uniqueVals(autoScopesByType[type].map(function(s){ return s.domain; }));
+      fillSelect(panel.querySelector('.at-domain'), domains, 'Select Domain…');
+      refreshTypeModuleOptions(type);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+  function refreshTypeModuleOptions(type){
+    var panel = panelFor(type);
+    var domain = panel.querySelector('.at-domain').value;
+    var modules = uniqueVals(autoScopesByType[type].filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
+    fillSelect(panel.querySelector('.at-module'), modules, 'Select Module…');
+    refreshTypeKnowledgeOptions(type);
+  }
+  function refreshTypeKnowledgeOptions(type){
+    var panel = panelFor(type);
+    var domain = panel.querySelector('.at-domain').value;
+    var module = panel.querySelector('.at-module').value;
+    var names = uniqueVals(autoScopesByType[type].filter(function(s){
+      return (!domain || s.domain === domain) && (!module || s.module === module);
+    }).map(function(s){ return s.knowledge_name; }));
+    fillSelect(panel.querySelector('.at-knowledge'), names, 'Select Knowledge…');
+  }
+
+  // ---- Grid + Log controllers, one pair per automation type ----
+  Object.keys(AUTO_TYPES).forEach(function(type){
+    var panel = panelFor(type);
+    autoGridControllers[type] = createGridController({
+      name: 'auto-' + type, tbody: panel.querySelector('.at-tbody'),
+      footer: panel.querySelector('.at-pager'), colSpan: (type === 'Playwright' ? 10 : 9),
+      searchInput: panel.querySelector('.at-search'),
+      emptyText: 'No test cases in this scope.',
+      onRendered: function(body){ wireGridRowActions(type, body); },
+    });
+    autoLogControllers[type] = createGridController({
+      name: 'auto-' + type + '-log', tbody: panel.querySelector('.at-log-tbody'),
+      colSpan: 7, emptyText: 'No runs yet.',
+      onRendered: function(body){ wireLogRowActions(type, body); },
+    });
+  });
+
+  function initAutomation(){
+    Object.keys(AUTO_TYPES).forEach(function(type){
+      loadTypeScopes(type);
+      loadTypeLog(type);
+    });
+    loadEnvironment();
+    loadSqlEnvironment();
+    refreshClickUpStatus();
+  }
 
   function autoCanCreate(){ return hasPermission('automation', 'create'); }
   function autoCanEdit(){ return hasPermission('automation', 'edit'); }
@@ -2128,216 +2424,288 @@
       .then(function(blob){ return URL.createObjectURL(blob); });
   }
 
-  // ---- Scopes (Domain / Module / Knowledge cascades) ----
-  function loadAutoScopes(){
-    return apiFetch('/api/automation/scope').then(function(data){
-      autoScopes = data.scopes || [];
-      var domains = uniqueVals(autoScopes.map(function(s){ return s.domain; }));
-      fillSelect(document.getElementById('wsDomainFilter'), domains, 'Domain: All');
-      fillSelect(document.getElementById('tcDomainSel'), domains, 'Select Domain…');
-      fillSelect(document.getElementById('histDomainFilter'), domains, 'Domain: All');
-      refreshWsModuleOptions();
-      refreshTcModuleOptions();
-      refreshHistModuleOptions();
-    }).catch(function(err){ toast(err.message, true); });
+  // NOTE: the old Workspace/Test-Cases/History cascade + grid-controller
+  // code (loadAutoScopes/refreshWsModuleOptions/refreshTcModuleOptions/
+  // refreshTcKnowledgeOptions/refreshHistModuleOptions, wsController/
+  // tcController/histController, and a second initAutomation()) was
+  // removed here — it belonged to the old 7-tab layout and referenced
+  // DOM ids (wsDomainFilter/tcDomainSel/tcModuleSel/tcKnowledgeSel/
+  // histDomainFilter/wsTableBody/tcTableBody/histTableBody/etc.) that no
+  // longer exist in the 3-tab (Playwright/API/SQL) markup. The real,
+  // current per-type equivalents (loadTypeScopes/refreshTypeModuleOptions/
+  // refreshTypeKnowledgeOptions, autoGridControllers/autoLogControllers,
+  // and initAutomation()) are defined above, right after AUTO_TYPES.
+
+  // ---- Test Cases grid, per automation type ----
+  function activeTypeScope(type){
+    var panel = panelFor(type);
+    return {
+      domain: panel.querySelector('.at-domain').value,
+      module: panel.querySelector('.at-module').value,
+      knowledge_name: panel.querySelector('.at-knowledge').value,
+    };
   }
 
-  function refreshWsModuleOptions(){
-    var domain = document.getElementById('wsDomainFilter').value;
-    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
-    fillSelect(document.getElementById('wsModuleFilter'), modules, 'Module: All');
-  }
-  function refreshHistModuleOptions(){
-    var domain = document.getElementById('histDomainFilter').value;
-    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
-    fillSelect(document.getElementById('histModuleFilter'), modules, 'Module: All');
-  }
-  function refreshTcModuleOptions(){
-    var domain = document.getElementById('tcDomainSel').value;
-    var modules = uniqueVals(autoScopes.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
-    fillSelect(document.getElementById('tcModuleSel'), modules, 'Select Module…');
-    refreshTcKnowledgeOptions();
-  }
-  function refreshTcKnowledgeOptions(){
-    var domain = document.getElementById('tcDomainSel').value;
-    var module = document.getElementById('tcModuleSel').value;
-    var names = uniqueVals(autoScopes.filter(function(s){
-      return (!domain || s.domain === domain) && (!module || s.module === module);
-    }).map(function(s){ return s.knowledge_name; }));
-    fillSelect(document.getElementById('tcKnowledgeSel'), names, 'Select Knowledge…');
-  }
-
-  // ---- Grid controllers ----
-  var wsController = createGridController({
-    name: 'auto-workspace', tbody: document.getElementById('wsTableBody'),
-    footer: document.getElementById('wsPager'), colSpan: 7,
-    emptyText: 'No automation assets match these filters.', onRendered: wireWsRowActions,
-  });
-  var tcController = createGridController({
-    name: 'auto-cases', tbody: document.getElementById('tcTableBody'),
-    searchInput: document.getElementById('tcSearch'),
-    footer: document.getElementById('tcPager'), colSpan: 5,
-    emptyText: 'No test cases in this scope.', onRendered: wireTcTableRowActions,
-  });
-  var histController = createGridController({
-    name: 'auto-history', tbody: document.getElementById('histTableBody'),
-    footer: document.getElementById('histPager'), colSpan: 8,
-    emptyText: 'No execution runs yet.', onRendered: wireHistRowActions,
-  });
-
-  function initAutomation(){
-    loadAutoScopes().then(function(){
-      loadWorkspace();
-      loadHistory();
-    });
-    loadEnvironment();
-  }
-
-  // ---- Workspace ----
-  function loadWorkspace(){
-    var params = new URLSearchParams();
-    var domain = document.getElementById('wsDomainFilter').value;
-    var module = document.getElementById('wsModuleFilter').value;
-    var type = document.getElementById('wsTypeFilter').value;
-    var status = document.getElementById('wsStatusFilter').value;
-    var q = document.getElementById('wsSearch').value.trim();
-    if(domain) params.set('domain', domain);
-    if(module) params.set('module', module);
-    if(type) params.set('automation_type', type);
-    if(status) params.set('status', status);
-    if(q) params.set('q', q);
-    params.set('limit', '200');
-    apiFetch('/api/automation/workspace?' + params.toString()).then(function(data){
-      renderWorkspace(data.test_cases || []);
-    }).catch(function(err){ toast(err.message, true); });
-  }
-
-  function renderWorkspace(items){
-    var rows = items.map(function(tc){
-      var latest = tc.latest_run;
-      var scopeLabel = escapeHtml(tc.domain) + ' / ' + escapeHtml(tc.module) + ' / ' + escapeHtml(tc.knowledge_name);
-      var html =
-        '<tr data-tc-id="' + tc.id + '">' +
-          '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
-          '<td>' + scopeLabel + '<div class="muted-small">' + escapeHtml(tc.test_case || tc.scenario || '') + '</div></td>' +
-          '<td>' + escapeHtml(tc.automation_type || 'None') + '</td>' +
-          '<td>' + escapeHtml(tc.status || 'Manual') + '</td>' +
-          '<td>' + resultPillHtml(latest ? latest.outcome : null) + '</td>' +
-          '<td class="num">' + (latest ? formatDateTime(latest.started_at || latest.created_date) : '—') + '</td>' +
-          '<td style="text-align:right;"><button class="btn btn-sm ws-view-btn" data-tc-id="' + tc.id + '">View</button></td>' +
-        '</tr>';
-      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || '') + ' ' + tc.domain + ' ' + tc.module + ' ' + tc.knowledge_name).toLowerCase() };
-    });
-    wsController.setRows(rows);
-  }
-
-  function wireWsRowActions(body){
-    body.querySelectorAll('.ws-view-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
-        goToTestCaseFromWorkspace(tcId);
-      });
-    });
-  }
-
-  // Workspace rows only carry an id; jump to Test Cases, set the
-  // cascading scope from the test case's own domain/module/knowledge
-  // (fetched fresh — never trusted from stale client state), then
-  // select it once its list has loaded.
-  function goToTestCaseFromWorkspace(tcId){
-    apiFetch('/api/automation/test-cases/' + tcId).then(function(tc){
-      document.querySelector('.tab[data-tab="auto-cases"]').click();
-      document.getElementById('tcDomainSel').value = tc.domain;
-      refreshTcModuleOptions();
-      document.getElementById('tcModuleSel').value = tc.module;
-      refreshTcKnowledgeOptions();
-      document.getElementById('tcKnowledgeSel').value = tc.knowledge_name;
-      loadTestCases().then(function(){
-        selectTestCase(tc);
-      });
-    }).catch(function(err){ toast(err.message, true); });
-  }
-
-  // ---- Test Cases ----
-  function loadTestCases(){
-    var domain = document.getElementById('tcDomainSel').value;
-    var module = document.getElementById('tcModuleSel').value;
-    var knowledge = document.getElementById('tcKnowledgeSel').value;
-    if(!domain || !module || !knowledge){
-      autoTestCases = [];
-      tcController.setRows([]);
+  function loadTypeTestCases(type){
+    var scope = activeTypeScope(type);
+    if(!scope.domain || !scope.module || !scope.knowledge_name){
+      autoTestCasesByType[type] = [];
+      autoGridControllers[type].setRows([]);
       return Promise.resolve();
     }
-    var params = new URLSearchParams({ domain: domain, module: module, knowledge_name: knowledge });
+    var params = new URLSearchParams(scope); params.set('automation_type', type);
     return apiFetch('/api/automation/test-cases?' + params.toString()).then(function(data){
-      autoTestCases = data.test_cases || [];
-      renderTestCases(autoTestCases);
+      // The scoped /test-cases endpoint returns every automation type
+      // in that Domain/Module/Knowledge together (Playwright/API/SQL/
+      // None all share one pool of test cases from QA Engineering) —
+      // each tab only ever shows the rows matching ITS OWN type, so a
+      // Playwright-type row never appears (and can't be executed from)
+      // the API or SQL tab, and vice versa.
+      autoTestCasesByType[type] = data.test_cases || [];
+      renderTypeTestCases(type);
     }).catch(function(err){ toast(err.message, true); });
   }
 
-  function renderTestCases(items){
+  function renderTypeTestCases(type){
+    var items = autoTestCasesByType[type];
     var rows = items.map(function(tc){
+      var scriptLabel = type === 'SQL' ? 'View SQL' : 'View Script';
+      var recordCell = type === 'Playwright'
+        ? '<button class="btn btn-sm at-record-btn" data-tc-id="' + tc.id + '">Record</button>'
+        : '<span class="muted-small">—</span>';
+      var activeLabel = (tc.automation_type && tc.automation_type !== 'None')
+        ? (tc.status === 'Automated' ? 'Active' : 'Draft')
+        : '—';
+      var clickUpCell = tc.last_result === 'Fail'
+        ? '<button class="btn btn-sm at-clickup-btn" data-tc-id="' + tc.id + '">Create Bug</button>'
+        : '<span class="muted-small">—</span>';
+      var checkboxCell = '<input type="checkbox" class="at-row-check" data-tc-id="' + tc.id + '">';
+      var cells =
+        '<td>' + checkboxCell + '</td>' +
+        '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
+        '<td>' + escapeHtml(tc.test_case || tc.scenario || '') + '</td>' +
+        '<td>' + escapeHtml(tc.status || 'Manual') + '</td>' +
+        '<td>' + resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result) + '</td>' +
+        '<td><button class="btn btn-sm at-view-btn" data-tc-id="' + tc.id + '">' + scriptLabel + '</button></td>' +
+        (type === 'Playwright' ? '<td>' + recordCell + '</td>' : '') +
+        '<td>' + escapeHtml(activeLabel) + '</td>' +
+        '<td><button class="btn btn-sm at-generate-btn" data-tc-id="' + tc.id + '">AI Generate</button></td>' +
+        '<td>' + clickUpCell + '</td>';
+      var html = '<tr data-tc-id="' + tc.id + '">' + cells + '</tr>';
+      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '')).toLowerCase() };
+    });
+    autoGridControllers[type].setRows(rows);
+  }
+
+  function wireGridRowActions(type, body){
+    body.querySelectorAll('.at-view-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
+        if(tc) selectTestCase(tc, type);
+      });
+    });
+    body.querySelectorAll('.at-generate-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
+        if(tc) selectTestCase(tc, type, function(){ document.getElementById('tcGenerateBtn').click(); });
+      });
+    });
+    body.querySelectorAll('.at-record-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        toast('Manual Recording needs a live, human-drivable browser window (Playwright\'s own codegen) — this requires the desktop app; there is no remote-display bridge for this in the web port yet.', true);
+      });
+    });
+    body.querySelectorAll('.at-clickup-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
+        createClickUpBug(tcId, btn);
+      });
+    });
+  }
+
+  function createClickUpBug(tcId, btn){
+    if(btn) btn.disabled = true;
+    apiFetch('/api/automation/test-cases/' + tcId + '/clickup-bug', { method: 'POST' }).then(function(result){
+      toast('ClickUp bug created: ' + (result.task_url || result.task_id));
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ if(btn) btn.disabled = false; });
+  }
+
+  // ---- Select All / Clear All + Execute Selected / Execute All ----
+  Object.keys(AUTO_TYPES).forEach(function(type){
+    var panel = panelFor(type);
+    panel.querySelector('.at-header-check').addEventListener('change', function(e){
+      panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = e.target.checked; });
+    });
+    panel.querySelector('.at-select-all').addEventListener('click', function(){
+      panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = true; });
+      panel.querySelector('.at-header-check').checked = true;
+    });
+    panel.querySelector('.at-clear-all').addEventListener('click', function(){
+      panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = false; });
+      panel.querySelector('.at-header-check').checked = false;
+    });
+    panel.querySelector('.at-load').addEventListener('click', function(){ loadTypeTestCases(type); });
+    panel.querySelector('.at-refresh').addEventListener('click', function(){
+      loadTypeScopes(type).then(function(){ loadTypeTestCases(type); });
+      loadTypeLog(type);
+    });
+    panel.querySelector('.at-domain').addEventListener('change', function(){ refreshTypeModuleOptions(type); });
+    panel.querySelector('.at-module').addEventListener('change', function(){ refreshTypeKnowledgeOptions(type); });
+    panel.querySelector('.at-exec-selected').addEventListener('click', function(){
+      var ids = Array.prototype.slice.call(panel.querySelectorAll('.at-row-check:checked')).map(function(cb){ return parseInt(cb.getAttribute('data-tc-id'), 10); });
+      if(!ids.length){ toast('Select at least one test case first.', true); return; }
+      executeManyTestCases(type, ids);
+    });
+    panel.querySelector('.at-exec-all').addEventListener('click', function(){
+      var ids = autoTestCasesByType[type].map(function(tc){ return tc.id; });
+      if(!ids.length){ toast('No test cases loaded for this scope.', true); return; }
+      executeManyTestCases(type, ids);
+    });
+    panel.querySelector('.at-log-refresh').addEventListener('click', function(){ loadTypeLog(type); });
+  });
+
+  // Sequential, one-at-a-time execution — deliberately not parallel:
+  // Playwright runs a real browser (heavy), API/SQL hit a real
+  // server/database, and this reuses the exact same single-test-case
+  // endpoints as a single click already does rather than adding a new
+  // bulk endpoint, per this project's reuse-before-rewrite rule. Each
+  // test case's own real automation type decides which endpoint is
+  // called — never assumed from the active tab alone, so a stale/mixed
+  // grid can never silently execute the wrong runner.
+  function executeManyTestCases(type, ids){
+    var index = 0;
+    var skipped = [];
+    function next(){
+      if(index >= ids.length){
+        toast('Finished executing ' + (ids.length - skipped.length) + ' of ' + ids.length + '.' + (skipped.length ? ' Skipped ' + skipped.length + ' (no automation script yet).' : ''));
+        loadTypeTestCases(type);
+        loadTypeLog(type);
+        return;
+      }
+      var tcId = ids[index++];
+      var tc = autoTestCasesByType[type].find(function(t){ return t.id === tcId; });
+      if(!tc || !tc.automation_script){ skipped.push(tcId); next(); return; }
+      var endpoint = type === 'SQL' ? '/execute-sql' : (type === 'API' ? '/execute-api' : '/execute');
+      apiFetch('/api/automation/test-cases/' + tcId + endpoint, { method: 'POST' }).then(function(job){
+        if(type === 'Playwright' && job && job.run_uuid){
+          // A real background job — wait for it to actually finish
+          // before starting the next one, so two heavy browser runs
+          // never overlap from one "Execute All" click.
+          waitForRun(job.run_uuid, next);
+        } else {
+          next();
+        }
+      }).catch(function(err){
+        toast(tc.tc_number + ': ' + err.message, true);
+        next();
+      });
+    }
+    next();
+  }
+
+  function waitForRun(runUuid, done){
+    var timer = setInterval(function(){
+      apiFetch('/api/automation/runs/' + runUuid).then(function(run){
+        if(['Passed', 'Failed', 'Error', 'Cancelled'].indexOf(run.status) !== -1){
+          clearInterval(timer);
+          done();
+        }
+      }).catch(function(){ clearInterval(timer); done(); });
+    }, 1500);
+  }
+
+  // ---- Execution Log, per automation type ----
+  function loadTypeLog(type){
+    var scope = activeTypeScope(type);
+    var params = new URLSearchParams({ automation_type: type, limit: '100' });
+    if(scope.domain) params.set('domain', scope.domain);
+    if(scope.module) params.set('module', scope.module);
+    return apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
+      renderTypeLog(type, data.runs || []);
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function renderTypeLog(type, runs){
+    var rows = runs.map(function(r){
+      var message = r.error_message || (r.stderr ? r.stderr.split('\n').slice(-1)[0] : '') || '';
       var html =
-        '<tr data-tc-id="' + tc.id + '">' +
-          '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
-          '<td>' + escapeHtml(tc.test_case || tc.scenario || '') + '</td>' +
-          '<td>' + escapeHtml(tc.automation_type || 'None') + '</td>' +
-          '<td>' + resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result) + '</td>' +
-          '<td style="text-align:right;">' +
-            '<button class="btn btn-sm tc-view-btn" data-tc-id="' + tc.id + '">View</button>' +
-            (autoCanDelete() ? ' <button class="btn btn-sm tc-delete-btn" data-tc-id="' + tc.id + '" style="color:var(--danger);">Delete</button>' : '') +
-          '</td>' +
+        '<tr>' +
+          '<td class="num">' + formatDateTime(r.started_at || r.created_date) + '</td>' +
+          '<td class="mono">' + escapeHtml(r.tc_number || '') + '</td>' +
+          '<td>' + runStatusPillHtml(r.status) + '</td>' +
+          '<td>' + resultPillHtml(r.outcome === 'Pass' ? 'Pass' : (r.outcome === 'Fail' ? 'Fail' : null)) + '</td>' +
+          '<td class="num">' + autoDurationLabel(r.duration_seconds) + '</td>' +
+          '<td class="muted-small">' + escapeHtml((message || '').slice(0, 120)) + '</td>' +
+          '<td style="text-align:right;"><button class="btn btn-sm at-log-view-btn" data-run-id="' + r.run_uuid + '">View Details</button></td>' +
         '</tr>';
-      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || '')).toLowerCase() };
+      return { html: html, search: (r.tc_number + ' ' + r.status).toLowerCase() };
     });
-    tcController.setRows(rows);
+    autoLogControllers[type].setRows(rows);
   }
 
-  function wireTcTableRowActions(body){
-    body.querySelectorAll('.tc-view-btn').forEach(function(btn){
+  function wireLogRowActions(type, body){
+    body.querySelectorAll('.at-log-view-btn').forEach(function(btn){
       btn.addEventListener('click', function(){
-        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
-        var tc = autoTestCases.find(function(t){ return t.id === tcId; });
-        if(tc) selectTestCase(tc);
-      });
-    });
-    body.querySelectorAll('.tc-delete-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var tcId = parseInt(btn.getAttribute('data-tc-id'), 10);
-        var tc = autoTestCases.find(function(t){ return t.id === tcId; });
-        confirmDelete('Delete test case?', (tc ? tc.tc_number + ' — ' : '') + 'This also removes its execution history association. This cannot be undone.', function(){
-          return apiFetch('/api/automation/test-cases/' + tcId, { method: 'DELETE' }).then(function(){
-            toast('Test case deleted.');
-            if(autoSelectedTc && autoSelectedTc.id === tcId){
-              autoSelectedTc = null;
-              document.getElementById('tcDetailCard').style.display = 'none';
-            }
-            return loadTestCases();
-          });
-        });
+        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id')).then(function(run){
+          openRunDetailModal(run);
+        }).catch(function(err){ toast(err.message, true); });
       });
     });
   }
 
-  function selectTestCase(tc){
+  function openRunDetailModal(run){
+    renderRunResult(document.getElementById('runDetailBody'), run);
+    document.getElementById('runDetailModal').classList.add('show');
+  }
+  document.getElementById('runDetailCloseBtn').addEventListener('click', function(){
+    document.getElementById('runDetailModal').classList.remove('show');
+  });
+
+  var autoSelectedType = 'Playwright';
+
+  function selectTestCase(tc, type, afterOpen){
     autoSelectedTc = tc;
+    autoSelectedType = type || tc.automation_type || 'Playwright';
     stopAutoPoll();
-    document.getElementById('tcDetailCard').style.display = 'flex';
+    document.getElementById('tcDetailModal').classList.add('show');
     document.getElementById('detailId').textContent = tc.tc_number;
     document.getElementById('detailTitle').textContent = tc.test_case || tc.scenario || '(untitled)';
     document.getElementById('detailType').textContent = tc.automation_type && tc.automation_type !== 'None' ? tc.automation_type : 'Not automated';
     document.getElementById('detailResult').outerHTML = resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result, 'detailResult');
 
-    var source = tc.active_script_source || 'AUTO';
-    document.getElementById('tcActiveSourcePill').textContent = source;
+    var isSql = autoSelectedType === 'SQL';
+    var isApi = autoSelectedType === 'API';
+
+    document.getElementById('tcActiveSourceRow').style.display = isSql ? 'none' : 'block';
+    document.getElementById('tcSourceButtons').style.display = isSql ? 'none' : 'flex';
+    document.getElementById('tcGenerateTypeSel').style.display = isSql ? 'none' : 'inline-block';
+    document.getElementById('tcSuggestTypeBtn').style.display = isSql ? 'none' : 'inline-flex';
+    document.getElementById('tcSqlAssertionRow').style.display = isSql ? 'flex' : 'none';
+
     var editor = document.getElementById('tcScriptEditor');
-    editor.value = (source === 'MANUAL' ? tc.recorded_script : tc.automation_script) || '';
-    editor.disabled = !autoCanEdit();
     document.getElementById('tcScriptError').textContent = '';
     document.getElementById('tcValidateResult').innerHTML = '';
 
+    if(isSql){
+      document.getElementById('tcScriptLabel').textContent = 'SQL Query (SELECT / WITH only — read-only)';
+      var script = {};
+      try { script = JSON.parse(tc.automation_script || '{}'); } catch(e){ script = { sql: tc.automation_script || '' }; }
+      editor.value = script.sql || '';
+      document.getElementById('tcSqlAssertionType').value = script.assertion_type || 'row_exists';
+      document.getElementById('tcSqlAssertionColumn').value = script.assertion_column || '';
+      document.getElementById('tcSqlAssertionValue').value = script.assertion_value || '';
+    } else {
+      document.getElementById('tcScriptLabel').textContent = 'Automation Script';
+      var source = tc.active_script_source || 'AUTO';
+      document.getElementById('tcActiveSourcePill').textContent = source;
+      editor.value = (source === 'MANUAL' ? tc.recorded_script : tc.automation_script) || '';
+    }
+    editor.disabled = !autoCanEdit();
+
     var notice = document.getElementById('tcScriptNotice');
-    if(tc.automation_type === 'API'){
+    if(isApi){
       notice.style.display = 'flex';
       document.getElementById('tcScriptNoticeText').textContent =
         'This is an API test case — the script editor below is for reference/documentation only. Execution uses the real imported API endpoint directly (see the Execute tab), never this script text.';
@@ -2351,18 +2719,35 @@
     document.getElementById('tcSuggestTypeBtn').disabled = !autoCanCreate();
     document.getElementById('tcSaveScriptBtn').disabled = !autoCanEdit();
 
-    var isApi = tc.automation_type === 'API';
-    document.getElementById('tcExecuteBtn').style.display = isApi ? 'none' : 'inline-flex';
+    document.getElementById('tcExecuteBtn').style.display = (!isApi && !isSql) ? 'inline-flex' : 'none';
     document.getElementById('tcExecuteApiBtn').style.display = isApi ? 'inline-flex' : 'none';
+    document.getElementById('tcExecuteSqlBtn').style.display = isSql ? 'inline-flex' : 'none';
     document.getElementById('tcExecuteBtn').disabled = !autoCanExecute();
     document.getElementById('tcExecuteApiBtn').disabled = !autoCanExecute();
+    document.getElementById('tcExecuteSqlBtn').disabled = !autoCanExecute();
     document.getElementById('tcCancelBtn').style.display = 'none';
     document.getElementById('tcRunLive').style.display = 'none';
     document.getElementById('tcRunResult').innerHTML = '';
+    document.getElementById('tcClickUpBtn').style.display = (tc.last_result === 'Fail' && autoCanEdit()) ? 'inline-flex' : 'none';
 
-    refreshExecuteReadiness();
+    if(isSql){
+      document.getElementById('tcExecuteReadiness').innerHTML = '';
+    } else {
+      refreshExecuteReadiness();
+    }
     loadTcHistory(tc.id);
+    if(afterOpen) afterOpen();
   }
+
+  document.getElementById('tcDetailCloseBtn').addEventListener('click', function(){
+    document.getElementById('tcDetailModal').classList.remove('show');
+    stopAutoPoll();
+  });
+
+  document.getElementById('tcClickUpBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    createClickUpBug(autoSelectedTc.id, document.getElementById('tcClickUpBtn'));
+  });
 
   function refreshExecuteReadiness(){
     if(!autoSelectedTc) return;
@@ -2383,13 +2768,27 @@
       '</div>';
   }
 
-  // ---- Script actions ----
+  // ---- Script actions (branch by automation type — Playwright/API vs SQL) ----
   document.getElementById('tcSaveScriptBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
+    document.getElementById('tcScriptError').textContent = '';
+    if(autoSelectedType === 'SQL'){
+      var payload = {
+        sql: document.getElementById('tcScriptEditor').value,
+        assertion_type: document.getElementById('tcSqlAssertionType').value,
+        assertion_value: document.getElementById('tcSqlAssertionValue').value,
+        assertion_column: document.getElementById('tcSqlAssertionColumn').value,
+      };
+      apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/sql-script', { method: 'PUT', body: JSON.stringify(payload) }).then(function(tc){
+        autoSelectedTc = tc;
+        toast('SQL script saved.');
+        loadTypeTestCases('SQL');
+      }).catch(function(err){ document.getElementById('tcScriptError').textContent = err.message; });
+      return;
+    }
     var text = document.getElementById('tcScriptEditor').value;
     var source = autoSelectedTc.active_script_source || 'AUTO';
     var path = '/api/automation/test-cases/' + autoSelectedTc.id + (source === 'MANUAL' ? '/recorded-script' : '/script');
-    document.getElementById('tcScriptError').textContent = '';
     apiFetch(path, { method: 'PUT', body: JSON.stringify({ script_text: text }) }).then(function(data){
       autoSelectedTc = data.test_case;
       if(data.syntax_warning){
@@ -2398,7 +2797,7 @@
         toast('Script saved.');
       }
       refreshExecuteReadiness();
-      loadTestCases();
+      loadTypeTestCases(autoSelectedType);
     }).catch(function(err){
       document.getElementById('tcScriptError').textContent = err.message;
     });
@@ -2409,7 +2808,7 @@
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {
       method: 'PATCH', body: JSON.stringify({ source: source }),
     }).then(function(tc){
-      selectTestCase(tc);
+      selectTestCase(tc, autoSelectedType);
       toast('Active script source set to ' + source + '.');
     }).catch(function(err){ toast(err.message, true); });
   }
@@ -2418,9 +2817,22 @@
 
   document.getElementById('tcGenerateBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
-    var type = document.getElementById('tcGenerateTypeSel').value;
     var btn = document.getElementById('tcGenerateBtn');
     btn.disabled = true;
+    if(autoSelectedType === 'SQL'){
+      apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/generate-sql', { method: 'POST', body: JSON.stringify({}) }).then(function(result){
+        document.getElementById('tcScriptEditor').value = result.sql || '';
+        autoSelectedTc = result.test_case;
+        if(result.needs_review){
+          toast('AI could not produce safe, executable SQL without a known database schema — review/complete it manually: ' + (result.validation_error || ''), true);
+        } else {
+          toast('SQL draft generated (AI) — review, then Save + Validate before it can be activated.');
+        }
+        loadTypeTestCases('SQL');
+      }).catch(function(err){ toast(err.message, true); }).then(function(){ btn.disabled = !autoCanCreate(); });
+      return;
+    }
+    var type = document.getElementById('tcGenerateTypeSel').value;
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/generate-automation', {
       method: 'POST',
       body: JSON.stringify({
@@ -2431,8 +2843,8 @@
     }).then(function(){
       return apiFetch('/api/automation/test-cases/' + autoSelectedTc.id);
     }).then(function(tc){
-      selectTestCase(tc);
-      loadTestCases();
+      selectTestCase(tc, autoSelectedType);
+      loadTypeTestCases(autoSelectedType);
       toast('Script generated (AI).');
     }).catch(function(err){
       toast(err.message, true);
@@ -2448,6 +2860,16 @@
   });
 
   document.getElementById('tcValidateBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    if(autoSelectedType === 'SQL'){
+      apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/validate-sql').then(function(data){
+        document.getElementById('tcValidateResult').innerHTML =
+          '<div class="notice" style="background:' + (data.valid ? 'var(--success-soft)' : 'var(--warning-soft)') + ';border:1px solid ' + (data.valid ? 'var(--success)' : 'var(--warning)') + ';">' +
+            (data.valid ? 'Safe to execute.' : escapeHtml(data.error)) +
+          '</div>';
+      }).catch(function(err){ toast(err.message, true); });
+      return;
+    }
     refreshExecuteReadiness();
   });
 
@@ -2474,7 +2896,7 @@
           renderRunResult(document.getElementById('tcRunResult'), run);
           if(autoSelectedTc) loadTcHistory(autoSelectedTc.id);
           refreshExecuteReadiness();
-          loadTestCases();
+          loadTypeTestCases(autoSelectedType);
         }
       }).catch(function(err){
         stopAutoPoll();
@@ -2559,6 +2981,22 @@
   }
   document.getElementById('tcExecuteApiBtn').addEventListener('click', runExecuteApi);
 
+  // ---- Execute (SQL — real, read-only query against the target DB) ----
+  document.getElementById('tcExecuteSqlBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var btn = document.getElementById('tcExecuteSqlBtn');
+    btn.disabled = true;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute-sql', { method: 'POST' }).then(function(run){
+      renderRunResult(document.getElementById('tcRunResult'), run);
+      loadTcHistory(autoSelectedTc.id);
+      loadTypeTestCases('SQL');
+      loadTypeLog('SQL');
+      document.getElementById('tcClickUpBtn').style.display = (run.outcome === 'Fail' && autoCanEdit()) ? 'inline-flex' : 'none';
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = !autoCanExecute(); });
+  });
+
   function renderMissingApiVariables(body){
     var el = document.getElementById('tcRunResult');
     var vars = body.missing_variables || [];
@@ -2637,13 +3075,17 @@
     });
   }
 
-  // ---- Import Test Cases (Excel) ----
-  document.getElementById('tcImportBtn').addEventListener('click', function(){
+  // ---- Import Test Cases (Excel) — Playwright tab only, per this
+  // task's spec (Manual Excel Import lives on the Playwright Automation
+  // tab). Pre-fills from whatever Domain/Module/Knowledge is currently
+  // selected there, same as the old Test Cases tab used to.
+  document.getElementById('pwImportBtn').addEventListener('click', function(){
     document.getElementById('tcImportError').textContent = '';
     document.getElementById('tcImportSummary').innerHTML = '';
-    document.getElementById('tcImportDomain').value = document.getElementById('tcDomainSel').value || '';
-    document.getElementById('tcImportModule').value = document.getElementById('tcModuleSel').value || '';
-    document.getElementById('tcImportKnowledge').value = document.getElementById('tcKnowledgeSel').value || '';
+    var pwPanel = panelFor('Playwright');
+    document.getElementById('tcImportDomain').value = pwPanel.querySelector('.at-domain').value || '';
+    document.getElementById('tcImportModule').value = pwPanel.querySelector('.at-module').value || '';
+    document.getElementById('tcImportKnowledge').value = pwPanel.querySelector('.at-knowledge').value || '';
     document.getElementById('tcImportVersion').value = '1.0';
     document.getElementById('tcImportFile').value = '';
     document.getElementById('tcImportModal').classList.add('show');
@@ -2683,13 +3125,14 @@
         '<div class="muted-small">Imported ' + (result.imported || 0) + ', skipped ' + (result.skipped || 0) + '.' +
         (result.errors && result.errors.length ? '<br>' + result.errors.map(escapeHtml).join('<br>') : '') + '</div>';
       toast('Imported ' + (result.imported || 0) + ' test case(s).');
-      return loadAutoScopes().then(function(){
-        document.getElementById('tcDomainSel').value = domain;
-        refreshTcModuleOptions();
-        document.getElementById('tcModuleSel').value = module;
-        refreshTcKnowledgeOptions();
-        document.getElementById('tcKnowledgeSel').value = knowledge;
-        return loadTestCases();
+      var pwPanel = panelFor('Playwright');
+      return loadTypeScopes('Playwright').then(function(){
+        pwPanel.querySelector('.at-domain').value = domain;
+        refreshTypeModuleOptions('Playwright');
+        pwPanel.querySelector('.at-module').value = module;
+        refreshTypeKnowledgeOptions('Playwright');
+        pwPanel.querySelector('.at-knowledge').value = knowledge;
+        return loadTypeTestCases('Playwright');
       });
     }).then(function(){
       document.getElementById('tcImportModal').classList.remove('show');
@@ -2698,223 +3141,26 @@
     }).then(function(){ runBtn.disabled = false; });
   });
 
-  // ---- Global Execution History ----
-  function loadHistory(){
-    var params = new URLSearchParams();
-    var domain = document.getElementById('histDomainFilter').value;
-    var module = document.getElementById('histModuleFilter').value;
-    var status = document.getElementById('histStatusFilter').value;
-    var q = document.getElementById('histSearch').value.trim();
-    if(domain) params.set('domain', domain);
-    if(module) params.set('module', module);
-    if(status) params.set('status', status);
-    if(q) params.set('q', q);
-    params.set('limit', '200');
-    apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
-      renderHistory(data.runs || []);
-    }).catch(function(err){ toast(err.message, true); });
-  }
-
-  function renderHistory(runs){
-    var rows = runs.map(function(r){
-      var html =
-        '<tr>' +
-          '<td class="mono">' + escapeHtml((r.run_uuid || '').slice(0, 8)) + '</td>' +
-          '<td class="mono">' + escapeHtml(r.tc_number || '') + '</td>' +
-          '<td>' + escapeHtml(r.domain || '') + ' / ' + escapeHtml(r.module || '') + '</td>' +
-          '<td>' + runStatusPillHtml(r.status) + '</td>' +
-          '<td class="num">' + formatDateTime(r.started_at || r.created_date) + '</td>' +
-          '<td class="num">' + autoDurationLabel(r.duration_seconds) + '</td>' +
-          '<td>' + escapeHtml(r.executed_by_username || '—') + '</td>' +
-          '<td style="text-align:right;">' +
-            '<button class="btn btn-sm hist-view-btn" data-run-id="' + r.run_uuid + '">View</button>' +
-            (autoCanExecute() ? ' <button class="btn btn-sm hist-rerun-btn" data-run-id="' + r.run_uuid + '">Re-run</button>' : '') +
-          '</td>' +
-        '</tr>';
-      return { html: html, search: (r.run_uuid + ' ' + r.tc_number + ' ' + r.domain + ' ' + r.module).toLowerCase() };
-    });
-    histController.setRows(rows);
-  }
-
-  function wireHistRowActions(body){
-    body.querySelectorAll('.hist-view-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id')).then(function(run){
-          document.getElementById('histDetailCard').style.display = 'block';
-          renderRunResult(document.getElementById('histDetailBody'), run);
-        }).catch(function(err){ toast(err.message, true); });
-      });
-    });
-    body.querySelectorAll('.hist-rerun-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        apiFetch('/api/automation/runs/' + btn.getAttribute('data-run-id') + '/rerun', { method: 'POST' }).then(function(){
-          toast('Re-run started.');
-          loadHistory();
-        }).catch(function(err){ toast(err.message, true); });
-      });
-    });
-  }
-  document.getElementById('histDetailClose').addEventListener('click', function(){
-    document.getElementById('histDetailCard').style.display = 'none';
-  });
-
-  // ---- Git Automation ----
-  // Fields are re-read from their inputs on every call — a token is
-  // never cached in JS state beyond the current page session.
-  function gitPayloadBase(){
-    return {
-      remote_url: document.getElementById('gitRemoteUrl').value.trim(),
-      branch: document.getElementById('gitBranch').value.trim() || 'main',
-      username: document.getElementById('gitUsername').value.trim(),
-      token: document.getElementById('gitToken').value,
-    };
-  }
-  function gitShowError(msg){ document.getElementById('gitError').textContent = msg; }
-  function gitClearError(){ document.getElementById('gitError').textContent = ''; }
-
-  document.getElementById('gitOpenBtn').addEventListener('click', function(){
-    gitClearError();
-    var payload = gitPayloadBase();
-    if(!payload.remote_url){ gitShowError('Remote URL / local path is required.'); return; }
-    apiFetch('/api/automation/git/open', { method: 'POST', body: JSON.stringify(payload) }).then(function(data){
-      toast('Repository opened on branch ' + (data.active_branch || payload.branch) + '.');
-      refreshGitStatus();
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitStatusBtn').addEventListener('click', refreshGitStatus);
-  function refreshGitStatus(){
-    gitClearError();
-    var payload = gitPayloadBase();
-    if(!payload.remote_url){ gitShowError('Remote URL / local path is required.'); return; }
-    apiFetch('/api/automation/git/status', { method: 'POST', body: JSON.stringify(payload) }).then(function(status){
-      renderGitStatus(status);
-    }).catch(function(err){ gitShowError(err.message); });
-  }
-
-  function renderGitStatus(status){
-    document.getElementById('gitStatusBody').innerHTML =
-      '<div class="kv">' +
-        '<div>Branch</div><div class="mono">' + escapeHtml(status.branch) + '</div>' +
-        '<div>Dirty</div><div>' + (status.is_dirty ? 'Yes' : 'No') + '</div>' +
-        '<div>Staged</div><div>' + (status.staged.length || 0) + '</div>' +
-        '<div>Modified</div><div>' + (status.modified.length || 0) + '</div>' +
-        '<div>Untracked</div><div>' + (status.untracked.length || 0) + '</div>' +
-      '</div>';
-    var changed = (status.modified || []).concat(status.untracked || []);
-    var changedEl = document.getElementById('gitChangedFiles');
-    if(!changed.length){
-      changedEl.innerHTML = '<div class="muted-small">No changed files.</div>';
-    } else {
-      changedEl.innerHTML = uniqueVals(changed).map(function(f){
-        return '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" class="git-file-check" value="' + escapeHtml(f) + '" checked>' + escapeHtml(f) + '</label>';
-      }).join('');
-    }
-  }
-
-  document.getElementById('gitCommitBtn').addEventListener('click', function(){
-    gitClearError();
-    var files = Array.prototype.slice.call(document.querySelectorAll('.git-file-check:checked')).map(function(cb){ return cb.value; });
-    var message = document.getElementById('gitCommitMsg').value.trim();
-    if(!files.length){ gitShowError('Select at least one changed file to commit.'); return; }
-    if(!message){ gitShowError('A commit message is required.'); return; }
-    var payload = Object.assign(gitPayloadBase(), { files: files, message: message });
-    apiFetch('/api/automation/git/commit', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
-      if(!result.success){ gitShowError(result.error || 'Commit failed.'); return; }
-      toast('Committed ' + (result.commit_hash || '').slice(0, 8) + '.');
-      document.getElementById('gitCommitMsg').value = '';
-      refreshGitStatus();
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitPullBtn').addEventListener('click', function(){
-    gitClearError();
-    apiFetch('/api/automation/git/pull', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
-      if(!result.success){
-        if(result.conflict) renderGitConflicts(result.conflicted_files || []);
-        gitShowError(result.error || 'Pull failed.');
-        return;
-      }
-      toast('Pull complete.');
-      refreshGitStatus();
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitPushBtn').addEventListener('click', function(){
-    gitClearError();
-    apiFetch('/api/automation/git/push', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
-      if(!result.success){ gitShowError(result.error || 'Push failed.'); return; }
-      toast('Push complete.');
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitMergeBtn').addEventListener('click', function(){
-    gitClearError();
-    var source = document.getElementById('gitMergeSource').value.trim();
-    if(!source){ gitShowError('Merge source branch/ref is required.'); return; }
-    var payload = Object.assign(gitPayloadBase(), { source_branch: source });
-    apiFetch('/api/automation/git/merge', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
-      if(!result.success){
-        if(result.conflict) renderGitConflicts(result.conflicted_files || []);
-        gitShowError(result.error || 'Merge failed.');
-        return;
-      }
-      toast('Merge complete.');
-      refreshGitStatus();
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitCompareBtn').addEventListener('click', function(){
-    gitClearError();
-    var refA = document.getElementById('gitCompareA').value.trim();
-    var refB = document.getElementById('gitCompareB').value.trim();
-    if(!refA || !refB){ gitShowError('Both ref A and ref B are required.'); return; }
-    var payload = Object.assign(gitPayloadBase(), { ref_a: refA, ref_b: refB });
-    apiFetch('/api/automation/git/compare', { method: 'POST', body: JSON.stringify(payload) }).then(function(result){
-      var pre = document.getElementById('gitCompareResult');
-      pre.style.display = 'block';
-      pre.textContent = result.diff;
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  document.getElementById('gitConflictsBtn').addEventListener('click', function(){
-    gitClearError();
-    apiFetch('/api/automation/git/conflicts', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(data){
-      renderGitConflicts(data.conflicts || []);
-    }).catch(function(err){ gitShowError(err.message); });
-  });
-
-  function renderGitConflicts(files){
-    var el = document.getElementById('gitConflictsBody');
-    if(!files.length){ el.innerHTML = '<div class="muted-small">No conflicts.</div>'; return; }
-    el.innerHTML = files.map(function(f){
-      return '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:4px;">' +
-        '<span class="mono">' + escapeHtml(f) + '</span>' +
-        '<button class="btn btn-sm git-resolve-btn" data-file="' + escapeHtml(f) + '" data-strategy="ours">Keep Ours</button>' +
-        '<button class="btn btn-sm git-resolve-btn" data-file="' + escapeHtml(f) + '" data-strategy="theirs">Keep Theirs</button>' +
-      '</div>';
-    }).join('');
-    el.querySelectorAll('.git-resolve-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var payload = Object.assign(gitPayloadBase(), { file_path: btn.getAttribute('data-file'), strategy: btn.getAttribute('data-strategy') });
-        apiFetch('/api/automation/git/resolve-conflict', { method: 'POST', body: JSON.stringify(payload) }).then(function(){
-          toast('Resolved ' + payload.file_path + ' (' + payload.strategy + ').');
-          return apiFetch('/api/automation/git/conflicts', { method: 'POST', body: JSON.stringify(gitPayloadBase()) });
-        }).then(function(data){
-          renderGitConflicts(data.conflicts || []);
-          refreshGitStatus();
-        }).catch(function(err){ gitShowError(err.message); });
-      });
-    });
-  }
-
-  document.getElementById('gitGenMsgBtn').addEventListener('click', function(){
-    gitClearError();
-    apiFetch('/api/automation/git/generate-commit-message', { method: 'POST', body: JSON.stringify(gitPayloadBase()) }).then(function(result){
-      if(!result.success){ gitShowError(result.error || 'Could not generate a message.'); return; }
-      document.getElementById('gitCommitMsg').value = result.message;
-    }).catch(function(err){ gitShowError(err.message); });
-  });
+  // NOTE: the old "Global Execution History" tab (loadHistory/
+  // renderHistory/wireHistRowActions/histDetailClose — a single
+  // cross-type log) and the entire "Git Automation" tab (gitPayloadBase
+  // and every gitOpenBtn/gitStatusBtn/gitCommitBtn/gitPullBtn/
+  // gitPushBtn/gitMergeBtn/gitCompareBtn/gitConflictsBtn/gitGenMsgBtn
+  // handler) were removed here. Per this task's product decision, Git
+  // Automation is no longer a QA Automation tab at all (its Core/router
+  // backend is left untouched for a possible future "QA/test
+  // documentation repository" use, per this task's explicit
+  // instruction — only this page's UI/JS was unwired), and a single
+  // global execution history is replaced by the per-type Execution Log
+  // on each of the 3 tabs (loadTypeLog/renderTypeLog/wireLogRowActions/
+  // openRunDetailModal, defined above). Every DOM id this dead code
+  // referenced (histDomainFilter/histModuleFilter/histStatusFilter/
+  // histSearch/histTableBody/histDetailCard/histDetailClose/
+  // gitRemoteUrl/gitBranch/gitUsername/gitToken/gitStatusBody/
+  // gitChangedFiles/gitCommitMsg/gitMergeSource/gitCompareA/
+  // gitCompareB/gitCompareResult/gitConflictsBody/gitError/etc.) no
+  // longer exists in the 3-tab markup, so this old code would have
+  // thrown ReferenceErrors/TypeErrors on page load if left in place.
 
   // ---- Environment Settings ----
   function loadEnvironment(){
@@ -3009,25 +3255,214 @@
     }).catch(function(err){ toast(err.message, true); });
   });
 
-  // ---- Filter / cascade wiring ----
-  document.getElementById('wsDomainFilter').addEventListener('change', function(){ refreshWsModuleOptions(); loadWorkspace(); });
-  document.getElementById('wsModuleFilter').addEventListener('change', loadWorkspace);
-  document.getElementById('wsTypeFilter').addEventListener('change', loadWorkspace);
-  document.getElementById('wsStatusFilter').addEventListener('change', loadWorkspace);
-  document.getElementById('wsSearch').addEventListener('input', debounce(loadWorkspace, 350));
-  document.getElementById('wsRefreshBtn').addEventListener('click', function(){ loadAutoScopes().then(loadWorkspace); });
+  // ---- Test Environment Setting modals ----
+  // Playwright & API share one modal (envModal — same fields/endpoint
+  // as before); SQL gets its own connection-profile modal, since a
+  // database connection profile has nothing in common with a browser/
+  // HTTP environment.
+  document.getElementById('pwEnvBtn').addEventListener('click', function(){
+    loadEnvironment();
+    document.getElementById('envModal').classList.add('show');
+  });
+  document.getElementById('apiEnvBtn').addEventListener('click', function(){
+    loadEnvironment();
+    document.getElementById('envModal').classList.add('show');
+  });
+  document.getElementById('envCloseBtn').addEventListener('click', function(){
+    document.getElementById('envModal').classList.remove('show');
+  });
 
-  document.getElementById('tcDomainSel').addEventListener('change', function(){ refreshTcModuleOptions(); loadTestCases(); });
-  document.getElementById('tcModuleSel').addEventListener('change', function(){ refreshTcKnowledgeOptions(); loadTestCases(); });
-  document.getElementById('tcKnowledgeSel').addEventListener('change', loadTestCases);
+  function sqlEnvToggleFields(){
+    var isSqlite = document.getElementById('sqlEnvDbType').value === 'sqlite';
+    document.getElementById('sqlEnvSqlitePathRow').style.display = isSqlite ? 'flex' : 'none';
+    document.getElementById('sqlEnvNetworkFields').style.display = isSqlite ? 'none' : 'flex';
+  }
+  document.getElementById('sqlEnvDbType').addEventListener('change', sqlEnvToggleFields);
 
-  document.getElementById('histDomainFilter').addEventListener('change', function(){ refreshHistModuleOptions(); loadHistory(); });
-  document.getElementById('histModuleFilter').addEventListener('change', loadHistory);
-  document.getElementById('histStatusFilter').addEventListener('change', loadHistory);
-  document.getElementById('histSearch').addEventListener('input', debounce(loadHistory, 350));
-  document.getElementById('histRefreshBtn').addEventListener('click', loadHistory);
+  function loadSqlEnvironment(){
+    return apiFetch('/api/automation/sql/environment').then(function(env){
+      document.getElementById('sqlEnvDbType').value = env.sql_db_type || 'sqlite';
+      document.getElementById('sqlEnvSqlitePath').value = env.sql_sqlite_path || '';
+      document.getElementById('sqlEnvHost').value = env.sql_host || '';
+      document.getElementById('sqlEnvPort').value = env.sql_port || '';
+      document.getElementById('sqlEnvDatabase').value = env.sql_database || '';
+      document.getElementById('sqlEnvUsername').value = env.sql_username || '';
+      document.getElementById('sqlEnvPassword').value = '';
+      document.getElementById('sqlEnvTimeout').value = env.sql_timeout_seconds || '';
+      document.getElementById('sqlEnvMaxRows').value = env.sql_max_rows || '';
+      document.getElementById('sqlEnvSecretHints').textContent = env.sql_password_is_set
+        ? 'Password is set (unchanged unless you type a new one).' : '';
+      document.getElementById('sqlEnvTestResult').textContent = '';
+      sqlEnvToggleFields();
+      var canEdit = autoCanEdit();
+      ['sqlEnvDbType','sqlEnvSqlitePath','sqlEnvHost','sqlEnvPort','sqlEnvDatabase',
+       'sqlEnvUsername','sqlEnvPassword','sqlEnvTimeout','sqlEnvMaxRows',
+       'sqlEnvTestBtn','sqlEnvSaveBtn'].forEach(function(id){
+        document.getElementById(id).disabled = !canEdit;
+      });
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  document.getElementById('sqlEnvBtn').addEventListener('click', function(){
+    loadSqlEnvironment();
+    document.getElementById('sqlEnvModal').classList.add('show');
+  });
+  document.getElementById('sqlEnvCloseBtn').addEventListener('click', function(){
+    document.getElementById('sqlEnvModal').classList.remove('show');
+  });
+  document.getElementById('sqlEnvTestBtn').addEventListener('click', function(){
+    var resultEl = document.getElementById('sqlEnvTestResult');
+    resultEl.textContent = 'Testing…';
+    resultEl.style.color = '';
+    apiFetch('/api/automation/sql/environment/test-connection', { method: 'POST' }).then(function(result){
+      resultEl.textContent = result.success ? (result.message || 'Connection succeeded.') : (result.error || 'Connection failed.');
+      resultEl.style.color = result.success ? 'var(--success)' : 'var(--danger)';
+    }).catch(function(err){
+      resultEl.textContent = err.message;
+      resultEl.style.color = 'var(--danger)';
+    });
+  });
+  document.getElementById('sqlEnvSaveBtn').addEventListener('click', function(){
+    var payload = {
+      sql_db_type: document.getElementById('sqlEnvDbType').value,
+      sql_sqlite_path: document.getElementById('sqlEnvSqlitePath').value,
+      sql_host: document.getElementById('sqlEnvHost').value,
+      sql_port: document.getElementById('sqlEnvPort').value,
+      sql_database: document.getElementById('sqlEnvDatabase').value,
+      sql_username: document.getElementById('sqlEnvUsername').value,
+      sql_timeout_seconds: document.getElementById('sqlEnvTimeout').value,
+      sql_max_rows: document.getElementById('sqlEnvMaxRows').value,
+    };
+    var pw = document.getElementById('sqlEnvPassword').value;
+    if(pw) payload.sql_password = pw;
+    apiFetch('/api/automation/sql/environment', { method: 'PUT', body: JSON.stringify(payload) }).then(function(){
+      toast('SQL Test Environment Setting saved.');
+      loadSqlEnvironment();
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  // ---- ClickUp Integration (one global config; used only by the
+  // contextual "Create Bug" action on FAILED rows across all 3 tabs —
+  // see createClickUpBug() above and the tcClickUpBtn handler) ----
+  function refreshClickUpStatus(){
+    return apiFetch('/api/automation/clickup/status').then(function(data){
+      document.getElementById('clickupApiToken').value = '';
+      document.getElementById('clickupListId').value = data.clickup_list_id || '';
+      var configured = !!data.clickup_api_token_is_set && !!data.clickup_list_id;
+      document.getElementById('clickupStatusText').textContent = configured
+        ? 'Configured.'
+        : 'Not configured — "Create Bug" will show a clear error until this is set.';
+    }).catch(function(){
+      document.getElementById('clickupStatusText').textContent = 'Could not check ClickUp status.';
+    });
+  }
+  document.getElementById('clickupSaveBtn').addEventListener('click', function(){
+    var payload = { clickup_list_id: document.getElementById('clickupListId').value };
+    var tok = document.getElementById('clickupApiToken').value;
+    if(tok) payload.clickup_api_token = tok;
+    apiFetch('/api/automation/clickup/config', { method: 'PUT', body: JSON.stringify(payload) }).then(function(){
+      toast('ClickUp configuration saved.');
+      refreshClickUpStatus();
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  // ---- Download Sample Template (Playwright tab's Manual Excel
+  // Import) — a real, authenticated binary download; a plain <a href>
+  // can't carry the Bearer token, so this fetches the file as a blob
+  // and triggers the save the same way evidence screenshots do. ----
+  document.getElementById('pwTemplateBtn').addEventListener('click', function(){
+    fetch(API_BASE + '/api/automation/test-cases/sample-template', {
+      headers: authState.token ? { 'Authorization': 'Bearer ' + authState.token } : {},
+    }).then(function(res){
+      if(!res.ok) throw new Error('Could not download template (' + res.status + ')');
+      return res.blob();
+    }).then(function(blob){
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'qa_automation_test_case_template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  // ---- Generate Automation from API Collection (API tab) — reuses the
+  // real, existing /generate-from-collection endpoint (already used by
+  // the Desktop app) for every imported endpoint in the current
+  // Domain/Module/Knowledge scope. ----
+  document.getElementById('apiGenFromCollectionBtn').addEventListener('click', function(){
+    var scope = activeTypeScope('API');
+    if(!scope.domain || !scope.module || !scope.knowledge_name){
+      toast('Select a Domain / Module / Knowledge first.', true);
+      return;
+    }
+    var btn = document.getElementById('apiGenFromCollectionBtn');
+    btn.disabled = true;
+    apiFetch('/api/automation/generate-from-collection', {
+      method: 'POST',
+      body: JSON.stringify({
+        domain: scope.domain, module: scope.module, knowledge_name: scope.knowledge_name,
+        automation_type: 'API',
+      }),
+    }).then(function(result){
+      toast('Generated ' + (result.generated || 0) + ' API automation script(s), skipped ' + (result.skipped || 0) + '.');
+      loadTypeTestCases('API');
+      loadTypeLog('API');
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = !autoCanCreate(); });
+  });
 
   // ---- Knowledge Hub (Milestone 1) ----
+  // ---- QA Engineering: centralized Generated / Draft workspace ----
+  var qeScopeItems=[],qeExecutionTools=[],qeDraftRows=[],qeJobId=null,qePollTimer=null,qeEditTarget=null,qeLogJobId=null,qeLastExport=null,qeExportFolder='Test Cases',qeExportLocations=[],qeInitialized=false,qeLogsPage=0,qeLogsPageSize=20,qeLogsCleared=false;
+  var QE_TYPES=['Functional','Positive','Negative','Boundary','Validation','Integration','API','UI','Database','Security','Performance','Compatibility','Regression','Impact Analysis'];
+  function qeUnique(values){return Array.from(new Set(values.filter(Boolean))).sort();}
+  function qeFill(select,values,placeholder,preserve){var current=preserve?select.value:'';select.innerHTML='<option value="">'+escapeHtml(placeholder)+'</option>'+values.map(function(value){return '<option value="'+escapeHtml(value)+'">'+escapeHtml(value)+'</option>';}).join('');select.disabled=!values.length;if(values.indexOf(current)!==-1)select.value=current;}
+  function qeScope(){return {domain:document.getElementById('qeDomain').value,module:document.getElementById('qeModule').value,knowledge_name:document.getElementById('qeKnowledge').value,version:document.getElementById('qeVersion').value,document_type:document.getElementById('qeDocumentType').value,knowledge_source_ids:Array.from(document.querySelectorAll('.qe-source:checked')).map(function(box){return Number(box.value);}),test_case_document_name:document.getElementById('qeDocumentName').value.trim()};}
+  function canonicalSourceType(value){return {FILE:'Files',Folder:'Files',MANUAL_UPLOAD:'Files',SMART_UPLOAD:'Files',API_COLLECTION:'API Collection',URL_CAPTURE:'URL'}[value]||value||'Unknown';}
+  function qeStatus(label,message){var el=document.getElementById('qeGenerationStatus');el.className='qe-status '+String(label||'').toLowerCase();el.textContent=label+(message?' — '+message:'');}
+  function qeRenderTypes(){document.getElementById('qeTypes').innerHTML=QE_TYPES.map(function(type){return '<label><input type="checkbox" class="qe-type" value="'+escapeHtml(type)+'"> '+escapeHtml(type)+'</label>';}).join('');document.getElementById('qeEditTypesMenu').innerHTML=QE_TYPES.map(function(type){return '<label><input type="checkbox" class="qe-edit-type" value="'+escapeHtml(type)+'"> '+escapeHtml(type)+'</label>';}).join('');}
+  function loadQeExecutionTools(){return apiFetch('/api/qa-engineering/execution-tools').then(function(data){qeExecutionTools=data.tools||[];document.getElementById('qeEditExecutionTool').innerHTML='<option value="">N/A</option>'+qeExecutionTools.map(function(tool){return '<option value="'+escapeHtml(tool.label)+'">'+escapeHtml(tool.label)+'</option>';}).join('');});}
+  function initQaEngineering(){if(!qeInitialized){qeRenderTypes();qeBindEvents();qeBindCentralWorkspaceEvents();qeInitialized=true;}document.getElementById('qeGenerateBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeSaveDraftBtn').disabled=!hasPermission('qa_engineering','create');return qeResetAndRefresh();}
+  function qeBindCentralWorkspaceEvents(){document.getElementById('qeDraftSelectAll').onchange=function(){var checked=this.checked;document.querySelectorAll('.qe-draft-check').forEach(function(box){box.checked=checked;qeDraftRows[Number(box.dataset.index)]._selected=checked;});qeUpdateDraftHeader();};document.getElementById('qeAddCaseBtn').onclick=addQeCase;document.getElementById('qeDiscardBtn').onclick=function(){qeJobId=null;loadQeSaved();qeStatus('Idle','Unsaved workspace changes discarded.');};document.getElementById('qeSearch').oninput=renderQeDrafts;}
+  function enterQaEngineering(){if(!qeInitialized)return initQaEngineering();loadQeScope(true);loadQeSaved();loadQeLogs();if(qeJobId)pollQeJob();}
+  function loadQeScope(preserve){var selected=qeScope();return apiFetch('/api/qa-engineering/scope').then(function(data){qeScopeItems=data.knowledge_items||[];qeFill(document.getElementById('qeDomain'),qeUnique(qeScopeItems.map(function(i){return i.domain;})),'Select Domain…',preserve);if(preserve&&selected.domain)document.getElementById('qeDomain').value=selected.domain;qeModules(preserve?selected:null);}).catch(function(error){qeStatus('Failed',error.message);});}
+  function qeModules(selected){var domain=document.getElementById('qeDomain').value;qeFill(document.getElementById('qeModule'),qeUnique(qeScopeItems.filter(function(i){return i.domain===domain;}).map(function(i){return i.module;})),'Select Module…',!!selected);if(selected&&selected.module)document.getElementById('qeModule').value=selected.module;qeKnowledge(selected);}
+  function qeKnowledge(selected){var s=qeScope();qeFill(document.getElementById('qeKnowledge'),qeUnique(qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module;}).map(function(i){return i.knowledge_name;})),'Select Knowledge…',!!selected);if(selected&&selected.knowledge_name)document.getElementById('qeKnowledge').value=selected.knowledge_name;qeVersions(selected);}
+  function qeVersions(selected){var s=qeScope();qeFill(document.getElementById('qeVersion'),qeUnique(qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name;}).map(function(i){return i.version||'1.0';})),'Select Version…',!!selected);if(selected&&selected.version)document.getElementById('qeVersion').value=selected.version;qeDocumentTypes(selected);}
+  function qeDocumentTypes(selected){var s=qeScope();qeFill(document.getElementById('qeDocumentType'),qeUnique(qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name&&(i.version||'1.0')===s.version;}).map(function(i){return i.document_type;})),'Select Document Type…',!!selected);if(selected&&selected.document_type)document.getElementById('qeDocumentType').value=selected.document_type;qeRenderSources();loadQeSaved();}
+  function qeDefaultExportName(){var s=qeScope(),selected=qeScopeItems.filter(function(item){return s.knowledge_source_ids.indexOf(Number(item.id))>=0;}),sourceType=selected.length?canonicalSourceType(selected[0].source_type):'',sourceCode=selected.length>1?'MULTI':({Files:'FIL',URL:'URL','API Collection':'API',Images:'IMG','Git Repository':'GIT','SQL Script':'SQL','SQA Script':'SQA'}[sourceType]||'SOURCE'),name='TC_'+[s.domain,s.module,s.knowledge_name,s.version,s.document_type,sourceCode,'01'].filter(Boolean).join('_');return name.replace(/[<>:"/\\|?*\x00-\x1F]+/g,'_').replace(/\s+/g,'_');}
+  function qeRenderSources(){var s=qeScope(),items=qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name&&(i.version||'1.0')===s.version&&i.document_type===s.document_type;}),area=document.getElementById('qeSources');area.innerHTML=items.length?items.map(function(item){return '<label><input type="checkbox" class="qe-source" value="'+Number(item.id)+'"> <strong>'+escapeHtml(item.file_name||('Source '+item.id))+'</strong> <span class="muted-small">Source Type: '+escapeHtml(canonicalSourceType(item.source_type))+'</span></label>';}).join(''):'<span class="muted-small">No sources match this hierarchy and Document Type.</span>';area.onchange=function(){document.getElementById('qeExportFileName').value=qeDefaultExportName();loadQeSaved();};document.getElementById('qeExportFileName').value=qeDefaultExportName();}
+  function qeResetAndRefresh(){clearTimeout(qePollTimer);qeJobId=null;qeDraftRows=[];qeEditTarget=null;qeLogJobId=null;qeLogsCleared=false;qeLogsPage=0;qeExportFolder='Test Cases';renderQeDrafts();document.getElementById('qeCaseCount').value='10';document.getElementById('qeDocumentName').value='';document.getElementById('qeExportFileName').value='';document.getElementById('qeSaveDraftBtn').textContent='Review / Save';document.getElementById('qeSaveDraftBtn').disabled=!hasPermission('qa_engineering','create');document.querySelectorAll('.qe-type').forEach(function(box){box.checked=false;});document.getElementById('qeSearch').value='';['qeEditModal','qeLogModal','qeExportResultModal','qeExportFolderModal'].forEach(function(id){document.getElementById(id).classList.remove('show');});qeStatus('Idle','Ready for a grounded generation.');return loadQeScope(false).then(function(){return Promise.all([loadQeExecutionTools(),loadQeSaved(),loadQeLogs(),loadQeExportConfig()]);});}
+  function qeSelectedTypes(selector){return Array.from(document.querySelectorAll(selector||'.qe-type:checked')).filter(function(box){return box.checked;}).map(function(box){return box.value;});}
+  function generateQe(){var scope=qeScope(),types=qeSelectedTypes('.qe-type:checked'),button=document.getElementById('qeGenerateBtn');if(!scope.domain||!scope.module||!scope.knowledge_name||!scope.version||!scope.document_type||!scope.knowledge_source_ids.length){qeStatus('Failed','Select the complete hierarchy, Document Type, and at least one Source File.');return;}if(!types.length){qeStatus('Failed','Select at least one Test Type.');return;}button.disabled=true;document.getElementById('qeRefreshBtn').disabled=true;qeLogsCleared=false;qeStatus('Running','Preparing generation from '+scope.knowledge_source_ids.length+' source(s).');apiFetch('/api/qa-engineering/generate',{method:'POST',body:JSON.stringify(Object.assign(scope,{number_of_cases:Number(document.getElementById('qeCaseCount').value),test_types:types,output_formats:['Excel']}))}).then(function(job){qeJobId=job.job_id;qeLogsPage=0;loadQeLogs();pollQeJob();}).catch(function(error){button.disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;qeStatus('Failed',error.message);loadQeLogs();});}
+  function pollQeJob(){clearTimeout(qePollTimer);if(!qeJobId)return;apiFetch('/api/qa-engineering/jobs/'+encodeURIComponent(qeJobId)).then(function(job){loadQeLogs();if(qeLogJobId===qeJobId&&document.getElementById('qeLogModal').classList.contains('show'))renderQeLogDetail(job);if(job.status==='queued'||job.status==='running'){qeStatus('Running',job.message||'Generating.');qePollTimer=setTimeout(pollQeJob,1000);return;}document.getElementById('qeGenerateBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;if(job.status==='error'){qeStatus('Failed',job.error||job.message);return;}var generated=(job.result&&job.result.rows)||[];generated.forEach(function(row,index){row._state='Draft';row._draftId='D'+String(Date.now()+index);row._selected=true;});qeDraftRows=qeDraftRows.filter(function(row){return row.id;}).concat(generated);renderQeDrafts();qeStatus('Completed','Generated '+generated.length+' draft test case(s).');}).catch(function(error){document.getElementById('qeGenerateBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;qeStatus('Failed',error.message);});}
+  function qeUpdateDraftHeader(){var boxes=Array.from(document.querySelectorAll('.qe-draft-check')),checked=boxes.filter(function(box){return box.checked;}).length,header=document.getElementById('qeDraftSelectAll');header.checked=boxes.length>0&&checked===boxes.length;header.indeterminate=checked>0&&checked<boxes.length;}
+  function renderQeDrafts(){var body=document.getElementById('qeDraftBody'),s=qeScope(),query=document.getElementById('qeSearch').value.trim().toLowerCase(),visible=[];qeDraftRows.forEach(function(row,index){if(!query||[row.tc_id,row.tc_number,row.test_case,row.scenario].join(' ').toLowerCase().indexOf(query)>=0)visible.push({row:row,index:index});});document.getElementById('qeSavedCount').textContent='Saved: '+String(qeDraftRows.filter(function(row){return !!row.id;}).length).padStart(2,'0');document.getElementById('qeSavedContext').textContent=s.domain?[s.domain,s.module,s.knowledge_name,s.version,s.document_type].filter(Boolean).join(' / '):'';document.getElementById('qeTrace').textContent=s.knowledge_source_ids.length?' · '+s.knowledge_source_ids.length+' source(s)':'';if(!visible.length){body.innerHTML='<tr><td colspan="10" class="muted-small">No Test Cases in the current working context.</td></tr>';qeUpdateDraftHeader();return;}body.innerHTML=visible.map(function(entry){var row=entry.row,index=entry.index,state=row._state||(row.id?'Reviewed/Saved':'Draft'),deleted=state==='Pending Delete';return '<tr class="'+(deleted?'muted-small':'')+'"><td><input type="checkbox" class="qe-draft-check" data-index="'+index+'" '+(row._selected?'checked':'')+'></td><td class="mono">'+escapeHtml(row.tc_id||row.tc_number||row._draftId||('D'+String(index+1).padStart(3,'0')))+'</td><td><strong>'+escapeHtml(row.test_case||'Untitled')+'</strong><div class="muted-small">'+escapeHtml(row.scenario||'')+'</div></td><td>'+escapeHtml(row.test_type||'—')+'</td><td><div class="qe-clamp">'+escapeHtml(row.steps||'—')+'</div></td><td><div class="qe-clamp">'+escapeHtml(row.expected_result||'—')+'</div></td><td>'+escapeHtml(row.execution_type||'Manual')+'</td><td>'+escapeHtml(row.execution_tool||'—')+'</td><td>'+escapeHtml(state)+'</td><td><button class="btn btn-sm qe-draft-edit" data-index="'+index+'" '+(deleted?'disabled':'')+'>Edit</button> <button class="btn btn-sm qe-draft-delete" data-index="'+index+'">'+(deleted?'Undo':'Delete')+'</button></td></tr>';}).join('');body.querySelectorAll('.qe-draft-edit').forEach(function(button){button.onclick=function(){openQeEditor('draft',Number(button.dataset.index));};});body.querySelectorAll('.qe-draft-delete').forEach(function(button){button.onclick=function(){var row=qeDraftRows[Number(button.dataset.index)];row._state=row._state==='Pending Delete'?(row.id?'Reviewed/Saved':'Draft'):'Pending Delete';row._selected=true;renderQeDrafts();};});body.querySelectorAll('.qe-draft-check').forEach(function(box){box.onchange=function(){qeDraftRows[Number(box.dataset.index)]._selected=box.checked;qeUpdateDraftHeader();};});qeUpdateDraftHeader();}
+  function loadQeSaved(){var s=qeScope();if(!s.domain||!s.module||!s.knowledge_name||!s.version||!s.document_type||!s.knowledge_source_ids.length){qeDraftRows=[];renderQeDrafts();return Promise.resolve();}var params=new URLSearchParams({domain:s.domain,module:s.module,knowledge_name:s.knowledge_name,version:s.version});return apiFetch('/api/qa-engineering/test-cases?'+params.toString()).then(function(data){var selected=new Set(s.knowledge_source_ids);qeDraftRows=(data.test_cases||[]).filter(function(row){return row.document_type===s.document_type&&(row.source_knowledge_ids||[]).some(function(id){return selected.has(Number(id));});}).map(function(row){row._state='Reviewed/Saved';row._selected=false;return row;});renderQeDrafts();}).catch(function(error){qeStatus('Failed',error.message);});}
+  function qeTestTypesFor(row){return row.test_types&&row.test_types.length?row.test_types:String(row.test_type||'').split(',').map(function(v){return v.trim();}).filter(Boolean);}
+  function openQeEditor(kind,value){var row=kind==='draft'?qeDraftRows[value]:value;qeEditTarget={kind:kind,value:value};document.getElementById('qeEditHeading').textContent=kind==='draft'?'Review Generated Draft':'Edit '+(row.tc_number||'Test Case');document.getElementById('qeEditSub').textContent=kind==='draft'?'Unsaved draft':'Persisted Test Case';document.getElementById('qeEditId').value=row.tc_number||(kind==='draft'?'Draft '+(value+1):'');document.getElementById('qeEditImportance').value=['Low','Medium','High'].indexOf(row.importance)>=0?row.importance:'Medium';document.getElementById('qeEditExecutionType').value=row.execution_type==='Automatable'?'Automatable':'Manual';document.getElementById('qeEditExecutionTool').value=row.execution_tool||'';document.getElementById('qeEditExecutionTool').disabled=document.getElementById('qeEditExecutionType').value==='Manual';document.getElementById('qeEditScenario').value=row.scenario||'';document.getElementById('qeEditPreconditions').value=row.pre_conditions||'';document.getElementById('qeEditTitleInput').value=row.test_case||'';document.getElementById('qeEditSteps').value=row.steps||'';document.getElementById('qeEditExpected').value=row.expected_result||'';var selected=qeTestTypesFor(row);document.querySelectorAll('.qe-edit-type').forEach(function(box){box.checked=selected.indexOf(box.value)>=0;});qeUpdateTypeSummary();document.getElementById('qeEditError').classList.remove('show');document.getElementById('qeEditModal').classList.add('show');}
+  function qeUpdateTypeSummary(){var values=qeSelectedTypes('.qe-edit-type:checked');document.getElementById('qeEditTypesSummary').textContent=values.length?values.join(', '):'Select Test Types';}
+  function qeEditorValues(){var types=qeSelectedTypes('.qe-edit-type:checked'),executionType=document.getElementById('qeEditExecutionType').value;return {scenario:document.getElementById('qeEditScenario').value.trim(),importance:document.getElementById('qeEditImportance').value,test_types:types,test_type:types.join(', '),test_case:document.getElementById('qeEditTitleInput').value.trim(),pre_conditions:document.getElementById('qeEditPreconditions').value.trim(),steps:document.getElementById('qeEditSteps').value.trim(),expected_result:document.getElementById('qeEditExpected').value.trim(),execution_type:executionType,execution_tool:executionType==='Automatable'?document.getElementById('qeEditExecutionTool').value:''};}
+  function saveQeEditor(){var values=qeEditorValues(),error=document.getElementById('qeEditError');if(!values.test_case||!values.steps||!values.expected_result||!values.test_types.length){error.textContent='Test Case, Test Types, Test Steps, and Expected Result are required.';error.classList.add('show');return;}if(values.execution_type==='Automatable'&&!values.execution_tool){error.textContent='Select an Execution Tool for an Automatable Test Case.';error.classList.add('show');return;}var existing=qeDraftRows[qeEditTarget.value];qeDraftRows[qeEditTarget.value]=Object.assign({},existing,values,{_state:existing.id?'Modified':'Draft',_selected:true});renderQeDrafts();document.getElementById('qeEditModal').classList.remove('show');}
+  function addQeCase(){var s=qeScope();if(!s.knowledge_source_ids.length){qeStatus('Failed','Select the complete hierarchy and at least one source first.');return;}var index=qeDraftRows.push({_draftId:'D'+Date.now(),_state:'Draft',_selected:true,scenario:'',importance:'Medium',test_types:[],test_type:'',test_case:'',pre_conditions:'',steps:'',expected_result:'',execution_type:'Manual',execution_tool:''})-1;renderQeDrafts();openQeEditor('draft',index);}
+  function saveQeDrafts(){var s=qeScope(),operations=[];qeDraftRows.forEach(function(row){if(!row._selected)return;if(row._state==='Pending Delete'){if(row.id)operations.push({action:'delete',id:row.id});return;}if(!row.id)operations.push({action:'insert',values:qeCaseValues(row)});else if(row._state==='Modified')operations.push({action:'update',id:row.id,values:qeCaseValues(row)});});if(!operations.length){qeStatus('Failed','Select at least one new, modified, or pending-delete row.');return;}var button=document.getElementById('qeSaveDraftBtn');button.disabled=true;apiFetch('/api/qa-engineering/review-save',{method:'POST',body:JSON.stringify(Object.assign({},s,{operations:operations}))}).then(function(result){qeStatus('Completed','Review / Save applied: '+result.inserted_ids.length+' new, '+result.updated_ids.length+' updated, '+result.deleted_ids.length+' deleted.');return loadQeSaved();}).catch(function(error){qeStatus('Failed',error.message);}).finally(function(){button.disabled=!hasPermission('qa_engineering','create');});}
+  function qeCaseValues(row){return {scenario:row.scenario||'',importance:row.importance||'',test_type:row.test_type||'',test_types:row.test_types||qeTestTypesFor(row),test_case:row.test_case||'',pre_conditions:row.pre_conditions||'',steps:row.steps||'',expected_result:row.expected_result||'',execution_type:row.execution_type||'Manual',execution_tool:row.execution_tool||''};}
+  function qeDuration(job){if(!job.finished_at)return 'Running';var ms=new Date(job.finished_at)-new Date(job.started_at);return isNaN(ms)?'—':(ms/1000).toFixed(1)+'s';}
+  function qeJobStatus(value){return value==='finished'?'Completed':value==='error'?'Failed':value==='running'?'Running':'Queued';}
+  function loadQeLogs(){if(qeLogsCleared){document.getElementById('qeLogsBody').innerHTML='<tr><td colspan="8" class="muted-small">Current log view cleared. New actions will appear here.</td></tr>';document.getElementById('qeLogsPager').innerHTML='';return Promise.resolve();}return apiFetch('/api/qa-engineering/jobs?limit='+qeLogsPageSize+'&offset='+(qeLogsPage*qeLogsPageSize)).then(function(data){var rows=data.jobs||[],total=Number(data.total||0),body=document.getElementById('qeLogsBody');if(!rows.length){body.innerHTML='<tr><td colspan="8" class="muted-small">No generation history.</td></tr>';}else{body.innerHTML=rows.map(function(job){var payload=job.payload||{},scope=[job.domain,job.module,job.knowledge_name,job.version,payload.document_type].filter(Boolean).join(' / ')+(payload.knowledge_source_ids?' · '+payload.knowledge_source_ids.length+' source(s)':'');return '<tr><td>'+escapeHtml(new Date(job.started_at).toLocaleString())+'</td><td class="mono" title="'+escapeHtml(job.job_id)+'">'+escapeHtml(job.job_id.slice(0,8))+'</td><td>'+escapeHtml(scope)+'</td><td>'+escapeHtml(qeJobStatus(job.status))+'</td><td>'+Number(job.generated_count||0)+'</td><td>'+escapeHtml(qeDuration(job))+'</td><td>'+escapeHtml(job.error||job.message||'')+'</td><td><button class="btn btn-sm qe-log-detail" data-id="'+escapeHtml(job.job_id)+'">Details</button></td></tr>';}).join('');body.querySelectorAll('.qe-log-detail').forEach(function(button){button.onclick=function(){openQeLog(button.dataset.id);};});}var pages=Math.max(1,Math.ceil(total/qeLogsPageSize)),pager=document.getElementById('qeLogsPager');pager.innerHTML='<button class="btn btn-sm" id="qeLogsPrev" '+(qeLogsPage===0?'disabled':'')+'>Previous</button><span>Page '+(qeLogsPage+1)+' of '+pages+'</span><button class="btn btn-sm" id="qeLogsNext" '+(qeLogsPage+1>=pages?'disabled':'')+'>Next</button>';document.getElementById('qeLogsPrev').onclick=function(){if(qeLogsPage>0){qeLogsPage--;loadQeLogs();}};document.getElementById('qeLogsNext').onclick=function(){if(qeLogsPage+1<pages){qeLogsPage++;loadQeLogs();}};}).catch(function(error){qeStatus('Failed',error.message);});}
+  function openQeLog(jobId){qeLogJobId=jobId;document.getElementById('qeLogModal').classList.add('show');refreshQeLog();}
+  function refreshQeLog(){if(!qeLogJobId)return;var area=document.getElementById('qeLogLines'),atBottom=area.scrollHeight-area.scrollTop-area.clientHeight<30,oldTop=area.scrollTop;apiFetch('/api/qa-engineering/jobs/'+encodeURIComponent(qeLogJobId)).then(function(job){renderQeLogDetail(job);if(atBottom)area.scrollTop=area.scrollHeight;else area.scrollTop=oldTop;});}
+  function renderQeLogDetail(job){document.getElementById('qeLogSub').textContent=job.job_id+' · '+qeJobStatus(job.status)+' · '+(job.generated_count||0)+' generated';var logs=job.logs||[];document.getElementById('qeLogLines').innerHTML=logs.length?logs.map(function(entry){return '<div class="qe-log-line"><span class="muted-small">'+escapeHtml(new Date(entry.timestamp).toLocaleString())+'</span> <strong>'+escapeHtml(entry.stage)+'</strong><br>'+escapeHtml(entry.message)+'</div>';}).join(''):'<div class="muted-small">No log events recorded.</div>';}
+  function loadQeExportConfig(){return apiFetch('/api/qa-engineering/exports/config').then(function(data){qeExportLocations=data.locations||[];if(!qeExportLocations.some(function(item){return item.value===qeExportFolder;}))qeExportFolder=qeExportLocations.length?qeExportLocations[0].value:'Test Cases';var selected=qeExportLocations.find(function(item){return item.value===qeExportFolder;}),path=selected?selected.path:(data.path||'AI-Web/Output/Test Cases');document.getElementById('qeExportFolderBtn').title=path;document.getElementById('qeExportFileName').title='Exports are saved under '+path;});}
+  function openQeExportFolder(){var select=document.getElementById('qeExportFolderSelect');select.innerHTML=qeExportLocations.map(function(item){return '<option value="'+escapeHtml(item.value)+'">'+escapeHtml(item.path)+'</option>';}).join('');select.value=qeExportFolder;document.getElementById('qeExportFolderModal').classList.add('show');}
+  function createQeExport(){var s=qeScope();if(!s.domain||!s.module||!s.knowledge_name){qeStatus('Failed','Select Domain, Module, and Knowledge before export.');return;}var button=document.getElementById('qeExportBtn');button.disabled=true;apiFetch('/api/qa-engineering/exports',{method:'POST',body:JSON.stringify({domain:s.domain,module:s.module,knowledge_name:s.knowledge_name,version:s.version||null,document_type:s.document_type||null,folder:qeExportFolder,file_name:document.getElementById('qeExportFileName').value.trim()||null,q:document.getElementById('qeSearch').value.trim()||null,format:document.getElementById('qeExportFormat').value})}).then(function(result){qeLastExport=result;document.getElementById('qeExportFileName').value=result.file_name;document.getElementById('qeExportResultBody').innerHTML='<div class="kh-summary-grid"><div><span>Format</span><strong>'+escapeHtml(result.format)+'</strong></div><div><span>File</span><strong>'+escapeHtml(result.file_name)+'</strong></div><div><span>Saved location</span><strong>'+escapeHtml(result.saved_location)+'</strong></div><div><span>Test Cases</span><strong>'+Number(result.count)+'</strong></div></div>';document.getElementById('qeExportResultModal').classList.add('show');}).catch(function(error){qeStatus('Failed',error.message);}).finally(function(){button.disabled=false;});}
+  function downloadQeExport(){if(!qeLastExport)return;var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;fetch(API_BASE+'/api/qa-engineering/exports/download/file?relative_path='+encodeURIComponent(qeLastExport.relative_path),{headers:headers}).then(function(response){if(!response.ok)throw new Error('Download failed.');return response.blob();}).then(function(blob){var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=qeLastExport.file_name;a.click();setTimeout(function(){URL.revokeObjectURL(url);},1000);}).catch(function(error){qeStatus('Failed',error.message);});}
+  function qeBindEvents(){document.getElementById('qeDomain').onchange=function(){qeModules(null);};document.getElementById('qeModule').onchange=function(){qeKnowledge(null);};document.getElementById('qeKnowledge').onchange=function(){qeVersions(null);};document.getElementById('qeVersion').onchange=function(){qeDocumentTypes(null);};document.getElementById('qeDocumentType').onchange=function(){qeRenderSources();};document.getElementById('qeRefreshBtn').onclick=function(){qeResetAndRefresh().then(function(){toast('QA Engineering refreshed.');});};document.getElementById('qeGenerateBtn').onclick=generateQe;document.getElementById('qeDraftSelectAll').onchange=function(){var checked=this.checked;document.querySelectorAll('.qe-draft-check').forEach(function(box){box.checked=checked;});qeUpdateDraftHeader();};document.getElementById('qeDiscardBtn').onclick=function(){qeDraftRows=[];qeJobId=null;renderQeDrafts();qeStatus('Idle','Drafts discarded.');};document.getElementById('qeSaveDraftBtn').onclick=saveQeDrafts;document.getElementById('qeEditCancel').onclick=function(){document.getElementById('qeEditModal').classList.remove('show');};document.getElementById('qeEditSave').onclick=saveQeEditor;document.getElementById('qeEditExecutionType').onchange=function(){var manual=this.value==='Manual',tool=document.getElementById('qeEditExecutionTool');tool.disabled=manual;if(manual)tool.value='';};document.getElementById('qeEditTypesSummary').onclick=function(){document.getElementById('qeEditTypes').classList.toggle('open');};document.getElementById('qeEditTypesMenu').onchange=qeUpdateTypeSummary;document.getElementById('qeLogsClear').onclick=function(){qeLogsCleared=true;loadQeLogs();};document.getElementById('qeLogClose').onclick=function(){document.getElementById('qeLogModal').classList.remove('show');};var timer=null;document.getElementById('qeSearch').oninput=function(){clearTimeout(timer);timer=setTimeout(loadQeSaved,250);};document.getElementById('qeExportFolderBtn').onclick=openQeExportFolder;document.getElementById('qeExportFolderCancel').onclick=function(){document.getElementById('qeExportFolderModal').classList.remove('show');};document.getElementById('qeExportFolderApply').onclick=function(){qeExportFolder=document.getElementById('qeExportFolderSelect').value;document.getElementById('qeExportFolderModal').classList.remove('show');loadQeExportConfig();};document.getElementById('qeExportBtn').onclick=createQeExport;document.getElementById('qeExportResultClose').onclick=function(){document.getElementById('qeExportResultModal').classList.remove('show');};document.getElementById('qeExportDownload').onclick=downloadQeExport;document.addEventListener('keydown',function(event){if(event.key==='Escape'){['qeEditModal','qeLogModal','qeExportResultModal','qeExportFolderModal'].forEach(function(id){document.getElementById(id).classList.remove('show');});document.getElementById('qeEditTypes').classList.remove('open');}});}
+
   var khCache = [];
   var khDomains = [];
 
@@ -3162,12 +3597,12 @@
             Object.keys(grouped[domain][module][name][version]).sort().forEach(function(type){
               var leaves = grouped[domain][module][name][version][type].map(function(item){
                 var sourceName = item.source_type === 'API_COLLECTION' ? 'Imported API Collection' : (item.file_name || 'Unnamed source');
-                var leaf='<div class="kh-tree-leaf"><div class="kh-source-name" title="' + escapeHtml(sourceName) + '"><strong>' + escapeHtml(sourceName) + '</strong><div class="kh-tree-meta">Updated ' + escapeHtml(fmtDate(item.modified_date)) + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button type="button" class="btn" title="View details" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button type="button" class="btn" title="Edit knowledge" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button type="button" class="btn" title="View versions" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button type="button" class="btn" style="color:var(--danger);" title="Delete knowledge" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
+                var leaf='<div class="kh-tree-leaf"><div class="kh-source-name" title="' + escapeHtml(sourceName) + '"><strong>' + escapeHtml(sourceName) + '</strong><div class="kh-tree-meta">Source Type: ' + escapeHtml(canonicalSourceType(item.source_type)) + ' · Updated ' + escapeHtml(fmtDate(item.modified_date)) + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button type="button" class="btn" title="View details" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button type="button" class="btn" title="Edit knowledge" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button type="button" class="btn" title="View versions" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button type="button" class="btn" style="color:var(--danger);" title="Delete knowledge" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
                 (item.api_collections||[]).forEach(function(collection){leaf+=node('API Collection · '+collection.name,(collection.endpoints||[]).map(function(endpoint){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml((endpoint.method||'GET').toUpperCase())+' · '+escapeHtml(endpoint.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(endpoint.folder_path||'Root')+' · '+escapeHtml(endpoint.url||'Unresolved URL')+'</div></div><div></div><div class="kh-tree-meta">Endpoint</div><div class="row-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+endpoint.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+endpoint.id+'">Run Now</button></div></div>';}).join(''),!!query,'structured');});
                 (item.captured_flows||[]).forEach(function(flow){var steps=(flow.steps||[]).map(function(step){var elements=(step.elements||[]).map(function(element){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml(element.name||element.element_type||'Control')+'</strong><div class="kh-tree-meta" title="'+escapeHtml(element.locator||'')+'">'+escapeHtml(element.locator_strategy||'locator')+' · '+escapeHtml(element.locator||'—')+'</div></div><div></div><div class="kh-tree-meta">Control</div><div></div></div>';}).join('');return node((step.step_order||'')+' · '+(step.step_name||step.page_name||'Step'),elements,!!query);}).join('');leaf+=node('Captured Flow · '+(flow.business_process_name||'Process')+' / '+(flow.variant_name||'Variant'),steps,!!query);});
                 return leaf;
               }).join('');
-              typeHtml += node(type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query, 'document');
+              typeHtml += node('Document Type: ' + type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query, 'document');
             });
             versionHtml += node('Version ' + version, typeHtml, !!query, 'version');
           });
@@ -4272,6 +4707,7 @@
       if(item.getAttribute('data-page') === 'knowledge' && hasPermission('knowledge', 'view')) enterKnowledgeHub();
       if(item.getAttribute('data-page') === 'ai_assistant' && hasPermission('ai_assistant', 'view')) loadAiHistory();
       if(item.getAttribute('data-page') === 'dashboard' && hasPermission('dashboard', 'view')) loadDashboard();
+      if(item.getAttribute('data-page') === 'qa_engineering' && hasPermission('qa_engineering', 'view')) enterQaEngineering();
     });
   });
 

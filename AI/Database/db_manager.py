@@ -35,7 +35,11 @@ class DatabaseManager:
         # -click vs. shortcut vs. terminal), with uploaded knowledge
         # appearing to have vanished. See App/main.py's APP_DIR/AI_DIR
         # for the same fix already applied to import resolution.
-        db_folder = Path(__file__).resolve().parent
+        # Desktop and Web are presentation layers over one canonical store.
+        # Keep the existing Web database as the central location so browser,
+        # Desktop, and QA Automation always address the same records.
+        project_root = Path(__file__).resolve().parents[2]
+        db_folder = project_root / "AI-Web" / "Database"
         db_folder.mkdir(exist_ok=True, parents=True)
 
         self.db_path = db_folder / "metadata.db"

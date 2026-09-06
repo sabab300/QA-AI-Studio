@@ -63,6 +63,9 @@ from Core.test_case_repository import TestCaseRepository
 from Core.test_execution_manager import TestExecutionManager
 from Core.test_environment_config import TestEnvironmentConfig
 from Core.api_automation_runner import ApiAutomationRunner
+from Core.sql_environment_config import SqlEnvironmentConfig
+from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
+from Core.sql_generator import SQLGenerator
 
 GIT_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "Output" / "GitWorkspaces"
 
@@ -418,9 +421,13 @@ class TestCasesWeb:
     # Listing
     # --------------------------------------------------
 
-    def list_test_cases(self, domain, module, knowledge_name):
+    def list_test_cases(self, domain, module, knowledge_name, automation_type=None):
 
-        return self.repository.list_test_cases(domain, module, knowledge_name)
+        rows = self.repository.list_test_cases(domain, module, knowledge_name)
+        if not automation_type:
+            return rows
+        tool = self.repository.execution_tool_for_automation_type(automation_type)
+        return [row for row in rows if row.get("execution_type") == "Automatable" and row.get("execution_tool") == tool]
 
     def list_workspace(
         self, domain=None, module=None, knowledge_name=None,
@@ -435,7 +442,7 @@ class TestCasesWeb:
 
         result = self.repository.list_all_test_cases(
             domain=domain, module=module, knowledge_name=knowledge_name,
-            status=status, automation_type=automation_type, q=q,
+            status=status, automation_type=automation_type, execution_type="Automatable", q=q,
             limit=limit, offset=offset,
         )
 
@@ -616,6 +623,43 @@ class TestCasesWeb:
     def set_active_script(self, test_case_id, source):
 
         manager = TestExecutionManager()
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix (ported
+        # from the Desktop port — see test_execution_page.py's
+        # ViewScriptDialog._set_active()/on_active_script_changed()
+        # matching comments): this endpoint is the actual gate that
+        # flips a script to Active for Execution, and never validated
+        # it — a script could be saved as Draft with a real syntax
+        # error (update_script()/update_recorded_script() only return
+        # a non-blocking syntax_warning) and then still be set Active
+        # here. Confirmed real by finding genuinely broken persisted
+        # scripts on disk (AI/App/Output/AutomationRuns/TC003_*.py —
+        # "unterminated string literal"). Per this task's explicit
+        # rule ("invalid scripts may stay Draft but must NEVER become
+        # Active"), block it here instead.
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        script_text = (
+            test_case.get("recorded_script")
+            if source == "MANUAL"
+            else test_case.get("automation_script")
+        ) or ""
+
+        if script_text.strip():
+
+            syntax_error = manager.check_script_syntax(script_text)
+
+            if syntax_error:
+
+                raise ValueError(
+                    f"This script has a Python syntax problem and "
+                    f"cannot be made Active for Execution: "
+                    f"{syntax_error}"
+                )
 
         manager.set_active_script(test_case_id, source)
 
@@ -948,3 +992,374 @@ class TestCasesWeb:
             "endpoint": endpoint_summary,
             "result": result,
         }
+
+
+# ============================================================
+# SQL Automation (new — QA-AUTOMATION-FINAL-ARCHITECTURE-04)
+# ============================================================
+
+
+class SqlAutomationWeb:
+    """
+    "SQL" already existed as a per-row Automation Type choice on
+    Desktop (see test_execution_page.py's AUTOMATION_TYPES) but had
+    no runner — selecting it always fell into "Manual Review
+    Required — no automatic runner yet". This class is the missing
+    runner's web-facing wrapper.
+
+    Reuses, rather than duplicates:
+        - TestCaseRepository / test_cases (automation_type='SQL',
+          automation_script holds this class's own small JSON
+          envelope — see _pack_script()/_unpack_script() — not raw
+          Python, so it's never confused with a Playwright script).
+        - AutomationExecutionRepository / automation_runs (same
+          table Playwright and API runs already use — see
+          execute() below for how a SQL result is mapped onto its
+          generic Pass/Fail/Error columns).
+        - Core/sql_generator.py's SQLGenerator (already built, and
+          already registered in AIOrchestrator for the AI Assistant
+          — reused here as-is for its own built-in "never invent
+          SQL when no schema is available" safety behavior, not
+          re-implemented).
+    New, because nothing like it existed before:
+        - Core/sql_environment_config.py (target-database connection
+          profile).
+        - Core/sql_automation_runner.py (the read-only safety gate +
+          actual query execution + assertion evaluation).
+    """
+
+    def __init__(self):
+
+        self.repository = TestCaseRepository()
+
+        self.runs = AutomationExecutionRepository()
+
+        self.env = SqlEnvironmentConfig()
+
+        self.runner = SqlAutomationRunner()
+
+    # --------------------------------------------------
+    # Script envelope: automation_script for a SQL-type test case is
+    # always this JSON shape, never raw SQL text alone — an
+    # assertion rule with no clear way to store it next to the query
+    # would otherwise have nowhere real to live.
+    # --------------------------------------------------
+
+    @staticmethod
+    def _pack_script(sql, assertion_type, assertion_value, assertion_column):
+
+        return json.dumps({
+            "sql": sql or "",
+            "assertion_type": assertion_type or "row_exists",
+            "assertion_value": assertion_value,
+            "assertion_column": assertion_column,
+        })
+
+    @staticmethod
+    def _unpack_script(automation_script):
+
+        if not automation_script:
+
+            return {
+                "sql": "", "assertion_type": "row_exists",
+                "assertion_value": None, "assertion_column": None,
+            }
+
+        try:
+
+            data = json.loads(automation_script)
+
+            if isinstance(data, dict) and "sql" in data:
+
+                return data
+
+        except (ValueError, TypeError):
+
+            pass
+
+        # Anything else (plain text — e.g. an older/hand-typed
+        # value, or a generated-but-not-yet-saved draft) is treated
+        # as the SQL body itself with no assertion configured yet,
+        # rather than raised as a corrupt-data error — Save Script
+        # always writes the JSON envelope going forward.
+        return {
+            "sql": str(automation_script), "assertion_type": "row_exists",
+            "assertion_value": None, "assertion_column": None,
+        }
+
+    # --------------------------------------------------
+    # Environment (connection profile)
+    # --------------------------------------------------
+
+    def get_environment(self):
+
+        return self.env.get_masked()
+
+    def update_environment(self, fields):
+
+        self.env.update_masked(fields)
+
+        return self.env.get_masked()
+
+    def test_connection(self):
+
+        profile = self.env.load()
+
+        return self.runner.test_connection(profile)
+
+    # --------------------------------------------------
+    # AI generation
+    # --------------------------------------------------
+
+    def generate_sql(self, test_case_id, database_schema=None):
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        requirement = (
+            f"Test Case: {test_case.get('test_case') or test_case.get('scenario') or ''}\n"
+            f"Steps: {test_case.get('steps') or ''}\n"
+            f"Expected Result: {test_case.get('expected_result') or ''}"
+        )
+
+        generator = SQLGenerator()
+
+        result = generator.generate(
+            requirement=requirement,
+            context=None,
+            database_schema=database_schema,
+        )
+
+        answer = result.get("answer") or ""
+
+        # Pull just the "SQL Query:" section out of SQLGenerator's
+        # structured text block (see its own module docstring/
+        # _build_prompt()) — the rest (Purpose/Expected Result/
+        # Validation Notes/Assumptions/Missing Information) is real,
+        # useful context for the operator reviewing the draft, kept
+        # in full in `raw_answer`, just not treated as executable SQL.
+        sql_text = ""
+
+        marker = "SQL Query:"
+
+        if marker in answer:
+
+            after = answer.split(marker, 1)[1]
+
+            for stop in ("Expected Result:", "Validation Notes:",
+                         "Assumptions:", "Missing Information:"):
+
+                if stop in after:
+
+                    after = after.split(stop, 1)[0]
+
+            sql_text = after.strip().strip("`").strip()
+
+        # Whether this looks safe/executable is decided by the SAME
+        # gate a manual save/execute goes through — never a
+        # relaxed/AI-only check. If the schema was unavailable,
+        # SQLGenerator already deliberately did not produce
+        # executable SQL (see its _build_prompt()/_validate_output()),
+        # so this will legitimately fail validation and the draft is
+        # saved as needs-review rather than becoming Active.
+        needs_review = True
+        validation_error = None
+
+        try:
+
+            from Core.sql_automation_runner import validate_readonly_sql
+
+            validate_readonly_sql(sql_text)
+
+            needs_review = False
+
+        except SqlValidationError as ex:
+
+            validation_error = str(ex)
+
+        script_json = self._pack_script(
+            sql_text, "row_exists", None, None
+        )
+
+        self.repository.update_automation(test_case_id, "SQL", script_json)
+
+        # A Draft (needs review) is deliberately NOT marked Automated
+        # by this same call — set_active_script()/validate_sql() is
+        # the only path that flips status, exactly like the
+        # Playwright/API AI-generation flow's own "generated text
+        # exists" vs "status says Automated" distinction.
+        return {
+            "test_case": self.repository.get_test_case(test_case_id),
+            "sql": sql_text,
+            "raw_answer": answer,
+            "needs_review": needs_review,
+            "validation_error": validation_error,
+        }
+
+    # --------------------------------------------------
+    # Save / validate
+    # --------------------------------------------------
+
+    def save_script(self, test_case_id, sql, assertion_type,
+                     assertion_value, assertion_column):
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        script_json = self._pack_script(
+            sql, assertion_type, assertion_value, assertion_column
+        )
+
+        self.repository.update_automation(test_case_id, "SQL", script_json)
+
+        return self.repository.get_test_case(test_case_id)
+
+    def validate_sql(self, test_case_id):
+        """
+        Read-only safety + syntax gate — the ONLY thing that decides
+        whether this test case's saved SQL is allowed to become
+        Active for execution (see set_active()). A query that fails
+        here can stay saved as a Draft, exactly per this task's
+        "Invalid scripts may be retained as Draft/Validation Failed
+        but must NOT be Active for Execution" rule.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        script = self._unpack_script(test_case.get("automation_script"))
+
+        try:
+
+            from Core.sql_automation_runner import validate_readonly_sql
+
+            cleaned = validate_readonly_sql(script.get("sql"))
+
+            return {"valid": True, "cleaned_sql": cleaned, "error": None}
+
+        except SqlValidationError as ex:
+
+            return {"valid": False, "cleaned_sql": None, "error": str(ex)}
+
+    def set_active(self, test_case_id, active):
+        """
+        `active` is a bool. Setting True re-runs validate_sql() first
+        and refuses (raises ValueError) if it fails — there is no
+        way to force an unsafe/invalid query to Active from this
+        method. Mirrors active_script_source for Playwright, but as
+        a plain boolean rather than a source picker (SQL has exactly
+        one script slot, no separate AI/Manual variant).
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        if active:
+
+            validation = self.validate_sql(test_case_id)
+
+            if not validation["valid"]:
+
+                raise ValueError(
+                    f"Cannot activate — this query is not safe/valid "
+                    f"to execute: {validation['error']}"
+                )
+
+            self.repository.update_status(test_case_id, "Automated")
+
+        return self.repository.get_test_case(test_case_id)
+
+    # --------------------------------------------------
+    # Execute
+    # --------------------------------------------------
+
+    def execute(self, test_case_id, executed_by_user_id=None,
+                executed_by_username=None):
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        if (test_case.get("automation_type") or "") != "SQL":
+
+            raise ValueError("This test case's Automation Type is not 'SQL'.")
+
+        validation = self.validate_sql(test_case_id)
+
+        if not validation["valid"]:
+
+            raise ValueError(
+                f"This query is not safe/valid to execute: "
+                f"{validation['error']}"
+            )
+
+        script = self._unpack_script(test_case.get("automation_script"))
+
+        run = self.runs.create_run(
+            test_case, executed_by_user_id=executed_by_user_id,
+            executed_by_username=executed_by_username,
+        )
+
+        self.runs.mark_running(run["run_uuid"])
+
+        profile = self.env.load()
+
+        query_result = self.runner.execute_query(
+            profile, validation["cleaned_sql"]
+        )
+
+        if not query_result.get("success"):
+
+            finished = self.runs.mark_finished(run["run_uuid"], {
+                "error": query_result.get("error"),
+                "duration": query_result.get("duration_seconds"),
+            })
+
+            self.repository.update_result(test_case_id, "Fail")
+
+            return finished
+
+        assertion = self.runner.evaluate_assertion(
+            script.get("assertion_type"), script.get("assertion_value"),
+            script.get("assertion_column"), query_result,
+        )
+
+        summary_lines = [
+            f"SQL: {validation['cleaned_sql']}",
+            f"Columns: {', '.join(query_result.get('columns') or [])}",
+            f"Row count: {query_result.get('row_count')}"
+            + (" (truncated)" if query_result.get("truncated") else ""),
+        ]
+
+        for row in (query_result.get("rows") or [])[:20]:
+
+            summary_lines.append(str(row))
+
+        summary_lines.append(f"Assertion: {assertion['message']}")
+
+        finished = self.runs.mark_finished(run["run_uuid"], {
+            "success": assertion["outcome"] == "Pass",
+            "duration": query_result.get("duration_seconds"),
+            "stdout": "\n".join(summary_lines),
+            "stderr": assertion["message"],
+        })
+
+        self.repository.update_result(
+            test_case_id, assertion["outcome"]
+        )
+
+        return finished

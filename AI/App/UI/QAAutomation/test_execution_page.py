@@ -30,6 +30,18 @@ Flow:
 Not in this phase (tracked separately):
     ClickUp Automation, Test Manager Automation, Git Automation,
     real Playwright/Selenium/API/SQL execution runners.
+
+UPDATE (QA-AUTOMATION-FINAL-ARCHITECTURE-04): the note above is
+historical/stale (Playwright and API execution are both real now —
+see confirm_and_run_playwright()/handle_api_rows()). Selenium is not
+required for this product and was removed as an Automation Type
+choice (never had a real runner anyway). SQL Automation is real now
+too, but as its OWN dedicated tab/page (see sql_automation_page.py)
+with its own read-only-by-design runner — not a type choice in this
+grid. This class is now instantiated twice from
+qa_automation_hub_page.py — once per Domain/Module/Knowledge-scoped,
+type-filtered tab (Playwright-only, API-only) — via the additive
+`automation_type_filter` constructor parameter; see its docstring.
 ==========================================================
 """
 
@@ -71,6 +83,8 @@ from Core.playwright_runner import (
 )
 
 from Core.test_execution_manager import TestExecutionManager
+from Core.clickup_config import ClickUpConfig
+from Core.clickup_client import ClickUpClient
 
 from UI.QAAutomation.test_execution_worker import (
     AutomationGenerationWorker,
@@ -84,10 +98,19 @@ from UI.QAAutomation.test_execution_worker import (
 AUTOMATION_TYPES = [
     "None",
     "Playwright",
-    "Selenium",
     "API",
-    "SQL",
 ]
+# QA-AUTOMATION-FINAL-ARCHITECTURE-04: Selenium is not required for
+# this product and is removed as an option entirely (it never had a
+# real runner anyway — see handle_automated_rows()'s old
+# "unsupported" branch below). SQL is no longer offered from this
+# grid's per-row Automation Type combo either — SQL Automation is now
+# its own dedicated tab/page (see sql_automation_page.py), with its
+# own grid, safety-gated runner and Test Environment Setting, instead
+# of a silently-unsupported entry mixed into this one. Any test case
+# a prior version already saved with automation_type 'Selenium' or
+# 'SQL' still loads and displays correctly here (see add_row()) — this
+# only removes them as a choice for NEW automation going forward.
 
 RESULT_OPTIONS = [
     "Pass",
@@ -152,7 +175,7 @@ class RecordResultDialog(QDialog):
 
 class AutomationSuggestionDialog(QDialog):
 
-    def __init__(self, tc_number, test_case_text, suggestion, parent=None):
+    def __init__(self, tc_number, test_case_text, suggestion, parent=None, allowed_types=None):
 
         super().__init__(parent)
 
@@ -191,13 +214,23 @@ class AutomationSuggestionDialog(QDialog):
 
         self.type_combo = QComboBox()
 
-        self.type_combo.addItems(
-            ["Playwright", "Selenium", "API", "SQL"]
-        )
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04: Selenium/SQL removed as
+        # choices here too (see AUTOMATION_TYPES' own comment above).
+        # `allowed_types` lets a filtered (Playwright-only / API-only)
+        # tab restrict this to just its own type, so accepting the AI's
+        # suggestion here can never generate the OTHER tab's type of
+        # script. Falls back to both real types when unset.
+        combo_items = list(allowed_types) if allowed_types else ["Playwright", "API"]
 
-        self.type_combo.setCurrentText(
-            suggestion["suggested_type"]
-        )
+        suggested = suggestion["suggested_type"]
+
+        if suggested not in combo_items:
+
+            combo_items = combo_items + [suggested]
+
+        self.type_combo.addItems(combo_items)
+
+        self.type_combo.setCurrentText(suggested)
 
         layout.addWidget(self.type_combo)
 
@@ -637,6 +670,36 @@ class EnvironmentSettingsDialog(QDialog):
 
         self._load_api_variables_table(data.get("api_variables") or {})
 
+        # ClickUp is a single global integration (not per Domain/
+        # Module), used only for the contextual "Create Bug" action on
+        # FAILED rows across all 3 QA Automation tabs — configured
+        # once, here, rather than duplicated per tab. Mirrors the Web
+        # port's ClickUp Integration card in its Test Environment
+        # Setting modal.
+        clickup_group = QGroupBox("ClickUp Integration")
+
+        clickup_layout = QFormLayout(clickup_group)
+
+        self.clickup_config = ClickUpConfig()
+
+        self.clickup_api_token = QLineEdit()
+
+        self.clickup_api_token.setEchoMode(QLineEdit.Password)
+
+        self.clickup_list_id = QLineEdit()
+
+        clickup_layout.addRow("API token", self.clickup_api_token)
+
+        clickup_layout.addRow("List ID", self.clickup_list_id)
+
+        layout.addWidget(clickup_group)
+
+        clickup_data = self.clickup_config.load()
+
+        self.clickup_api_token.setText(clickup_data.get("clickup_api_token", ""))
+
+        self.clickup_list_id.setText(clickup_data.get("clickup_list_id", ""))
+
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -847,6 +910,11 @@ class EnvironmentSettingsDialog(QDialog):
             api_verify_ssl=self.api_verify_ssl.isChecked(),
             api_base_url_override=self.api_base_url_override.text().strip(),
             api_variables=self._collect_api_variables(),
+        )
+
+        self.clickup_config.save(
+            clickup_api_token=self.clickup_api_token.text(),
+            clickup_list_id=self.clickup_list_id.text().strip(),
         )
 
         self.accept()
@@ -1095,6 +1163,40 @@ class ViewScriptDialog(QDialog):
     def _set_active(self):
 
         source = self._current_source()
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix: this
+        # method — the actual gate that flips a script to "Active for
+        # Execution" — previously never validated the script at all.
+        # save() only *warns* on a syntax error and still lets you
+        # save it (by design — Draft scripts may be invalid), but
+        # nothing stopped that same broken script from then being set
+        # Active here, straight from whatever was already persisted.
+        # Confirmed this was a real, live gap by finding genuinely
+        # broken persisted scripts on disk (AI/App/Output/AutomationRuns
+        # /TC003_*.py — "unterminated string literal"; TC001_*
+        # _interactive.py — "unexpected indent"). Per this task's
+        # explicit rule ("invalid scripts may stay Draft but must
+        # NEVER become Active"), block Active here on a real syntax
+        # error instead of only warning.
+
+        script_text = self._script_for(source)
+
+        if script_text.strip():
+
+            error = self.manager.check_script_syntax(script_text)
+
+            if error:
+
+                QMessageBox.critical(
+                    self,
+                    "Cannot Set Active",
+                    f"This script has a Python syntax problem and "
+                    f"cannot be made Active for Execution:\n\n"
+                    f"{error}\n\n"
+                    f"Fix it and save first, then try again.",
+                )
+
+                return
 
         try:
 
@@ -1505,9 +1607,33 @@ class LocatorRepairDialog(QDialog):
 
 class TestExecutionPage(QWidget):
 
-    def __init__(self):
+    def __init__(self, automation_type_filter=None):
+        """
+        `automation_type_filter`: QA-AUTOMATION-FINAL-ARCHITECTURE-04
+        — additive, backward-compatible (default None = every prior
+        caller/behavior unchanged). When set to "Playwright" or "API",
+        this instance only loads/shows/generates/executes test cases
+        of that type (a blank/"None" automation_type counts as
+        Playwright-eligible, same rule the Web port uses), and its
+        per-row Automation Type combo only offers that type — never a
+        different one — so qa_automation_hub_page.py can host one
+        Playwright-only and one API-only instance of this same page as
+        two of the 3 required tabs, without duplicating this file's
+        ~3700 lines of grid/generation/execution business logic, and
+        without a tab silently mixing in another type's test cases or
+        scripts.
+        """
 
         super().__init__()
+
+        self.automation_type_filter = automation_type_filter
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04: ClickUp is a contextual,
+        # per-row action on FAILED test cases only (never a standalone
+        # tab) — see the "ClickUp" grid column in add_row() and
+        # create_clickup_bug_for_row() below. One global config, same
+        # as the Web port's ClickUpConfig.
+        self.clickup_config = ClickUpConfig()
 
         self.metadata = MetadataManager()
 
@@ -1595,7 +1721,18 @@ class TestExecutionPage(QWidget):
         layout.setSpacing(15)
 
 
-        title = QLabel("Test Execution Automation")
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04: this class now backs two
+        # distinct tabs (Playwright-only, API-only) via
+        # automation_type_filter — show a title matching whichever one
+        # is actually active instead of a generic label on both.
+        if self.automation_type_filter == "Playwright":
+            title_text = "Playwright Automation"
+        elif self.automation_type_filter == "API":
+            title_text = "API Automation"
+        else:
+            title_text = "Test Execution Automation"
+
+        title = QLabel(title_text)
 
         title.setObjectName("SectionTitle")
 
@@ -1674,7 +1811,7 @@ class TestExecutionPage(QWidget):
         table_layout.addLayout(selection_row)
 
 
-        self.table = QTableWidget(0, 10)
+        self.table = QTableWidget(0, 11)
 
         self.table.setHorizontalHeaderLabels([
             "",
@@ -1687,7 +1824,36 @@ class TestExecutionPage(QWidget):
             "Record",
             "Active Script",
             "Automate",
+            "ClickUp",
         ])
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix: without
+        # this, QTableWidget gives every column the same fixed default
+        # width regardless of its header text length, so longer
+        # headers ("Automation Type", "Active Script") were rendered
+        # clipped/unreadable (confirmed via an actual on-screen
+        # screenshot, not just code review) no matter how wide the
+        # window is. Pre-existing on this grid since before this task;
+        # same fix applied to sql_automation_page.py's new grid for
+        # consistency across all 3 tabs. resizeColumnsToContents()
+        # alone fixes the clipping but sizes each column to the bare
+        # minimum (no header padding, headers visually touching) and
+        # shrinks the blank-header checkbox column (0) to
+        # near-invisible — also confirmed via screenshot, so it is not
+        # used alone: pad every non-stretch column afterward, and
+        # floor the checkbox column's width explicitly.
+        self.table.resizeColumnsToContents()
+
+        for col in range(self.table.columnCount()):
+            if col == 2:
+                continue
+            self.table.setColumnWidth(
+                col, self.table.columnWidth(col) + 18
+            )
+
+        self.table.setColumnWidth(
+            0, max(self.table.columnWidth(0), 36)
+        )
 
         self.table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.Stretch
@@ -1782,6 +1948,16 @@ class TestExecutionPage(QWidget):
         actions_layout.addWidget(self.import_test_cases_btn)
 
         actions_layout.addWidget(self.generate_from_collection_btn)
+
+        # "Generate Automation from API Collection" only makes sense
+        # on the API-only tab (it auto-creates API test cases straight
+        # from imported endpoints) — hidden, not just disabled, on the
+        # Playwright-only tab so that tab's action row isn't cluttered
+        # with a button that can never apply to it. Left visible on an
+        # unfiltered instance (backward-compatible default).
+        if self.automation_type_filter == "Playwright":
+
+            self.generate_from_collection_btn.setVisible(False)
 
         actions_layout.addWidget(self.cancel_recording_btn)
 
@@ -1970,6 +2146,27 @@ class TestExecutionPage(QWidget):
             module,
             knowledge_name
         )
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04: filter to this tab's own
+        # automation type — the scoped /test-cases-style call above
+        # returns every type together (Playwright/API/SQL/None all
+        # share one pool of test cases from QA Engineering), same as
+        # the Web port; a Playwright-type row must never appear in (or
+        # be executable from) the API tab, and vice versa.
+        if self.automation_type_filter:
+
+            def _matches(tc):
+                expected_tool = self.manager.repository.execution_tool_for_automation_type(
+                    self.automation_type_filter
+                )
+                return (
+                    tc.get("execution_type") == "Automatable"
+                    and tc.get("execution_tool") == expected_tool
+                )
+
+            self.test_cases = [
+                tc for tc in self.test_cases if _matches(tc)
+            ]
 
         self.populate_table()
 
@@ -2214,11 +2411,35 @@ class TestExecutionPage(QWidget):
 
         automation_combo = QComboBox()
 
-        automation_combo.addItems(AUTOMATION_TYPES)
-
-        automation_combo.setCurrentText(
-            test_case.get("automation_type") or "None"
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04: on a filtered tab
+        # (Playwright-only / API-only instance — see
+        # self.automation_type_filter, set by qa_automation_hub_page.py)
+        # only offer "None" plus this tab's own type, so generating
+        # automation from THIS tab can never silently create/overwrite
+        # a different automation type's script. An unfiltered instance
+        # (kept as a backward-compatible default) still offers every
+        # currently-supported type.
+        offered_types = (
+            ["None", self.automation_type_filter]
+            if self.automation_type_filter
+            else list(AUTOMATION_TYPES)
         )
+
+        existing_type = test_case.get("automation_type") or "None"
+
+        # A test case saved under a now-removed/out-of-scope type
+        # (legacy 'Selenium'/'SQL' from before this task, or simply a
+        # type outside this tab's own filter) must still show its REAL
+        # persisted value rather than silently snapping to something
+        # else — appended here so it stays visible for review, never
+        # fabricated away.
+        if existing_type not in offered_types:
+
+            offered_types = offered_types + [existing_type]
+
+        automation_combo.addItems(offered_types)
+
+        automation_combo.setCurrentText(existing_type)
 
         self.table.setCellWidget(row, 4, automation_combo)
 
@@ -2261,6 +2482,20 @@ class TestExecutionPage(QWidget):
             )
         )
 
+        # Manual Recording (Playwright's own recorder) has no meaning
+        # for an API test case — on the API-only tab this column is
+        # simply disabled/blank rather than offering a control that
+        # would confuse the operator or record nothing useful. Left
+        # enabled everywhere else (Playwright tab, and any legacy
+        # unfiltered instance) exactly as before.
+        if self.automation_type_filter == "API":
+
+            record_btn.setEnabled(False)
+
+            record_btn.setText("—")
+
+            record_btn.setToolTip("Not applicable for API test cases.")
+
         self.table.setCellWidget(row, 7, record_btn)
 
         active_combo = QComboBox()
@@ -2299,6 +2534,86 @@ class TestExecutionPage(QWidget):
         )
 
         self.table.setCellWidget(row, 9, automate_btn)
+
+        clickup_btn = QPushButton("Create Bug")
+
+        clickup_btn.setToolTip(
+            "Creates a real ClickUp task summarizing this FAILED "
+            "test case (requires ClickUp to be configured in Test "
+            "Environment Settings)."
+        )
+
+        clickup_btn.clicked.connect(
+            lambda _, tc_id=test_case["id"]: self.create_clickup_bug_for_row(
+                tc_id
+            )
+        )
+
+        self.table.setCellWidget(row, 10, clickup_btn)
+
+        self._update_clickup_button(clickup_btn, test_case.get("last_result"))
+
+    # ======================================================
+    # ClickUp — contextual "create bug for a failed test" action only
+    # (see this task's product decision: no standalone ClickUp tab).
+    # A PASS/Not Run row never gets an enabled/encouraged bug button.
+    # ======================================================
+
+    def _update_clickup_button(self, button, last_result):
+
+        is_fail = (last_result == "Fail")
+
+        button.setEnabled(is_fail)
+
+        button.setVisible(is_fail)
+
+    def refresh_clickup_button(self, row):
+
+        button = self.table.cellWidget(row, 10)
+
+        if button is None:
+
+            return
+
+        result_item = self.table.item(row, 5)
+
+        self._update_clickup_button(
+            button, result_item.text() if result_item else None
+        )
+
+    def create_clickup_bug_for_row(self, test_case_id):
+
+        test_case = self.manager.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            QMessageBox.critical(
+                self, "QA AI Studio", "Test case could not be loaded."
+            )
+
+            return
+
+        client = ClickUpClient(self.clickup_config.load())
+
+        result = client.create_bug_task(test_case)
+
+        if not result.get("success"):
+
+            QMessageBox.warning(
+                self, "ClickUp", result.get("error", "ClickUp task creation failed.")
+            )
+
+            return
+
+        self.log.append(
+            f"{test_case.get('tc_number')}: ClickUp bug created — "
+            f"{result.get('task_url') or result.get('task_id')}"
+        )
+
+        QMessageBox.information(
+            self, "ClickUp",
+            f"Bug created: {result.get('task_url') or result.get('task_id')}"
+        )
 
     # ======================================================
     # Selection helpers
@@ -2412,8 +2727,8 @@ class TestExecutionPage(QWidget):
             QMessageBox.warning(
                 self,
                 "QA AI Studio",
-                "Choose an Automation Type (Playwright / Selenium / "
-                "API / SQL) for the selected test case(s) first."
+                "Choose an Automation Type (Playwright / API) for "
+                "the selected test case(s) first."
             )
 
             return
@@ -2594,7 +2909,11 @@ class TestExecutionPage(QWidget):
                 break
 
         dialog = AutomationSuggestionDialog(
-            tc_number, test_case_text, suggestion, self
+            tc_number, test_case_text, suggestion, self,
+            allowed_types=(
+                [self.automation_type_filter]
+                if self.automation_type_filter else None
+            ),
         )
 
         if dialog.exec() == QDialog.Accepted:
@@ -2744,6 +3063,53 @@ class TestExecutionPage(QWidget):
             combo.blockSignals(False)
 
             return
+
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix: this is
+        # the actual "Active Script" grid-column control most users
+        # will use, and it never validated the script it was about to
+        # activate — same gap as ViewScriptDialog._set_active() (see
+        # its comment for the confirmed real broken-script evidence).
+        # Block Active here too on a real syntax error rather than
+        # silently activating a script that can never successfully
+        # run, and reset the combo back to reflect what's actually
+        # active so the UI doesn't show a state that was rejected.
+
+        script_text = (
+            (test_case or {}).get("recorded_script")
+            if source == "MANUAL"
+            else (test_case or {}).get("automation_script")
+        ) or ""
+
+        if script_text.strip():
+
+            error = self.manager.check_script_syntax(script_text)
+
+            if error:
+
+                QMessageBox.critical(
+                    self,
+                    "Cannot Set Active",
+                    f"This script has a Python syntax problem and "
+                    f"cannot be made Active for Execution:\n\n"
+                    f"{error}\n\n"
+                    f"Open the script (Script column) to fix and "
+                    f"save it first, then try again.",
+                )
+
+                combo.blockSignals(True)
+
+                previous_source = (
+                    (test_case or {}).get("active_script_source")
+                    or "AUTO"
+                ).upper()
+
+                combo.setCurrentIndex(
+                    1 if previous_source == "MANUAL" else 0
+                )
+
+                combo.blockSignals(False)
+
+                return
 
         try:
 
@@ -3115,6 +3481,8 @@ class TestExecutionPage(QWidget):
 
                 self.table.item(row, 5).setText(result)
 
+                self.refresh_clickup_button(row)
+
                 self.log.append(
                     f"{tc_number}: recorded result '{result}'."
                 )
@@ -3176,11 +3544,13 @@ class TestExecutionPage(QWidget):
             QMessageBox.information(
                 self,
                 "Manual Review Required",
-                f"{len(unsupported)} automated test case(s) use "
-                f"Selenium/SQL, which don't have an automatic "
-                f"runner yet.\n\nTest cases: {numbers}\n\n"
-                f"Use 'View Script' on each row to review and run "
-                f"it in your own test environment."
+                f"{len(unsupported)} test case(s) are saved under a "
+                f"legacy automation type (e.g. Selenium) that this "
+                f"tab no longer offers a runner for. SQL test cases "
+                f"belong on the SQL Automation tab instead, which has "
+                f"its own real, read-only runner.\n\n"
+                f"Test cases: {numbers}\n\n"
+                f"Use 'View Script' on each row to review it."
             )
 
         if api_ready:
@@ -3711,5 +4081,7 @@ class TestExecutionPage(QWidget):
             if self.row_tc_id(row) == test_case_id:
 
                 self.table.item(row, 5).setText(text)
+
+                self.refresh_clickup_button(row)
 
                 return

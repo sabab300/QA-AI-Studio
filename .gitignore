@@ -101,6 +101,8 @@ AI-Web/Database/chroma_db/
 
 # Secrets
 AI-Web/Database/*.key
+AI-Web/Config/sql_environment_config.json
+AI/Config/sql_environment_config.json
 
 # Downloaded ML models
 AI-Web/Models/
@@ -108,6 +110,8 @@ AI/Models/
 
 # Runtime repositories/generated documents
 AI-Web/Repository/
+AI-Web/Output/
+AI-Web/Config/qa_engineering_export.json
 
 # IDE / temporary
 .vscode/

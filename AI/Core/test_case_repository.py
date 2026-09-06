@@ -633,3 +633,19 @@ class TestCaseRepository:
         conn.commit()
 
         conn.close()
+
+
+# Desktop and Web intentionally share one canonical Test Case repository
+# implementation. Loading it under a private module name keeps Desktop's
+# existing `Core`/`Database` imports intact while preventing two copies of
+# persistence, TC_ID, artifact, and source-traceability business rules.
+import importlib.util as _importlib_util
+import sys as _sys
+from pathlib import Path as _Path
+
+_canonical_path = _Path(__file__).resolve().parents[2] / "AI-Web" / "Core" / "test_case_repository.py"
+_canonical_spec = _importlib_util.spec_from_file_location("qa_ai_canonical_test_case_repository", _canonical_path)
+_canonical_module = _importlib_util.module_from_spec(_canonical_spec)
+_sys.modules[_canonical_spec.name] = _canonical_module
+_canonical_spec.loader.exec_module(_canonical_module)
+TestCaseRepository = _canonical_module.TestCaseRepository

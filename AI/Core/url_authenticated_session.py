@@ -85,7 +85,11 @@ class URLAuthenticatedSession:
                 "error": "URL is required.",
             }
 
-        if not creds:
+        requested_auth_type = str(
+            analysis_data.get("authentication_type") or "NONE"
+        ).upper()
+
+        if not creds and requested_auth_type not in {"NONE", "PUBLIC", "NO_AUTH", "NO AUTH"}:
             return {
                 "success": False,
                 "authenticated": False,
@@ -158,6 +162,23 @@ class URLAuthenticatedSession:
                 self.logger.warning("Authentication page navigation timed out, attempting execution.")
 
             self.page.wait_for_timeout(1500)
+
+            if self.authentication_type in {"NONE", "PUBLIC", "NO_AUTH", "NO AUTH"}:
+                self.authenticated = True
+                return {
+                    "success": True,
+                    "authenticated": True,
+                    "authentication_pending": False,
+                    "url": self.page.url,
+                    "requested_url": requested_url,
+                    "authentication_type": self.authentication_type,
+                    "page_title": self._safe_title(self.page),
+                    "message": "Public Playwright discovery session created.",
+                    "session": self,
+                    "_authenticated_session": self,
+                    "authenticated_session": self,
+                }
+
             detected_fields = analysis_data.get("detected_fields", []) or []
 
             # Extract Credential Values (Case-insensitive matching)
@@ -290,18 +311,18 @@ class URLAuthenticatedSession:
             verification = self._verify_authenticated(self.page, requested_url, submitted)
 
             if not verification["authenticated"]:
+                failed_url = self.page.url if self.page else ""
+                self.close()
                 return {
                     "success": False,
                     "authenticated": False,
                     "authentication_pending": True,
-                    "url": self.page.url if self.page else "",
+                    "url": failed_url,
                     "error": verification["reason"],
                 }
 
             # Successfully Authenticated
             self.authenticated = True
-            storage_state = self.context.storage_state()
-
             self.logger.info("Authenticated Playwright session created and held in memory.")
 
             res = {
@@ -311,7 +332,6 @@ class URLAuthenticatedSession:
                 "url": self.page.url,
                 "requested_url": requested_url,
                 "authentication_type": self.authentication_type,
-                "storage_state": storage_state,
                 "page_title": self._safe_title(self.page),
                 "message": "Authenticated Playwright session created successfully.",
             }

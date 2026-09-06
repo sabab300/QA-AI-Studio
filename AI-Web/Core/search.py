@@ -27,7 +27,8 @@ class KnowledgeSearch:
         domain=None,
         module=None,
         knowledge_name=None,
-        version=None
+        version=None,
+        source_file_names=None,
     ):
 
         vector = self.embedding.generate_embedding(query)
@@ -48,6 +49,9 @@ class KnowledgeSearch:
 
         if version:
             filters.append({"version": version})
+
+        if source_file_names:
+            filters.append({"file_name": {"$in": list(source_file_names)}})
 
         where = None
 

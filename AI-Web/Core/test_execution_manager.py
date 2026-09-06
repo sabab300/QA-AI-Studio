@@ -1575,6 +1575,28 @@ class TestExecutionManager:
                 "Manually first."
             )
 
+        # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix (ported
+        # from the Desktop port — see AI/Core/test_execution_manager
+        # .py's matching comment): defense in depth for "execution
+        # must re-validate immediately before running", on top of
+        # /test-cases/{id}/validate. Confirmed real by finding
+        # genuinely broken persisted scripts on disk
+        # (AI/App/Output/AutomationRuns/TC003_*.py — "unterminated
+        # string literal"). Treated the same as "didn't even run" (no
+        # Pass/Fail recorded) rather than a Fail, since the test
+        # itself never actually executed.
+        valid, syntax_error = self._validate_python_syntax(script)
+
+        if not valid:
+
+            return {
+                "success": False,
+                "error": (
+                    f"Active script has a Python syntax problem and "
+                    f"was not run: {syntax_error}"
+                ),
+            }
+
         result = self.playwright_runner.run_script(
             script,
             tc_number=test_case.get("tc_number", "script"),

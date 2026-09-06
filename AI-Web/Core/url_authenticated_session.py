@@ -89,7 +89,7 @@ class URLAuthenticatedSession:
             (analysis_data.get("authentication_type") or "NONE")
         ).upper()
 
-        if not creds and requested_auth_type not in {"NONE", "PUBLIC", "NO_AUTH"}:
+        if not creds and requested_auth_type not in {"NONE", "PUBLIC", "NO_AUTH", "NO AUTH"}:
             return {
                 "success": False,
                 "authenticated": False,
@@ -163,7 +163,7 @@ class URLAuthenticatedSession:
 
             self.page.wait_for_timeout(1500)
 
-            if self.authentication_type in {"NONE", "PUBLIC", "NO_AUTH"}:
+            if self.authentication_type in {"NONE", "PUBLIC", "NO_AUTH", "NO AUTH"}:
                 self.authenticated = True
                 return {
                     "success": True,
@@ -311,18 +311,18 @@ class URLAuthenticatedSession:
             verification = self._verify_authenticated(self.page, requested_url, submitted)
 
             if not verification["authenticated"]:
+                failed_url = self.page.url if self.page else ""
+                self.close()
                 return {
                     "success": False,
                     "authenticated": False,
                     "authentication_pending": True,
-                    "url": self.page.url if self.page else "",
+                    "url": failed_url,
                     "error": verification["reason"],
                 }
 
             # Successfully Authenticated
             self.authenticated = True
-            storage_state = self.context.storage_state()
-
             self.logger.info("Authenticated Playwright session created and held in memory.")
 
             res = {
@@ -332,7 +332,6 @@ class URLAuthenticatedSession:
                 "url": self.page.url,
                 "requested_url": requested_url,
                 "authentication_type": self.authentication_type,
-                "storage_state": storage_state,
                 "page_title": self._safe_title(self.page),
                 "message": "Authenticated Playwright session created successfully.",
             }

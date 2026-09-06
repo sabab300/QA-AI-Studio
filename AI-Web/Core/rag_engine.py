@@ -49,7 +49,8 @@ class RAGEngine:
 
         knowledge_name,
 
-        version
+        version,
+        source_file_names=None,
 
     ):
 
@@ -65,7 +66,8 @@ class RAGEngine:
 
             str(knowledge_name),
 
-            str(version)
+            str(version),
+            ",".join(sorted(source_file_names or []))
 
         ])
 
@@ -89,7 +91,8 @@ class RAGEngine:
 
         knowledge_name=None,
 
-        version=None
+        version=None,
+        source_file_names=None,
 
     ):
 
@@ -119,7 +122,8 @@ class RAGEngine:
 
                 knowledge_name,
 
-                version
+                version,
+                source_file_names,
 
             )
 
@@ -161,7 +165,8 @@ class RAGEngine:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                source_file_names=source_file_names,
 
             )
 
@@ -212,8 +217,6 @@ class RAGEngine:
 
             )
 
-
-
             scores = retrieved.get(
 
                 "scores",
@@ -222,7 +225,15 @@ class RAGEngine:
 
             )
 
-
+            if source_file_names:
+                allowed_sources = {str(name) for name in source_file_names if name}
+                selected = [
+                    index for index, item in enumerate(metadata)
+                    if str((item or {}).get("file_name") or "") in allowed_sources
+                ]
+                documents = [documents[index] for index in selected]
+                metadata = [metadata[index] for index in selected]
+                scores = [scores[index] for index in selected if index < len(scores)]
 
             if not documents:
 

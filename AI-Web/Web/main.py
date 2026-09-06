@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from Core.user_repository import UserRepository
 from Core.automation_execution_repository import AutomationExecutionRepository
+from Core.qa_engineering_web_repository import QaEngineeringWeb
 from Database.db_manager import DatabaseManager
 from Web.routers.auth_router import router as auth_router
 from Web.routers.users_router import (
@@ -99,6 +100,10 @@ def on_startup():
     # Core/automation_execution_repository.py's module docstring).
     # Safe to call on every startup, same as initialize_database().
     AutomationExecutionRepository().reconcile_stale_running_on_startup()
+
+    # Generation history is durable; jobs left running by a prior process
+    # are marked interrupted instead of remaining misleadingly active.
+    QaEngineeringWeb().reconcile_stale_jobs()
 
 
 @app.get("/api/health")

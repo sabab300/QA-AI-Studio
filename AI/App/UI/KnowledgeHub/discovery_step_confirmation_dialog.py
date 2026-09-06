@@ -218,7 +218,10 @@ class DiscoveryStepConfirmationDialog(QDialog):
 
             include_checkbox = QCheckBox()
             has_locator = bool((candidate.get("locator") or "").strip())
-            good_strategy = candidate.get("locator_strategy") not in LOW_CONFIDENCE_STRATEGIES
+            good_strategy = (
+                candidate.get("locator_strategy") not in LOW_CONFIDENCE_STRATEGIES
+                and candidate.get("locator_validation", "unique") == "unique"
+            )
             include_checkbox.setChecked(has_locator and good_strategy)
             self.table.setCellWidget(row, COL_INCLUDE, self._centered(include_checkbox))
 
@@ -245,7 +248,10 @@ class DiscoveryStepConfirmationDialog(QDialog):
                 locator_item.setForeground(Qt.darkYellow)
             self.table.setItem(row, COL_LOCATOR, locator_item)
 
-            strategy_item = QTableWidgetItem(candidate.get("locator_strategy") or "none")
+            strategy = candidate.get("locator_strategy") or "none"
+            validation = candidate.get("locator_validation") or "unvalidated"
+            quality = candidate.get("locator_quality") or "unknown"
+            strategy_item = QTableWidgetItem(f"{strategy} / {validation} / {quality}")
             strategy_item.setFlags(strategy_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, COL_STRATEGY, strategy_item)
 

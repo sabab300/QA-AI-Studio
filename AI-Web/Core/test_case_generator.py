@@ -92,9 +92,13 @@ class TestCaseGenerator:
 
         version=None,
 
+        source_file_names=None,
+
         test_types=None,
 
         output_formats=None,
+        persist=True,
+        create_exports=True,
 
         output_folder="Output/TestCases"
 
@@ -126,7 +130,8 @@ class TestCaseGenerator:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                source_file_names=source_file_names,
 
             )
 
@@ -163,7 +168,7 @@ class TestCaseGenerator:
 
                 temperature=0.1,
 
-                max_tokens=2048
+                max_tokens=4096
 
             )
 
@@ -178,12 +183,6 @@ class TestCaseGenerator:
                 ""
 
             )
-
-            print("\n================== LLM OUTPUT ==================\n")
-
-            print(output_text)
-
-            print("\n================================================\n")
 
             rows = self.excel_exporter.parse_llm_output(
 
@@ -202,13 +201,11 @@ class TestCaseGenerator:
 
                 }
 
-            Path(output_folder).mkdir(
+            for row in rows:
+                self._add_execution_metadata(row)
 
-                parents=True,
-
-                exist_ok=True
-
-            )
+            if create_exports:
+                Path(output_folder).mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -218,7 +215,7 @@ class TestCaseGenerator:
 
             try:
 
-                if "Excel" in output_formats:
+                if create_exports and "Excel" in output_formats:
 
                     excel_file = Path(output_folder) / f"{base_name}.xlsx"
 
@@ -230,7 +227,7 @@ class TestCaseGenerator:
                     output_files["excel_file"] = str(excel_file)
 
 
-                if "Word" in output_formats:
+                if create_exports and "Word" in output_formats:
 
                     word_file = Path(output_folder) / f"{base_name}.docx"
 
@@ -242,7 +239,7 @@ class TestCaseGenerator:
                     output_files["word_file"] = str(word_file)
 
 
-                if "PDF" in output_formats:
+                if create_exports and "PDF" in output_formats:
 
                     pdf_file = Path(output_folder) / f"{base_name}.pdf"
 
@@ -271,7 +268,7 @@ class TestCaseGenerator:
             # generations (AI Assistant) without that scope still get
             # their file output, they just won't show up in QA
             # Automation's Test Execution list.
-            if domain and module and knowledge_name:
+            if persist and domain and module and knowledge_name:
 
                 try:
 
@@ -299,6 +296,7 @@ class TestCaseGenerator:
                 "test_types": test_types,
 
                 "case_count": len(rows),
+                "rows": rows,
 
                 "test_case_ids": test_case_ids,
 
@@ -341,3 +339,27 @@ class TestCaseGenerator:
                 "error": str(error)
 
             }
+
+    def _add_execution_metadata(self, row):
+        """Normalize the model suggestion without equating it with script state."""
+        execution_type = str(row.get("execution_type") or "").strip()
+        execution_tool = str(row.get("execution_tool") or "").strip()
+        if execution_type not in {"Manual", "Automatable"}:
+            types = {
+                value.strip() for value in str(row.get("test_type") or "").split(",")
+            }
+            if "API" in types:
+                execution_type, execution_tool = "Automatable", "API Automation"
+            elif "Database" in types:
+                execution_type, execution_tool = "Automatable", "SQL Automation"
+            elif types.intersection({"UI", "Functional", "Regression", "Validation"}):
+                execution_type, execution_tool = "Automatable", "Playwright"
+            else:
+                execution_type, execution_tool = "Manual", ""
+        labels = {item["label"] for item in self.repository.list_execution_tools()}
+        aliases = {item["automation_type"]: item["label"] for item in self.repository.list_execution_tools()}
+        execution_tool = aliases.get(execution_tool, execution_tool)
+        if execution_type == "Manual" or execution_tool not in labels:
+            execution_tool = ""
+        row["execution_type"] = execution_type
+        row["execution_tool"] = execution_tool

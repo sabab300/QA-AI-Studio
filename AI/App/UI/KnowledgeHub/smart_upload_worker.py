@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import logging
 import queue
-import time
 from PySide6.QtCore import QThread, Signal
 
 from Core.url_authenticated_session import URLAuthenticatedSession
@@ -67,9 +66,12 @@ class SmartUploadWorker(QThread):
     # New: guided multi-step capture signals.
     flow_ready_signal = Signal(dict)
     step_ready_signal = Signal(dict)
+    state_signal = Signal(str)
 
     CMD_CAPTURE = "capture"
     CMD_FINISH = "finish"
+    CMD_PAUSE = "pause"
+    CMD_RESUME = "resume"
 
     def __init__(
         self,
@@ -99,6 +101,12 @@ class SmartUploadWorker(QThread):
 
     def request_finish(self, keep_browser_open: bool = False):
         self._commands.put((self.CMD_FINISH, keep_browser_open))
+
+    def request_pause(self):
+        self._commands.put((self.CMD_PAUSE, None))
+
+    def request_resume(self):
+        self._commands.put((self.CMD_RESUME, None))
 
     # ------------------------------------------------------------
     # Runs entirely inside this thread.
@@ -137,8 +145,6 @@ class SmartUploadWorker(QThread):
             )
             self.progress_signal.emit(50, "Waiting for page rendering...")
 
-            time.sleep(3)
-
             # 2. Extract active context/page from the live session
             if hasattr(session, "get_authenticated_context"):
                 context = session.get_authenticated_context()
@@ -155,6 +161,7 @@ class SmartUploadWorker(QThread):
             self.progress_signal.emit(70, "Ready for guided capture.")
 
             engine = URLDiscoveryEngine(context=context, db_conn=self.db_conn)
+            paused = False
 
             self.log_signal.emit(
                 "Authenticated. Drive the business process in the open browser "
@@ -177,6 +184,14 @@ class SmartUploadWorker(QThread):
                 command, payload = self._commands.get()  # blocks, no polling
 
                 if command == self.CMD_CAPTURE:
+
+                    if paused:
+                        self.step_ready_signal.emit({
+                            "success": False,
+                            "error": "Guided capture is paused.",
+                            "label": payload or "",
+                        })
+                        continue
 
                     step_label = payload or ""
 
@@ -216,20 +231,33 @@ class SmartUploadWorker(QThread):
                     self.finished_signal.emit({"success": True})
                     break
 
+                elif command == self.CMD_PAUSE:
+                    paused = True
+                    self.state_signal.emit("paused")
+                    self.log_signal.emit("Guided capture paused; the browser session remains open.")
+
+                elif command == self.CMD_RESUME:
+                    paused = False
+                    self.state_signal.emit("ready")
+                    self.log_signal.emit("Guided capture resumed.")
+
                 else:
                     self.logger.warning(f"Unknown worker command ignored: {command}")
 
         except Exception as ex:
             self.logger.exception("Unified Smart Upload Worker encountered an error.")
             self.log_signal.emit(f"Execution Error: {str(ex)}")
-            self.log_signal.emit(
-                "Browser window left open so you can see what state it was in."
-            )
+            self.log_signal.emit("Closing the failed Playwright discovery session.")
             # Deliberately not closing the session here — same reasoning as
             # the original single-shot worker: if something went wrong,
             # leaving the visible browser open lets the operator see why,
             # instead of it vanishing along with the error.
             self.finished_signal.emit({"success": False, "error": str(ex)})
+        finally:
+            try:
+                session.close()
+            except Exception:
+                self.logger.exception("Failed to close the Playwright discovery session.")
 
     @staticmethod
     def _current_url(context, fallback: str) -> str:

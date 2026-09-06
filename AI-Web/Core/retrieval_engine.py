@@ -110,7 +110,8 @@ class RetrievalEngine:
 
         knowledge_name,
 
-        version
+        version,
+        source_file_names=None,
 
     ):
 
@@ -124,7 +125,8 @@ class RetrievalEngine:
 
             str(knowledge_name),
 
-            str(version)
+            str(version),
+            ",".join(sorted(source_file_names or [])),
 
         ])
 
@@ -147,6 +149,7 @@ class RetrievalEngine:
         knowledge_name=None,
 
         version=None,
+        source_file_names=None,
 
         top_k=20,
 
@@ -173,7 +176,8 @@ class RetrievalEngine:
 
                 knowledge_name,
 
-                version
+                version,
+                source_file_names,
 
             )
 
@@ -211,7 +215,7 @@ class RetrievalEngine:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
 
             )
 
@@ -228,7 +232,8 @@ class RetrievalEngine:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                source_file_names=source_file_names,
 
             )
 

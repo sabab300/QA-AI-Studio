@@ -576,6 +576,8 @@ class DiscoveryRepository:
 
                 summary["steps_saved"] += 1
 
+            self._trim_workflow_steps(variant_id, len(steps))
+
             summary["page_id"] = last_page_id
 
             summary["success"] = True
@@ -678,32 +680,57 @@ class DiscoveryRepository:
         now = datetime.now().isoformat()
 
         cursor.execute(
-            """
-            INSERT INTO discovery_workflow_steps
-            (variant_id, step_order, page_id, tab_id, step_name,
-             depends_on_step_id, is_end_step, created_date, modified_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                variant_id,
-                step_order,
-                page_id,
-                tab_id,
-                step_name,
-                depends_on_step_id,
-                1 if is_end_step else 0,
-                now,
-                now,
-            ),
+            "SELECT id FROM discovery_workflow_steps WHERE variant_id = ? AND step_order = ?",
+            (variant_id, step_order),
         )
+        existing = cursor.fetchone()
+        if existing:
+            step_id = existing[0]
+            cursor.execute(
+                """UPDATE discovery_workflow_steps
+                   SET page_id = ?, tab_id = ?, step_name = ?, depends_on_step_id = ?,
+                       is_end_step = ?, modified_date = ? WHERE id = ?""",
+                (page_id, tab_id, step_name, depends_on_step_id,
+                 1 if is_end_step else 0, now, step_id),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO discovery_workflow_steps
+                (variant_id, step_order, page_id, tab_id, step_name,
+                 depends_on_step_id, is_end_step, created_date, modified_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    variant_id,
+                    step_order,
+                    page_id,
+                    tab_id,
+                    step_name,
+                    depends_on_step_id,
+                    1 if is_end_step else 0,
+                    now,
+                    now,
+                ),
+            )
 
-        step_id = cursor.lastrowid
+            step_id = cursor.lastrowid
 
         conn.commit()
 
         conn.close()
 
         return step_id
+
+    def _trim_workflow_steps(self, variant_id, retained_count):
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM discovery_workflow_steps WHERE variant_id = ? AND step_order > ?",
+            (variant_id, retained_count),
+        )
+        conn.commit()
+        conn.close()
 
     # ================================================================
     # Read-back APIs for downstream features
@@ -1768,4 +1795,3 @@ class DiscoveryRepository:
         conn.commit()
 
         conn.close()
-        

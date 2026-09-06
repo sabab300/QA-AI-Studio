@@ -454,10 +454,12 @@ class KnowledgeRepository:
         knowledge_name = (knowledge_name or "").strip()
         version = (version or "1.0").strip() or "1.0"
         source_type = (source_type or "FILE").strip()
-        allowed_source_types = {
-            "FILE", "Files", "Folder", "Release Notes", "Test Cases",
-            "SOP Documents", "SMART_UPLOAD",
-        }
+        source_type = {
+            "FILE": "Files", "Folder": "Files", "MANUAL_UPLOAD": "Files",
+            "SMART_UPLOAD": "Files", "API_COLLECTION": "API Collection",
+            "URL_CAPTURE": "URL",
+        }.get(source_type, source_type)
+        allowed_source_types = {"Files"}
         if source_type not in allowed_source_types:
             raise ValueError("Unsupported document source type.")
 

@@ -540,12 +540,21 @@ class SmartUploadPage(QWidget):
             "background-color: #2563EB; color: white; font-weight: bold; padding: 6px 14px;"
         )
 
+        self.pause_flow_btn = QPushButton("Pause")
+        self.resume_flow_btn = QPushButton("Resume")
+        self.finish_flow_btn = QPushButton("Finish Flow")
         self.cancel_flow_btn = QPushButton("Cancel Flow")
 
         self.capture_step_btn.setEnabled(False)
+        self.pause_flow_btn.setEnabled(False)
+        self.resume_flow_btn.setEnabled(False)
+        self.finish_flow_btn.setEnabled(False)
         self.cancel_flow_btn.setEnabled(False)
 
         flow_buttons.addWidget(self.capture_step_btn)
+        flow_buttons.addWidget(self.pause_flow_btn)
+        flow_buttons.addWidget(self.resume_flow_btn)
+        flow_buttons.addWidget(self.finish_flow_btn)
 
         flow_buttons.addWidget(self.cancel_flow_btn)
 
@@ -614,6 +623,10 @@ class SmartUploadPage(QWidget):
         self.capture_step_btn.clicked.connect(
             self._on_capture_screen_clicked
         )
+
+        self.pause_flow_btn.clicked.connect(self._on_pause_flow_clicked)
+        self.resume_flow_btn.clicked.connect(self._on_resume_flow_clicked)
+        self.finish_flow_btn.clicked.connect(self._finish_flow_and_save)
 
         self.cancel_flow_btn.clicked.connect(
             self._on_cancel_flow_clicked
@@ -1542,10 +1555,7 @@ class SmartUploadPage(QWidget):
                     "for Playwright discovery."
                 )
 
-                self.handle_authenticated_url(
-                    result,
-                    credentials=None,
-                )
+                self.authenticate_url_with_credentials(result, {})
 
                 return
 
@@ -1690,6 +1700,8 @@ class SmartUploadPage(QWidget):
         self.url_discovery_worker.step_ready_signal.connect(
             self.on_step_ready
         )
+
+        self.url_discovery_worker.state_signal.connect(self._on_flow_state_changed)
 
         self.url_discovery_worker.finished_signal.connect(
             self.on_flow_worker_finished
@@ -2158,6 +2170,9 @@ class SmartUploadPage(QWidget):
         )
 
         self.capture_step_btn.setEnabled(True)
+        self.pause_flow_btn.setEnabled(True)
+        self.resume_flow_btn.setEnabled(False)
+        self.finish_flow_btn.setEnabled(False)
         self.cancel_flow_btn.setEnabled(True)
 
         self.log.append(
@@ -2222,6 +2237,7 @@ class SmartUploadPage(QWidget):
         confirmed = dialog.confirmed_step()
 
         self.captured_steps.append(confirmed)
+        self.finish_flow_btn.setEnabled(True)
 
         included = len(confirmed.get("elements", []))
 
@@ -2288,8 +2304,6 @@ class SmartUploadPage(QWidget):
             )
             return None
 
-        self.flow_saved = True
-
         if not save_result.get("success"):
             error = save_result.get("error", "Unknown error while saving.")
             self.log.append(f"Saving the captured business flow failed: {error}")
@@ -2299,6 +2313,8 @@ class SmartUploadPage(QWidget):
                 f"The captured flow could not be saved:\n{error}",
             )
             return save_result
+
+        self.flow_saved = True
 
         self.log.append(
             "Saved business flow to Knowledge Hub — Application ID "
@@ -2341,15 +2357,50 @@ class SmartUploadPage(QWidget):
 
     def _finish_flow_and_save(self):
 
+        if not self.captured_steps:
+            QMessageBox.warning(self, "Finish Flow", "Capture and confirm at least one step first.")
+            return
+
         self.capture_step_btn.setEnabled(False)
+        self.pause_flow_btn.setEnabled(False)
+        self.resume_flow_btn.setEnabled(False)
+        self.finish_flow_btn.setEnabled(False)
         self.cancel_flow_btn.setEnabled(False)
 
         self.flow_status_label.setText("Saving captured business flow...")
 
-        self._save_captured_steps_to_repository()
+        save_result = self._save_captured_steps_to_repository()
 
-        if self.url_discovery_worker is not None:
+        if save_result and save_result.get("success") and self.url_discovery_worker is not None:
             self.url_discovery_worker.request_finish(keep_browser_open=False)
+        elif not save_result or not save_result.get("success"):
+            self.capture_step_btn.setEnabled(True)
+            self.pause_flow_btn.setEnabled(True)
+            self.finish_flow_btn.setEnabled(True)
+            self.cancel_flow_btn.setEnabled(True)
+            self.flow_status_label.setText(
+                "Save failed. The reviewed capture remains in memory; retry Finish Flow or cancel."
+            )
+
+    def _on_pause_flow_clicked(self):
+        if self.url_discovery_worker is not None:
+            self.url_discovery_worker.request_pause()
+
+    def _on_resume_flow_clicked(self):
+        if self.url_discovery_worker is not None:
+            self.url_discovery_worker.request_resume()
+
+    def _on_flow_state_changed(self, state):
+        paused = state == "paused"
+        self.capture_step_btn.setEnabled(not paused)
+        self.pause_flow_btn.setEnabled(not paused)
+        self.resume_flow_btn.setEnabled(paused)
+        self.finish_flow_btn.setEnabled(bool(self.captured_steps))
+        self.flow_status_label.setText(
+            "Guided capture is paused; the browser session remains open."
+            if paused else
+            "Guided capture is ready. Navigate in the browser and capture the current screen."
+        )
 
     def _on_cancel_flow_clicked(self):
 
@@ -2364,6 +2415,9 @@ class SmartUploadPage(QWidget):
                 return
 
         self.capture_step_btn.setEnabled(False)
+        self.pause_flow_btn.setEnabled(False)
+        self.resume_flow_btn.setEnabled(False)
+        self.finish_flow_btn.setEnabled(False)
         self.cancel_flow_btn.setEnabled(False)
 
         self.log.append("Guided capture cancelled; nothing was saved.")
@@ -2409,6 +2463,9 @@ class SmartUploadPage(QWidget):
 
         self.flow_group.setVisible(False)
         self.capture_step_btn.setEnabled(False)
+        self.pause_flow_btn.setEnabled(False)
+        self.resume_flow_btn.setEnabled(False)
+        self.finish_flow_btn.setEnabled(False)
         self.cancel_flow_btn.setEnabled(False)
 
         self.flow_context = None

@@ -39,6 +39,7 @@ from Core.automation_web_repository import (
     EnvironmentConfigWeb,
     GitAutomationWeb,
     TestCasesWeb,
+    SqlAutomationWeb,
 )
 from Core.user_repository import UserRepository
 from Web.deps import require_permission
@@ -305,11 +306,85 @@ class ActiveScriptRequest(BaseModel):
 
 @router.get("/test-cases")
 def list_test_cases(
-    domain: str, module: str, knowledge_name: str,
+    domain: str, module: str, knowledge_name: str, automation_type: Optional[str] = None,
     current_user=Depends(require_permission("automation", "view")),
 ):
 
-    return {"test_cases": TestCasesWeb().list_test_cases(domain, module, knowledge_name)}
+    return {"test_cases": TestCasesWeb().list_test_cases(domain, module, knowledge_name, automation_type)}
+
+
+@router.get("/test-cases/sample-template")
+def sample_template(current_user=Depends(require_permission("automation", "view"))):
+    """
+    IMPORTANT: registered BEFORE '/test-cases/{test_case_id}' —
+    FastAPI matches path routes in registration order, and
+    'sample-template' would otherwise match that int-typed path
+    param first and fail with a 422 before ever reaching this route.
+
+    Excel column headers/order match TestExecutionManager's OWN
+    `_IMPORT_FIELD_ALIASES` exactly (the first alias for each field) —
+    generated from that same source rather than hand-typed separately,
+    so this can never silently drift out of sync with what the
+    importer actually accepts.
+    """
+
+    import io
+
+    from openpyxl import Workbook
+
+    from Core.test_execution_manager import TestExecutionManager
+
+    aliases = TestExecutionManager._IMPORT_FIELD_ALIASES
+
+    header_labels = {
+        "scenario": "Scenario",
+        "importance": "Importance",
+        "test_type": "Test Type",
+        "test_case": "Test Case",
+        "pre_conditions": "Pre-Conditions",
+        "steps": "Steps",
+        "expected_result": "Expected Result",
+    }
+
+    headers = [header_labels[field] for field in aliases.keys()]
+
+    example_row = [
+        "Login with valid credentials",
+        "High",
+        "Functional",
+        "Verify a user can log in with a valid username and password",
+        "User account exists and is active",
+        "1. Open the login page\n2. Enter valid username/password\n3. Click Login",
+        "User is redirected to the dashboard and sees their name in the header",
+    ]
+
+    workbook = Workbook()
+
+    sheet = workbook.active
+
+    sheet.title = "Test Cases"
+
+    sheet.append(headers)
+
+    sheet.append(example_row)
+
+    for col_index in range(1, len(headers) + 1):
+
+        sheet.column_dimensions[sheet.cell(row=1, column=col_index).column_letter].width = 28
+
+    buffer = io.BytesIO()
+
+    workbook.save(buffer)
+
+    buffer.seek(0)
+
+    from fastapi.responses import StreamingResponse
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=qa_automation_test_case_template.xlsx"},
+    )
 
 
 @router.get("/test-cases/{test_case_id}")
@@ -457,7 +532,19 @@ def set_active_script(
     current_user=Depends(require_permission("automation", "edit")),
 ):
 
-    return TestCasesWeb().set_active_script(test_case_id, payload.source)
+    # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix: this
+    # endpoint had no try/except at all, unlike every sibling endpoint
+    # in this router — set_active_script() now legitimately raises
+    # ValueError (invalid test case, or a syntactically broken script
+    # being rejected for Active), which would otherwise surface as an
+    # unhandled 500 instead of a clean 400 with a real message.
+    try:
+
+        return TestCasesWeb().set_active_script(test_case_id, payload.source)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @router.post("/test-cases/{test_case_id}/generate-automation")
@@ -812,3 +899,241 @@ def git_generate_commit_message(payload: GitRepoRequest, current_user=Depends(re
     except Exception as error:
 
         raise HTTPException(status_code=400, detail=str(error))
+
+
+# ============================================================
+# SQL Automation (new — QA-AUTOMATION-FINAL-ARCHITECTURE-04)
+# ============================================================
+# "SQL" existed as a per-row Automation Type choice before this task
+# but had no runner (see Core/automation_web_repository.py's
+# SqlAutomationWeb docstring). Everything here follows the same
+# shape as the Playwright/API endpoints above; the one addition is
+# that Execute here ALWAYS re-validates the saved SQL through the
+# read-only safety gate immediately before running it (see
+# SqlAutomationWeb.execute()) — never trusts a status flag alone.
+
+
+class SqlEnvironmentUpdateRequest(BaseModel):
+    sql_db_type: Optional[str] = None
+    sql_sqlite_path: Optional[str] = None
+    sql_host: Optional[str] = None
+    sql_port: Optional[str] = None
+    sql_database: Optional[str] = None
+    sql_username: Optional[str] = None
+    sql_password: Optional[str] = None
+    sql_extra_params: Optional[Dict[str, str]] = None
+    sql_timeout_seconds: Optional[str] = None
+    sql_max_rows: Optional[str] = None
+    sql_notes: Optional[str] = None
+
+
+class SqlGenerateRequest(BaseModel):
+    database_schema: Optional[str] = None
+
+
+class SqlSaveScriptRequest(BaseModel):
+    sql: str
+    assertion_type: str = "row_exists"
+    assertion_value: Optional[str] = None
+    assertion_column: Optional[str] = None
+
+
+class SqlActiveRequest(BaseModel):
+    active: bool
+
+
+@router.get("/sql/environment")
+def get_sql_environment(current_user=Depends(require_permission("automation", "view"))):
+
+    return SqlAutomationWeb().get_environment()
+
+
+@router.put("/sql/environment")
+def update_sql_environment(
+    payload: SqlEnvironmentUpdateRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+
+    fields = payload.dict(exclude_unset=True)
+
+    updated = SqlAutomationWeb().update_environment(fields)
+
+    _audit(current_user, "UPDATE_SQL_ENVIRONMENT", "Updated SQL Automation Test Environment Setting")
+
+    return updated
+
+
+@router.post("/sql/environment/test-connection")
+def test_sql_connection(current_user=Depends(require_permission("automation", "view"))):
+
+    return SqlAutomationWeb().test_connection()
+
+
+@router.post("/test-cases/{test_case_id}/generate-sql")
+def generate_sql(
+    test_case_id: int, payload: SqlGenerateRequest,
+    current_user=Depends(require_permission("automation", "create")),
+):
+
+    try:
+
+        result = SqlAutomationWeb().generate_sql(test_case_id, payload.database_schema)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=400, detail=str(error))
+
+    _audit(current_user, "GENERATE_SQL_AUTOMATION", f"Generated SQL draft for test_case_id={test_case_id}")
+
+    return result
+
+
+@router.put("/test-cases/{test_case_id}/sql-script")
+def save_sql_script(
+    test_case_id: int, payload: SqlSaveScriptRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+
+    try:
+
+        return SqlAutomationWeb().save_script(
+            test_case_id, payload.sql, payload.assertion_type,
+            payload.assertion_value, payload.assertion_column,
+        )
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.get("/test-cases/{test_case_id}/validate-sql")
+def validate_sql(test_case_id: int, current_user=Depends(require_permission("automation", "view"))):
+
+    try:
+
+        return SqlAutomationWeb().validate_sql(test_case_id)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.patch("/test-cases/{test_case_id}/sql-active")
+def set_sql_active(
+    test_case_id: int, payload: SqlActiveRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+
+    try:
+
+        return SqlAutomationWeb().set_active(test_case_id, payload.active)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=422, detail=str(error))
+
+
+@router.post("/test-cases/{test_case_id}/execute-sql")
+def execute_sql(test_case_id: int, current_user=Depends(require_permission("automation", "execute"))):
+
+    try:
+
+        result = SqlAutomationWeb().execute(
+            test_case_id, executed_by_user_id=current_user["id"],
+            executed_by_username=current_user["username"],
+        )
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=400, detail=str(error))
+
+    _audit(current_user, "EXECUTE_SQL_TEST_CASE", f"Executed SQL test_case_id={test_case_id}")
+
+    return result
+
+
+# ============================================================
+# ClickUp — contextual "create bug for a failed test" action only
+# (new — QA-AUTOMATION-FINAL-ARCHITECTURE-04). NOT a standalone tab.
+# ============================================================
+
+
+class ClickUpConfigRequest(BaseModel):
+    clickup_api_token: Optional[str] = None
+    clickup_list_id: Optional[str] = None
+
+
+@router.get("/clickup/status")
+def clickup_status(current_user=Depends(require_permission("automation", "view"))):
+
+    from Core.clickup_config import ClickUpConfig
+
+    return ClickUpConfig().get_masked()
+
+
+@router.put("/clickup/config")
+def update_clickup_config(
+    payload: ClickUpConfigRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+
+    from Core.clickup_config import ClickUpConfig
+
+    fields = payload.dict(exclude_unset=True)
+
+    updated = ClickUpConfig().update_masked(fields)
+
+    _audit(current_user, "UPDATE_CLICKUP_CONFIG", "Updated ClickUp configuration")
+
+    return updated
+
+
+@router.post("/test-cases/{test_case_id}/clickup-bug")
+def create_clickup_bug(
+    test_case_id: int,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+
+    from Core.clickup_config import ClickUpConfig
+    from Core.clickup_client import ClickUpClient
+
+    config = ClickUpConfig()
+
+    if not config.is_configured():
+
+        raise HTTPException(
+            status_code=400,
+            detail="ClickUp is not configured — set a ClickUp API token "
+                   "and List ID in ClickUp settings first.",
+        )
+
+    test_case = TestCasesWeb().get_test_case(test_case_id)
+
+    if not test_case:
+
+        raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found.")
+
+    if (test_case.get("last_result") or "") != "Fail":
+
+        raise HTTPException(
+            status_code=400,
+            detail="ClickUp bug creation is only available for a FAILED result.",
+        )
+
+    from Core.automation_execution_repository import AutomationExecutionRepository
+
+    latest_runs = AutomationExecutionRepository().latest_runs_for_test_cases([test_case_id])
+
+    run = latest_runs.get(test_case_id)
+
+    client = ClickUpClient(config.load())
+
+    result = client.create_bug_task(test_case, run)
+
+    if not result.get("success"):
+
+        raise HTTPException(status_code=422, detail=result.get("error") or "ClickUp task creation failed.")
+
+    _audit(current_user, "CREATE_CLICKUP_BUG", f"Created ClickUp task for test_case_id={test_case_id}: {result.get('task_url')}")
+
+    return result

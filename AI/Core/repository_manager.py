@@ -15,7 +15,8 @@ class RepositoryManager:
     def __init__(self):
 
         self.repository_root = (
-            Path(__file__).resolve().parent.parent
+            Path(__file__).resolve().parents[2]
+            / "AI-Web"
             / "Repository"
         )
 

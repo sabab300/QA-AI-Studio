@@ -235,10 +235,16 @@ class URLDiscoveryEngine:
 
     def _get_active_page(self) -> Optional[Page]:
         """Resolves the currently active page from context or direct reference."""
+        if self.context and self.context.pages:
+            for candidate in reversed(self.context.pages):
+                try:
+                    if not candidate.is_closed():
+                        self.page = candidate
+                        return candidate
+                except Exception:
+                    continue
         if self.page and not self.page.is_closed():
             return self.page
-        if self.context and self.context.pages:
-            return self.context.pages[-1]
         return None
 
     # ================================================================
@@ -289,7 +295,10 @@ class URLDiscoveryEngine:
             # Give the SPA a brief moment to settle before reading the DOM —
             # deliberately short since the operator has already driven the
             # browser to this screen themselves and is waiting on us.
-            page.wait_for_timeout(500)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5_000)
+            except Exception:
+                pass
 
             scan = self._discover_page(page)
 
@@ -437,17 +446,17 @@ class URLDiscoveryEngine:
         element_id = attrs.get("id") or ""
         element_name = attrs.get("name") or ""
 
-        if element_id and not looks_dynamically_generated(element_id):
-            return f"#{element_id}", "id"
-
-        if element_name and not looks_dynamically_generated(element_name):
-            return f"{tag_name}[name='{element_name}']", "name"
-
         if attrs.get("data_testid"):
             return f"[data-testid='{attrs['data_testid']}']", "data-testid"
 
         if attrs.get("aria_label"):
             return f"{tag_name}[aria-label='{attrs['aria_label']}']", "aria-label"
+
+        if element_id and not looks_dynamically_generated(element_id):
+            return f"#{element_id}", "id"
+
+        if element_name and not looks_dynamically_generated(element_name):
+            return f"{tag_name}[name='{element_name}']", "name"
 
         if attrs.get("placeholder"):
             return f"{tag_name}[placeholder='{attrs['placeholder']}']", "placeholder"
@@ -532,9 +541,12 @@ class URLDiscoveryEngine:
             "name": attr("name"),
             "data_testid": attr("data-testid") or attr("data-cy"),
             "aria_label": attr("aria-label"),
+            "role": attr("role"),
             "placeholder": attr("placeholder"),
             "text": text[:200],
             "required": required,
+            "readonly": attr("readonly") != "" or attr("aria-readonly").lower() == "true",
+            "disabled": attr("disabled") != "" or attr("aria-disabled").lower() == "true",
             "options": options,
         }
 
@@ -550,6 +562,29 @@ class URLDiscoveryEngine:
     # ================================================================
     # Per-view scanning
     # ================================================================
+
+    @staticmethod
+    def _locator_validation(frame, locator: str, strategy: str) -> Dict[str, Any]:
+        """Validate a generated selector against the live frame DOM."""
+        try:
+            count = frame.locator(locator).count() if locator else 0
+        except Exception:
+            count = 0
+
+        if count == 1:
+            validation = "unique"
+        elif count > 1:
+            validation = "multiple"
+        else:
+            validation = "not-found"
+
+        weak = strategy in {"tag-only", "type", "text", "class"}
+        quality = "stable" if count == 1 and not weak else "acceptable" if count == 1 else "weak" if count > 1 else "invalid"
+        return {
+            "locator_match_count": count,
+            "locator_validation": validation,
+            "locator_quality": quality,
+        }
 
     def _discover_page(self, page: Page) -> Dict[str, Any]:
         """Scans both top-level document and embedded iFrames for interactive UI elements."""
@@ -584,6 +619,7 @@ class URLDiscoveryEngine:
                         "input_type": attrs.get("type") or "text",
                         "locator": locator,
                         "locator_strategy": strategy,
+                        **self._locator_validation(frame, locator, strategy),
                         "frame_url": frame_url,
                     })
 
@@ -607,6 +643,7 @@ class URLDiscoveryEngine:
                         "text": button_text,
                         "locator": locator,
                         "locator_strategy": strategy,
+                        **self._locator_validation(frame, locator, strategy),
                         "frame_url": frame_url,
                         "is_mutating_action": is_mutating,
                         "action_safety": (
@@ -628,6 +665,7 @@ class URLDiscoveryEngine:
                         **attrs,
                         "locator": locator,
                         "locator_strategy": strategy,
+                        **self._locator_validation(frame, locator, strategy),
                         "frame_url": frame_url,
                     })
 
@@ -658,6 +696,7 @@ class URLDiscoveryEngine:
                         "href": href,
                         "locator": locator,
                         "locator_strategy": strategy,
+                        **self._locator_validation(frame, locator, strategy),
                         "frame_url": frame_url,
                     })
 

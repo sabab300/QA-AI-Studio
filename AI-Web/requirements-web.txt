@@ -4,6 +4,7 @@ python-multipart
 pypdf
 python-docx
 openpyxl
+reportlab
 requests
 chromadb
 sentence-transformers
