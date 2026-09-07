@@ -81,7 +81,11 @@ from PySide6.QtWidgets import (
 
 from UI.QAAutomation.test_execution_page import TestExecutionPage
 
-from UI.QAAutomation.sql_automation_page import SqlAutomationPage
+# TEMP: SQL Automation disabled for Desktop startup.
+# Missing Core/sql_environment_config.py and related SQL backend modules.
+# Re-enable when SQL Automation backend files are restored.
+# from UI.QAAutomation.sql_automation_page import SqlAutomationPage
+
 from Core.test_case_repository import TestCaseRepository
 
 
@@ -194,9 +198,10 @@ class QAAutomationHubPage(QWidget):
 
         self.pages.addWidget(self.api_page)
 
-        self.sql_page = SqlAutomationPage()
-
-        self.pages.addWidget(self.sql_page)
+        # TEMP: SQL Automation disabled for Desktop startup.
+        # self.sql_page = SqlAutomationPage()
+        # self.pages.addWidget(self.sql_page)
+        self.sql_page = None
 
         # ==================================================
         # Events

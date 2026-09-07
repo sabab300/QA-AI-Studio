@@ -74,10 +74,21 @@ from PySide6.QtWidgets import (
 )
 
 from Core.metadata_manager import MetadataManager
-from Core.clickup_config import ClickUpConfig
-from Core.clickup_client import ClickUpClient
+
+#from Core.clickup_client import ClickUpClient
 from Core.sql_automation_manager import SqlAutomationManager
 from Core.sql_environment_config import SqlEnvironmentConfig, SUPPORTED_DB_TYPES
+
+# TEMPORARY: ClickUp integration disabled for Desktop startup.
+class ClickUpConfig:
+    def load(self):
+        return {
+            "clickup_api_token": "",
+            "clickup_list_id": "",
+        }
+
+    def save(self, **kwargs):
+        return None
 
 TC_ID_ROLE = Qt.UserRole
 

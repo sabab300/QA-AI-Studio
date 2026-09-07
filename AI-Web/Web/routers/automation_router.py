@@ -30,7 +30,7 @@ left out rather than faked.
 
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -241,6 +241,10 @@ def workspace(
     domain: Optional[str] = None,
     module: Optional[str] = None,
     knowledge_name: Optional[str] = None,
+    version: Optional[str] = None,
+    document_type: Optional[str] = None,
+    source_knowledge_ids: Optional[List[int]] = Query(None),
+    test_case_document: Optional[str] = None,
     status: Optional[str] = None,
     automation_type: Optional[str] = None,
     q: Optional[str] = None,
@@ -251,6 +255,8 @@ def workspace(
 
     return TestCasesWeb().list_workspace(
         domain=domain, module=module, knowledge_name=knowledge_name,
+        version=version, document_type=document_type,
+        source_knowledge_ids=source_knowledge_ids, test_case_document=test_case_document,
         status=status, automation_type=automation_type, q=q,
         limit=min(max(limit, 1), 200), offset=max(offset, 0),
     )
@@ -258,8 +264,7 @@ def workspace(
 
 @router.get("/scope")
 def scope(current_user=Depends(require_permission("automation", "view"))):
-
-    return {"scopes": TestCasesWeb().list_scopes()}
+    return TestCasesWeb().list_scopes()
 
 
 # ============================================================
@@ -304,6 +309,10 @@ class ActiveScriptRequest(BaseModel):
     source: Literal["AUTO", "MANUAL"]
 
 
+class ExecuteApiRequest(BaseModel):
+    endpoint_id: Optional[int] = None
+
+
 @router.get("/test-cases")
 def list_test_cases(
     domain: str, module: str, knowledge_name: str, automation_type: Optional[str] = None,
@@ -344,6 +353,8 @@ def sample_template(current_user=Depends(require_permission("automation", "view"
         "pre_conditions": "Pre-Conditions",
         "steps": "Steps",
         "expected_result": "Expected Result",
+        "execution_type": "Execution Type",
+        "execution_tool": "Execution Tool",
     }
 
     headers = [header_labels[field] for field in aliases.keys()]
@@ -356,6 +367,8 @@ def sample_template(current_user=Depends(require_permission("automation", "view"
         "User account exists and is active",
         "1. Open the login page\n2. Enter valid username/password\n3. Click Login",
         "User is redirected to the dashboard and sees their name in the header",
+        "Automatable",
+        "Playwright",
     ]
 
     workbook = Workbook()
@@ -420,6 +433,8 @@ def import_test_cases(
     module: str = Form(...),
     knowledge_name: str = Form(...),
     version: Optional[str] = Form(None),
+    document_type: str = Form(...),
+    source_knowledge_ids: List[int] = Form(...),
     current_user=Depends(require_permission("automation", "create")),
 ):
 
@@ -429,6 +444,7 @@ def import_test_cases(
 
         result = TestCasesWeb().import_from_excel(
             file_bytes, file.filename, domain, module, knowledge_name, version,
+            document_type, source_knowledge_ids,
         )
 
     except ValueError as error:
@@ -627,11 +643,18 @@ def start_execution(test_case_id: int, current_user=Depends(require_permission("
 
 
 @router.post("/test-cases/{test_case_id}/execute-api")
-def execute_api(test_case_id: int, current_user=Depends(require_permission("automation", "execute"))):
+def execute_api(
+    test_case_id: int, payload: Optional[ExecuteApiRequest] = None,
+    current_user=Depends(require_permission("automation", "execute")),
+):
 
     try:
 
-        result = TestCasesWeb().execute_api(test_case_id)
+        result = TestCasesWeb().execute_api(
+            test_case_id, endpoint_id=payload.endpoint_id if payload else None,
+            executed_by_user_id=current_user["id"],
+            executed_by_username=current_user["username"],
+        )
 
     except ValueError as error:
 
@@ -650,8 +673,13 @@ def list_runs(
     domain: Optional[str] = None,
     module: Optional[str] = None,
     knowledge_name: Optional[str] = None,
+    version: Optional[str] = None,
+    document_type: Optional[str] = None,
+    source_knowledge_ids: Optional[List[int]] = Query(None),
+    test_case_document: Optional[str] = None,
     test_case_id: Optional[int] = None,
     status: Optional[str] = None,
+    automation_type: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -660,7 +688,10 @@ def list_runs(
 
     return TestCasesWeb().list_runs(
         domain=domain, module=module, knowledge_name=knowledge_name,
+        version=version, document_type=document_type,
+        source_knowledge_ids=source_knowledge_ids, test_case_document=test_case_document,
         test_case_id=test_case_id, status=status, q=q,
+        automation_type=automation_type,
         limit=min(max(limit, 1), 200), offset=max(offset, 0),
     )
 
@@ -1065,10 +1096,13 @@ class ClickUpConfigRequest(BaseModel):
 
 @router.get("/clickup/status")
 def clickup_status(current_user=Depends(require_permission("automation", "view"))):
-
-    from Core.clickup_config import ClickUpConfig
-
-    return ClickUpConfig().get_masked()
+    return {
+        "available": False,
+        "configured": False,
+        "clickup_api_token_is_set": False,
+        "clickup_list_id": "",
+        "message": "ClickUp integration is unavailable in this Web build.",
+    }
 
 
 @router.put("/clickup/config")
@@ -1077,15 +1111,10 @@ def update_clickup_config(
     current_user=Depends(require_permission("automation", "edit")),
 ):
 
-    from Core.clickup_config import ClickUpConfig
-
-    fields = payload.dict(exclude_unset=True)
-
-    updated = ClickUpConfig().update_masked(fields)
-
-    _audit(current_user, "UPDATE_CLICKUP_CONFIG", "Updated ClickUp configuration")
-
-    return updated
+    raise HTTPException(
+        status_code=503,
+        detail="ClickUp integration is unavailable in this Web build.",
+    )
 
 
 @router.post("/test-cases/{test_case_id}/clickup-bug")
@@ -1093,47 +1122,7 @@ def create_clickup_bug(
     test_case_id: int,
     current_user=Depends(require_permission("automation", "edit")),
 ):
-
-    from Core.clickup_config import ClickUpConfig
-    from Core.clickup_client import ClickUpClient
-
-    config = ClickUpConfig()
-
-    if not config.is_configured():
-
-        raise HTTPException(
-            status_code=400,
-            detail="ClickUp is not configured — set a ClickUp API token "
-                   "and List ID in ClickUp settings first.",
-        )
-
-    test_case = TestCasesWeb().get_test_case(test_case_id)
-
-    if not test_case:
-
-        raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found.")
-
-    if (test_case.get("last_result") or "") != "Fail":
-
-        raise HTTPException(
-            status_code=400,
-            detail="ClickUp bug creation is only available for a FAILED result.",
-        )
-
-    from Core.automation_execution_repository import AutomationExecutionRepository
-
-    latest_runs = AutomationExecutionRepository().latest_runs_for_test_cases([test_case_id])
-
-    run = latest_runs.get(test_case_id)
-
-    client = ClickUpClient(config.load())
-
-    result = client.create_bug_task(test_case, run)
-
-    if not result.get("success"):
-
-        raise HTTPException(status_code=422, detail=result.get("error") or "ClickUp task creation failed.")
-
-    _audit(current_user, "CREATE_CLICKUP_BUG", f"Created ClickUp task for test_case_id={test_case_id}: {result.get('task_url')}")
-
-    return result
+    raise HTTPException(
+        status_code=503,
+        detail="ClickUp integration is unavailable in this Web build.",
+    )

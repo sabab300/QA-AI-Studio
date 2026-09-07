@@ -423,7 +423,8 @@ class AutomationExecutionRepository:
 
     def list_runs(
         self, domain=None, module=None, knowledge_name=None,
-        test_case_id=None, status=None, q=None, limit=50, offset=0,
+        test_case_id=None, test_case_ids=None, status=None, automation_type=None, q=None,
+        limit=50, offset=0,
     ):
         """
         Returns {"runs": [...], "total": N} — total is the count
@@ -459,11 +460,24 @@ class AutomationExecutionRepository:
 
             params.append(test_case_id)
 
+        if test_case_ids is not None:
+            ids = [int(value) for value in test_case_ids]
+            if not ids:
+                return {"runs": [], "total": 0}
+            conditions.append("test_case_id IN ({})".format(",".join("?" for _ in ids)))
+            params.extend(ids)
+
         if status:
 
             conditions.append("status=?")
 
             params.append(status)
+
+        if automation_type:
+
+            conditions.append("automation_type=?")
+
+            params.append(automation_type)
 
         if q:
 
@@ -494,6 +508,7 @@ class AutomationExecutionRepository:
                    knowledge_name, automation_type, status, outcome,
                    success, return_code, duration_seconds, script_path,
                    screenshot_path, executed_by_username, re_run_of,
+                   error_message,
                    started_at, finished_at, created_date
             FROM automation_runs
             {where_clause}

@@ -145,6 +145,7 @@ def scope(
             "document_type": item.get("document_type"),
             "source_type": item.get("source_type"),
             "file_name": item.get("file_name"),
+            "display_name": item.get("display_name"),
         }
         for item in items
     ]
@@ -254,6 +255,7 @@ def review_save(payload: ReviewSaveRequest,
             raise HTTPException(status_code=422, detail=f"Row {index}: persisted record ID is required.")
         operations.append({"action": operation.action, "id": operation.id, "values": values or {}})
     scope = payload.model_dump(exclude={"operations", "reviewed_file_name"}) if hasattr(payload, "model_dump") else payload.dict(exclude={"operations", "reviewed_file_name"})
+    scope["test_case_document_name"] = payload.reviewed_file_name
     try:
         repository = TestCaseRepository()
         result = repository.review_save(scope, operations)

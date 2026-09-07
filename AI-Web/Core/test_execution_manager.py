@@ -50,11 +50,14 @@ RECORDINGS_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "Recordi
 
 class TestExecutionManager:
 
-    def __init__(self, force_headless=False):
+    def __init__(self, force_headless=False, initialize_automation=True):
 
         self.logger = Logger.get_logger()
 
         self.repository = TestCaseRepository()
+
+        if not initialize_automation:
+            return
 
         self.automation_generator = AutomationGenerator()
 
@@ -112,10 +115,13 @@ class TestExecutionManager:
         ),
         "steps": ("steps", "teststeps"),
         "expected_result": ("expectedresult", "expected"),
+        "execution_type": ("executiontype", "executionmode"),
+        "execution_tool": ("executiontool", "automationtool", "tool"),
     }
 
     def import_test_cases_from_excel(
-        self, file_path, domain, module, knowledge_name, version=None
+        self, file_path, domain, module, knowledge_name, version=None,
+        document_type=None, source_knowledge_ids=None, test_case_document_name=None,
     ):
         """
         Reads an .xlsx file's first sheet, maps its header row onto
@@ -135,6 +141,9 @@ class TestExecutionManager:
             "success": False,
             "imported": 0,
             "skipped": 0,
+            "skipped_duplicates": 0,
+            "rejected": 0,
+            "errors": [],
             "error": None,
         }
 
@@ -182,19 +191,27 @@ class TestExecutionManager:
 
                     break
 
-        if "test_case" not in column_fields.values():
-
-            summary["error"] = (
-                "No 'Test Case' column was recognized in the header "
-                "row — the sheet must have a column named 'Test "
-                "Case' (Excel Exporter's own output already does)."
-            )
-
+        required_columns = {
+            "scenario": "Scenario", "importance": "Importance",
+            "test_type": "Test Type(s)", "test_case": "Test Case",
+            "pre_conditions": "Preconditions", "steps": "Steps",
+            "expected_result": "Expected Result", "execution_type": "Execution Type",
+            "execution_tool": "Execution Tool",
+        }
+        missing = [label for field, label in required_columns.items() if field not in column_fields.values()]
+        if missing:
+            summary["error"] = "Required column(s) missing: " + ", ".join(missing) + "."
             return summary
 
         parsed_rows = []
+        tool_aliases = {}
+        for tool in self.repository.list_execution_tools():
+            label = str(tool.get("label") or "").strip()
+            for value in (tool.get("code"), label, tool.get("automation_type")):
+                if value:
+                    tool_aliases[normalize(value)] = label
 
-        for data_row in rows_iter:
+        for row_number, data_row in enumerate(rows_iter, start=2):
 
             if data_row is None or all(
                 cell in (None, "") for cell in data_row
@@ -214,21 +231,71 @@ class TestExecutionManager:
 
                 row[field] = str(value).strip() if value is not None else ""
 
-            if not row.get("test_case"):
-
-                summary["skipped"] += 1
-
+            row_errors = []
+            for field, label in required_columns.items():
+                if field != "execution_tool" and not str(row.get(field) or "").strip():
+                    row_errors.append(f"{label} is required")
+            execution_type = str(row.get("execution_type") or "").strip().lower()
+            if execution_type not in {"manual", "automatable"}:
+                row_errors.append("Execution Type must be Manual or Automatable")
+            else:
+                row["execution_type"] = execution_type.title()
+            raw_tool = str(row.get("execution_tool") or "").strip()
+            if execution_type == "automatable":
+                mapped_tool = tool_aliases.get(normalize(raw_tool))
+                if not raw_tool:
+                    row_errors.append("Execution Tool is required for an Automatable Test Case")
+                elif not mapped_tool:
+                    row_errors.append(f'Execution Tool "{raw_tool}" is not registered')
+                else:
+                    row["execution_tool"] = mapped_tool
+            elif execution_type == "manual":
+                row["execution_tool"] = ""
+            if row_errors:
+                summary["rejected"] += 1
+                summary["errors"].append(f"Row {row_number}: " + "; ".join(row_errors) + ".")
                 continue
 
             parsed_rows.append(row)
 
         if not parsed_rows:
-
             summary["error"] = (
-                "No rows had any text in the 'Test Case' column — "
-                "nothing to import."
+                "No valid rows were found. " + " ".join(summary["errors"][:3])
+                if summary["errors"] else
+                "No rows had any text in the 'Test Case' column — nothing to import."
             )
 
+            return summary
+
+        # Keep the central repository canonical: repeated rows in the
+        # workbook, or rows already imported into this same reviewed
+        # document/source scope, are skipped instead of duplicated.
+        existing = self.repository.list_all_test_cases(
+            domain=domain, module=module, knowledge_name=knowledge_name,
+            version=version or "1.0", document_type=document_type,
+            limit=10000, offset=0,
+        )["test_cases"]
+        selected_sources = {int(value) for value in (source_knowledge_ids or [])}
+        signatures = {
+            normalize(row.get("test_case")) for row in existing
+            if (not selected_sources or set(row.get("source_knowledge_ids") or []) == selected_sources)
+            and str(row.get("test_case_document_name") or "") == str(test_case_document_name or "")
+        }
+        unique_rows = []
+        for row in parsed_rows:
+            signature = normalize(row.get("test_case"))
+            if not signature or signature in signatures:
+                summary["skipped"] += 1
+                summary["skipped_duplicates"] += 1
+                continue
+            signatures.add(signature)
+            unique_rows.append(row)
+        parsed_rows = unique_rows
+        if not parsed_rows:
+            if summary["skipped_duplicates"]:
+                summary["success"] = True
+                return summary
+            summary["error"] = "No valid new Test Cases were found."
             return summary
 
         try:
@@ -239,6 +306,9 @@ class TestExecutionManager:
                 knowledge_name=knowledge_name,
                 version=version or "1.0",
                 rows=parsed_rows,
+                document_type=document_type,
+                source_knowledge_ids=source_knowledge_ids,
+                test_case_document_name=test_case_document_name,
             )
 
         except Exception as ex:
@@ -1885,7 +1955,7 @@ class TestExecutionManager:
         self.playwright_runner.cancel_current_run()
 
     # --------------------------------------------------
-    
+
     def _build_playwright_script(self, raw_steps_text, base_url):
     
             """
@@ -1906,7 +1976,7 @@ class TestExecutionManager:
                 "browser.close()", "browser = ", "print('test passed')",
                 "print(\"test passed\")", "page = browser.new_page",
             )
-    
+
             body_lines = []
     
             for raw_line in raw_steps_text.split("\n"):
@@ -1950,4 +2020,3 @@ class TestExecutionManager:
                 "        run(playwright)\n"
                 "    print('TEST PASSED')\n"
             )
-    

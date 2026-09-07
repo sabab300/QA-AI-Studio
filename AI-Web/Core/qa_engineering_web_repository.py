@@ -4,8 +4,10 @@ import json
 import threading
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from Core.knowledge_web_repository import KnowledgeRepository
+from Core.logger import Logger
 from Core.test_case_repository import TestCaseRepository
 from Database.db_manager import DatabaseManager
 
@@ -17,6 +19,7 @@ class QaEngineeringWeb:
 
     def __init__(self):
         self.db = DatabaseManager()
+        self.logger = Logger.get_logger()
         self.ensure_schema()
 
     def ensure_schema(self):
@@ -60,7 +63,31 @@ class QaEngineeringWeb:
             items = [item for item in items if item.get("domain") == domain]
         if module:
             items = [item for item in items if item.get("module") == module]
+        for item in items:
+            item["display_name"] = self._source_display_name(item)
         return items
+
+    def _source_display_name(self, item):
+        """Return the best real persisted source name without inventing labels."""
+        candidates = [
+            item.get("file_name"), item.get("source_name"), item.get("name"),
+        ]
+        for path_key in ("repository_path", "original_path"):
+            raw_path = str(item.get(path_key) or "").strip()
+            if raw_path:
+                candidates.append(Path(raw_path).name)
+        for collection in item.get("api_collections") or []:
+            candidates.append(collection.get("name"))
+        candidates.append(item.get("knowledge_name"))
+        for candidate in candidates:
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        self.logger.warning(
+            "Knowledge source id=%s has no usable persisted display name.",
+            item.get("id"),
+        )
+        return None
 
     def start_generation(self, payload):
         job_id = uuid.uuid4().hex

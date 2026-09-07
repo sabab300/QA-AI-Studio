@@ -692,7 +692,8 @@ class TestCaseRepository:
 
     def list_all_test_cases(
         self, domain=None, module=None, knowledge_name=None, version=None,
-        status=None, automation_type=None, execution_type=None, execution_tool=None, q=None,
+        status=None, automation_type=None, execution_type=None, execution_tool=None,
+        document_type=None, q=None,
         limit=200, offset=0,
     ):
         """
@@ -745,6 +746,10 @@ class TestCaseRepository:
         if execution_tool:
             conditions.append("execution_tool=?")
             params.append(execution_tool)
+
+        if document_type:
+            conditions.append("document_type=?")
+            params.append(document_type)
 
         if q:
 
@@ -937,7 +942,7 @@ class TestCaseRepository:
             UPDATE test_cases
             SET automation_type=?,
                 automation_script=COALESCE(?, automation_script),
-                status='Automated',
+                status='Draft',
                 execution_type='Automatable',
                 execution_tool=?,
                 modified_date=?
@@ -978,7 +983,7 @@ class TestCaseRepository:
             UPDATE test_cases
             SET recorded_script=?,
                 automation_type='Playwright',
-                status='Automated',
+                status='Draft',
                 execution_type='Automatable',
                 execution_tool='Playwright',
                 modified_date=?

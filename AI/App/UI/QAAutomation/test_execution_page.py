@@ -83,8 +83,38 @@ from Core.playwright_runner import (
 )
 
 from Core.test_execution_manager import TestExecutionManager
-from Core.clickup_config import ClickUpConfig
-from Core.clickup_client import ClickUpClient
+
+# ==========================================================
+# TEMPORARY: ClickUp integration disabled for Desktop startup.
+# Restore real imports when ClickUp backend modules are available.
+# ==========================================================
+
+# from Core.clickup_config import ClickUpConfig
+# from Core.clickup_client import ClickUpClient
+
+class ClickUpConfig:
+    def load(self):
+        return {
+            "clickup_api_token": "",
+            "clickup_list_id": "",
+        }
+
+    def save(self, **kwargs):
+        return None
+
+
+class ClickUpClient:
+    def __init__(self, config=None):
+        self.config = config or {}
+
+    def create_bug_task(self, test_case):
+        return {
+            "success": False,
+            "error": "ClickUp integration is temporarily disabled."
+        }
+
+
+
 
 from UI.QAAutomation.test_execution_worker import (
     AutomationGenerationWorker,

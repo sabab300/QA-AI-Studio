@@ -70,6 +70,10 @@ class SqlAutomationManager:
 
         self.runner = SqlAutomationRunner()
 
+        self.env = SqlEnvironmentConfig()
+        
+        self.runner = SqlAutomationRunner()
+
     # --------------------------------------------------
     # Script envelope — identical shape to the Web port's
     # SqlAutomationWeb._pack_script()/_unpack_script().

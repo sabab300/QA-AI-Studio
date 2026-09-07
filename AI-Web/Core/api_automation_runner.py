@@ -368,7 +368,7 @@ class ApiAutomationRunner:
         result = {
             "request": {
                 key: value for key, value in request_spec.items()
-                if key != "auth"
+                if key not in ("auth", "headers", "data")
             },
             "expected_status": expected_status,
             "error": None,

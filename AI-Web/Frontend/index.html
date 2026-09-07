@@ -273,6 +273,12 @@
 
   /* Filter bar */
   .filterbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; flex-shrink:0; }
+  .auto-scope{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:7px;width:100%}
+  .auto-scope select{min-width:0;width:100%}
+  .source-picker{position:relative;min-width:0}.source-picker-summary{width:100%;height:34px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;overflow:hidden}.source-picker-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.source-picker-menu{display:none;position:absolute;z-index:30;top:calc(100% + 3px);left:0;width:max(100%,280px);max-width:min(420px,90vw);max-height:230px;overflow-y:auto;overflow-x:hidden;padding:5px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}.source-picker.open .source-picker-menu{display:block}.source-picker-item{display:grid;grid-template-columns:18px minmax(0,1fr);gap:7px;padding:6px;border-radius:4px;cursor:pointer}.source-picker-item:hover{background:var(--surface-2)}.source-picker-item input{margin-top:2px}.source-picker-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.source-picker-type{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .auto-scope-actions{display:flex;gap:7px;align-items:center;grid-column:span 2}
+  .at-scope-count{white-space:nowrap}
+  @media(max-width:1100px){.auto-scope{grid-template-columns:repeat(2,minmax(150px,1fr))}.auto-scope-actions{grid-column:span 2}}
   select, .btn, .fbar-search{
     font-size:12.5px; border:1px solid var(--border); background:var(--surface); border-radius:7px; padding:7px 10px; color:var(--ink);
   }
@@ -520,7 +526,24 @@
   .qe-page{padding:8px 10px 10px;gap:8px;flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}.qe-toolbar,.qe-scope-actions{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.qe-scope{display:flex;flex-direction:column;gap:8px}.qe-scope-main{display:grid;grid-template-columns:minmax(130px,1fr) minmax(130px,1fr) minmax(180px,1.4fr) minmax(105px,.7fr) minmax(150px,1fr) minmax(240px,1.5fr);gap:8px;align-items:end}
   .qe-scope .field{margin:0;min-width:0}.qe-scope select{height:30px;padding:3px 8px}.qe-scope-actions .field{width:145px}
   .qe-types{display:flex;gap:5px 12px;flex-wrap:wrap;padding:8px;min-height:50px;align-content:flex-start}.qe-types label{font-size:12px;white-space:nowrap}
-  .qe-source-picker{position:relative;min-width:220px;max-width:360px}.qe-source-summary{height:30px;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qe-source-list{display:none;position:absolute;z-index:12;top:32px;left:0;width:100%;max-width:360px;max-height:240px;overflow-x:hidden;overflow-y:auto;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow-2)}.qe-source-picker.open .qe-source-list{display:block}.qe-source-list label{display:flex;align-items:flex-start;gap:6px;min-width:0;padding:5px;font-size:11.5px}.qe-source-list label:hover{background:var(--surface-2)}.qe-source-list input{flex:0 0 auto;margin-top:2px}.qe-source-text{min-width:0;overflow:hidden}.qe-source-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.qe-action-stack{display:flex;flex-direction:column;gap:4px;align-self:flex-end}.qe-action-stack .btn{width:150px}tr.qe-pending-delete td{background:rgba(190,45,55,.09);color:var(--danger)}
+  .qe-source-picker{position:relative;min-width:220px;max-width:360px}.qe-source-summary{height:30px;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qe-source-list{display:none;position:absolute;z-index:12;top:32px;left:0;width:100%;max-width:360px;max-height:240px;overflow-x:hidden;overflow-y:auto;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow-2)}.qe-source-picker.open .qe-source-list{display:block}.qe-source-list label{display:flex;align-items:flex-start;gap:8px;width:100%;min-width:0;overflow:hidden;padding:6px;font-size:11.5px;cursor:pointer}.qe-source-list label:hover{background:var(--surface-2)}.qe-source-list input[type="checkbox"]{
+    flex:0 0 15px;
+    width:15px !important;
+    height:15px;
+    min-width:15px;
+    max-width:15px;
+    padding:0;
+    margin:2px 0 0 0;
+    accent-color:var(--accent);
+}.qe-source-text{
+    display:flex;
+    flex:1 1 0;
+    flex-direction:column;
+    min-width:0;
+    width:0;
+    overflow:hidden;
+    color:var(--ink);
+}.qe-source-name{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.qe-source-text .muted-small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qe-action-stack{display:flex;flex-direction:column;gap:4px;align-self:flex-end}.qe-action-stack .btn{width:150px}tr.qe-pending-delete td{background:rgba(190,45,55,.09);color:var(--danger)}
   .qe-status{font-size:12px;padding:4px 8px;border-left:3px solid var(--line)}.qe-status.running{border-color:var(--info);color:var(--info)}.qe-status.completed{border-color:var(--success);color:var(--success)}.qe-status.failed{border-color:var(--danger);color:var(--danger)}
   .qe-clamp{max-width:340px;max-height:48px;overflow:hidden;white-space:pre-wrap}.qe-actionbar{display:flex;gap:6px;align-items:center;padding:6px;flex-wrap:wrap}.qe-actionbar .fbar-search{min-width:180px}.qe-actionbar #qeExportFileName{min-width:160px;max-width:240px}
   .qe-actionbar .fbar-search{flex:1;max-width:420px}.qe-section-head{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line)}.qe-section-head h3{margin:0;font-size:13px}
@@ -771,10 +794,12 @@
     <h3>Import Test Cases (Excel)</h3>
     <div class="modal-sub">Reuses the same Excel import format as the rest of QA AI Studio. Malformed rows are reported, never silently skipped.</div>
     <div class="auth-error" id="tcImportError"></div>
-    <div class="field"><label for="tcImportDomain">Domain</label><input id="tcImportDomain" autocomplete="off"></div>
-    <div class="field"><label for="tcImportModule">Module</label><input id="tcImportModule" autocomplete="off"></div>
-    <div class="field"><label for="tcImportKnowledge">Knowledge name</label><input id="tcImportKnowledge" autocomplete="off"></div>
-    <div class="field"><label for="tcImportVersion">Version</label><input id="tcImportVersion" placeholder="1.0"></div>
+    <div class="field"><label for="tcImportDomain">Domain</label><select id="tcImportDomain"></select></div>
+    <div class="field"><label for="tcImportModule">Module</label><select id="tcImportModule" disabled></select></div>
+    <div class="field"><label for="tcImportKnowledge">Knowledge name</label><select id="tcImportKnowledge" disabled></select></div>
+    <div class="field"><label for="tcImportVersion">Version</label><select id="tcImportVersion" disabled></select></div>
+    <div class="field"><label for="tcImportDocumentType">Document Type</label><select id="tcImportDocumentType" disabled></select></div>
+    <div class="field"><label for="tcImportSourcePicker">Source File(s)</label><div class="source-picker" id="tcImportSourcePicker"><button type="button" class="btn source-picker-summary" disabled><span class="source-picker-label">Select source files…</span><span>▼</span></button><div class="source-picker-menu"></div></div></div>
     <div class="field"><label for="tcImportFile">Excel file (.xlsx)</label><input id="tcImportFile" type="file" accept=".xlsx"></div>
     <div id="tcImportSummary"></div>
     <div class="modal-actions">
@@ -1097,23 +1122,27 @@
       <div class="workspace">
         <!-- ============ PLAYWRIGHT AUTOMATION ============ -->
         <div class="panel active auto-type-panel" id="auto-playwright" data-automation-type="Playwright" style="gap:10px;">
-          <div class="filterbar">
+          <div class="filterbar auto-scope">
             <select class="at-domain">
               <option value="">Select Domain…</option>
             </select>
             <select class="at-module"><option value="">Select Module…</option></select>
             <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <select class="at-version" disabled><option value="">Select Version…</option></select>
+            <select class="at-document-type" disabled><option value="">Select Document Type…</option></select>
+            <div class="source-picker at-source-picker"><button type="button" class="btn source-picker-summary" disabled><span class="source-picker-label">Select source files…</span><span>▼</span></button><div class="source-picker-menu"></div></div>
+            <select class="at-document" disabled><option value="">Select Test Case Document…</option></select>
+            <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load Test Cases</button>
             <div class="fbar-spacer"></div>
-            <button class="btn" id="pwImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Import (Excel)</button>
+            <button class="btn" id="pwImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>External Test Case Import</button>
             <button class="btn" id="pwTemplateBtn">Download Sample Template</button>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
 
           <div class="card">
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
-              <button class="btn btn-sm at-select-all">Select All</button>
-              <button class="btn btn-sm at-clear-all">Clear All</button>
+              <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
             </div>
@@ -1123,15 +1152,10 @@
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
                   <th>Test Case</th>
-                  <th style="width:90px;">Status</th>
-                  <th style="width:80px;">Result</th>
+                  <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">Script</th>
-                  <th style="width:72px;">Record</th>
-                  <th style="width:96px;">Active Script</th>
-                  <th style="width:120px;">AI Auto Generate</th>
-                  <th style="width:76px;">ClickUp</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="10" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="5" class="muted-small" style="padding:12px 10px;">Complete the hierarchy above, then Load Test Cases.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1139,7 +1163,6 @@
 
           <div class="btn-row">
             <button class="btn btn-primary at-exec-selected">Execute Selected</button>
-            <button class="btn at-exec-all">Execute All</button>
             <div class="fbar-spacer"></div>
             <button class="btn" id="pwEnvBtn">Test Environment Setting</button>
           </div>
@@ -1157,10 +1180,15 @@
 
         <!-- ============ API AUTOMATION ============ -->
         <div class="panel auto-type-panel" id="auto-api" data-automation-type="API" style="gap:10px;">
-          <div class="filterbar">
+          <div class="filterbar auto-scope">
             <select class="at-domain"><option value="">Select Domain…</option></select>
             <select class="at-module"><option value="">Select Module…</option></select>
             <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <select class="at-version" disabled><option value="">Select Version…</option></select>
+            <select class="at-document-type" disabled><option value="">Select Document Type…</option></select>
+            <div class="source-picker at-source-picker"><button type="button" class="btn source-picker-summary" disabled><span class="source-picker-label">Select source files…</span><span>▼</span></button><div class="source-picker-menu"></div></div>
+            <select class="at-document" disabled><option value="">Select Test Case Document…</option></select>
+            <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load APIs</button>
             <div class="fbar-spacer"></div>
             <button class="btn" id="apiGenFromCollectionBtn">Generate Automation from API Collection</button>
@@ -1171,6 +1199,7 @@
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
               <button class="btn btn-sm at-select-all">Select All</button>
               <button class="btn btn-sm at-clear-all">Clear All</button>
+              <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
             </div>
@@ -1180,14 +1209,13 @@
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
                   <th>Test Case / API</th>
-                  <th style="width:90px;">Status</th>
-                  <th style="width:80px;">Result</th>
+                  <th style="width:120px;">Automation Readiness</th>
+                  <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">Script</th>
-                  <th style="width:96px;">Active Script</th>
-                  <th style="width:120px;">AI Auto Generate</th>
-                  <th style="width:76px;">ClickUp</th>
+                  <th style="width:96px;">Active Source</th>
+                  <th style="width:150px;">Actions</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="9" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1213,10 +1241,15 @@
 
         <!-- ============ SQL AUTOMATION ============ -->
         <div class="panel auto-type-panel" id="auto-sql" data-automation-type="SQL" style="gap:10px;">
-          <div class="filterbar">
+          <div class="filterbar auto-scope">
             <select class="at-domain"><option value="">Select Domain…</option></select>
             <select class="at-module"><option value="">Select Module…</option></select>
             <select class="at-knowledge"><option value="">Select Knowledge…</option></select>
+            <select class="at-version" disabled><option value="">Select Version…</option></select>
+            <select class="at-document-type" disabled><option value="">Select Document Type…</option></select>
+            <div class="source-picker at-source-picker"><button type="button" class="btn source-picker-summary" disabled><span class="source-picker-label">Select source files…</span><span>▼</span></button><div class="source-picker-menu"></div></div>
+            <select class="at-document" disabled><option value="">Select Test Case Document…</option></select>
+            <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load Test Cases</button>
             <div class="fbar-spacer"></div>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
@@ -1231,6 +1264,7 @@
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
               <button class="btn btn-sm at-select-all">Select All</button>
               <button class="btn btn-sm at-clear-all">Clear All</button>
+              <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
             </div>
@@ -1240,14 +1274,13 @@
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
                   <th>Test Case</th>
-                  <th style="width:90px;">Status</th>
-                  <th style="width:80px;">Result</th>
+                  <th style="width:120px;">Automation Readiness</th>
+                  <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">SQL</th>
-                  <th style="width:96px;">Active Script</th>
-                  <th style="width:120px;">AI Auto Generate SQL</th>
-                  <th style="width:76px;">ClickUp</th>
+                  <th style="width:96px;">Active</th>
+                  <th style="width:150px;">Actions</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="9" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1332,6 +1365,7 @@
               <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
               <div class="fbar-spacer"></div>
               <button class="btn" id="tcValidateBtn">Validate</button>
+              <button class="btn" id="tcActivateBtn">Set Active</button>
               <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
             </div>
             <div id="tcValidateResult"></div>
@@ -1454,8 +1488,7 @@
               <option value="sqlite">SQLite</option>
               <option value="postgresql">PostgreSQL</option>
               <option value="mysql">MySQL</option>
-              <option value="mssql">SQL Server (MSSQL)</option>
-              <option value="oracle">Oracle</option>
+              <option value="sqlserver">SQL Server</option>
             </select>
           </div>
           <div class="field" id="sqlEnvSqlitePathRow"><label for="sqlEnvSqlitePath">SQLite file path</label><input id="sqlEnvSqlitePath" placeholder="/path/to/database.db"></div>
@@ -1864,8 +1897,6 @@
     openExecLogBtn.addEventListener('click', function(){
       var navAutomation = document.querySelector('.nav-item[data-page="automation"]');
       if(navAutomation) navAutomation.click();
-      var t = document.getElementById('tabAutoLog');
-      if(t) t.click();
     });
   }
 
@@ -2313,7 +2344,7 @@
     API: { panel: 'auto-api' },
     SQL: { panel: 'auto-sql' },
   };
-  var autoScopesByType = { Playwright: [], API: [], SQL: [] };
+  var autoScopesByType = { Playwright: {sources:[],documents:[]}, API: {sources:[],documents:[]}, SQL: {sources:[],documents:[]} };
   var autoTestCasesByType = { Playwright: [], API: [], SQL: [] };
   var autoGridControllers = {};
   var autoLogControllers = {};
@@ -2326,9 +2357,9 @@
   // ---- Scopes (Domain / Module / Knowledge cascades), per tab ----
   function loadTypeScopes(type){
     return apiFetch('/api/automation/scope').then(function(data){
-      autoScopesByType[type] = data.scopes || [];
+      autoScopesByType[type] = {sources:data.sources || [], documents:data.documents || []};
       var panel = panelFor(type);
-      var domains = uniqueVals(autoScopesByType[type].map(function(s){ return s.domain; }));
+      var domains = uniqueVals(autoScopesByType[type].sources.map(function(s){ return s.domain; }));
       fillSelect(panel.querySelector('.at-domain'), domains, 'Select Domain…');
       refreshTypeModuleOptions(type);
     }).catch(function(err){ toast(err.message, true); });
@@ -2336,7 +2367,7 @@
   function refreshTypeModuleOptions(type){
     var panel = panelFor(type);
     var domain = panel.querySelector('.at-domain').value;
-    var modules = uniqueVals(autoScopesByType[type].filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
+    var modules = uniqueVals(autoScopesByType[type].sources.filter(function(s){ return !domain || s.domain === domain; }).map(function(s){ return s.module; }));
     fillSelect(panel.querySelector('.at-module'), modules, 'Select Module…');
     refreshTypeKnowledgeOptions(type);
   }
@@ -2344,10 +2375,60 @@
     var panel = panelFor(type);
     var domain = panel.querySelector('.at-domain').value;
     var module = panel.querySelector('.at-module').value;
-    var names = uniqueVals(autoScopesByType[type].filter(function(s){
+    var names = uniqueVals(autoScopesByType[type].sources.filter(function(s){
       return (!domain || s.domain === domain) && (!module || s.module === module);
     }).map(function(s){ return s.knowledge_name; }));
     fillSelect(panel.querySelector('.at-knowledge'), names, 'Select Knowledge…');
+    refreshTypeVersionOptions(type);
+  }
+  function scopeSources(type){
+    var panel=panelFor(type), domain=panel.querySelector('.at-domain').value,
+      module=panel.querySelector('.at-module').value, knowledge=panel.querySelector('.at-knowledge').value;
+    return autoScopesByType[type].sources.filter(function(s){ return s.domain===domain && s.module===module && s.knowledge_name===knowledge; });
+  }
+  function refreshTypeVersionOptions(type){
+    var panel=panelFor(type), knowledge=panel.querySelector('.at-knowledge').value;
+    var sel=panel.querySelector('.at-version'), values=knowledge ? uniqueVals(scopeSources(type).map(function(s){return s.version;})) : [];
+    fillSelect(sel, values, 'Select Version…'); sel.disabled=!knowledge; refreshTypeDocumentTypeOptions(type);
+  }
+  function refreshTypeDocumentTypeOptions(type){
+    var panel=panelFor(type), version=panel.querySelector('.at-version').value;
+    var values=version ? uniqueVals(scopeSources(type).filter(function(s){return s.version===version;}).map(function(s){return s.document_type;})) : [];
+    var sel=panel.querySelector('.at-document-type'); fillSelect(sel,values,'Select Document Type…'); sel.disabled=!version; refreshTypeSourceOptions(type);
+  }
+  function refreshTypeSourceOptions(type){
+    var panel=panelFor(type), version=panel.querySelector('.at-version').value, docType=panel.querySelector('.at-document-type').value;
+    var sources=docType ? scopeSources(type).filter(function(s){return s.version===version && s.document_type===docType;}) : [];
+    setSourcePicker(panel.querySelector('.at-source-picker'),sources,!docType); refreshTypeDocumentOptions(type);
+  }
+  function sourcePickerIds(picker){return Array.prototype.slice.call(picker.querySelectorAll('.source-picker-check:checked')).map(function(cb){return parseInt(cb.value,10);}).sort(function(a,b){return a-b;});}
+  function updateSourcePickerSummary(picker){var selected=Array.prototype.slice.call(picker.querySelectorAll('.source-picker-check:checked')),label=picker.querySelector('.source-picker-label');label.textContent=!selected.length?'Select source files…':(selected.length===1?selected[0].getAttribute('data-name'):selected.length+' source files selected');label.title=selected.length===1?selected[0].getAttribute('data-name'):'';}
+  function setSourcePicker(picker,sources,disabled){
+    picker.classList.remove('open');var button=picker.querySelector('.source-picker-summary'),menu=picker.querySelector('.source-picker-menu');button.disabled=!!disabled;
+    menu.innerHTML=(sources||[]).map(function(source){var name=source.display_name||source.file_name||'';if(!name)return '';return '<label class="source-picker-item"><input type="checkbox" class="source-picker-check" value="'+source.id+'" data-name="'+escapeHtml(name)+'"><span><span class="source-picker-name" title="'+escapeHtml(name)+'">'+escapeHtml(name)+'</span><span class="source-picker-type">'+escapeHtml(source.source_type||'Source')+'</span></span></label>';}).join('');
+    menu.querySelectorAll('.source-picker-check').forEach(function(cb){cb.addEventListener('change',function(){updateSourcePickerSummary(picker);if(picker._onChange)picker._onChange();});});updateSourcePickerSummary(picker);
+  }
+  function setSourcePickerSelection(picker,ids){var selected=(ids||[]).map(Number);picker.querySelectorAll('.source-picker-check').forEach(function(cb){cb.checked=selected.indexOf(Number(cb.value))!==-1;});updateSourcePickerSummary(picker);}
+  document.querySelectorAll('.source-picker').forEach(function(picker){picker.querySelector('.source-picker-summary').addEventListener('click',function(event){event.stopPropagation();document.querySelectorAll('.source-picker.open').forEach(function(other){if(other!==picker)other.classList.remove('open');});picker.classList.toggle('open');});picker.querySelector('.source-picker-menu').addEventListener('click',function(event){event.stopPropagation();});});
+  document.addEventListener('click',function(){document.querySelectorAll('.source-picker.open').forEach(function(picker){picker.classList.remove('open');});});
+  function refreshTypeDocumentOptions(type){
+    var panel=panelFor(type), scope=activeTypeScope(type), selected=scope.source_knowledge_ids;
+    var docs=selected.length ? autoScopesByType[type].documents.filter(function(d){
+      var ids=(d.source_knowledge_ids || []).slice().sort(function(a,b){return a-b;});
+      return d.domain===scope.domain && d.module===scope.module && d.knowledge_name===scope.knowledge_name && d.version===scope.version && d.document_type===scope.document_type && JSON.stringify(ids)===JSON.stringify(selected);
+    }) : [];
+    var sel=panel.querySelector('.at-document'), current=sel.value;
+    sel.innerHTML='<option value="">Select Test Case Document…</option>'+docs.map(function(d){var n=(d.counts&&d.counts[type])||0;return '<option value="'+escapeHtml(d.key)+'">'+escapeHtml(d.name)+' ('+n+')</option>';}).join('');
+    if(docs.some(function(d){return d.key===current;})) sel.value=current; sel.disabled=!selected.length;
+    refreshTypeScopeCount(type); clearTypeResults(type);
+  }
+  function refreshTypeScopeCount(type){
+    var panel=panelFor(type), key=panel.querySelector('.at-document').value;
+    var doc=autoScopesByType[type].documents.find(function(d){return d.key===key;});
+    panel.querySelector('.at-scope-count').textContent=((doc&&doc.counts&&doc.counts[type])||0)+' test cases';
+  }
+  function clearTypeResults(type){
+    autoTestCasesByType[type]=[]; autoGridControllers[type].setRows([]); autoLogControllers[type].setRows([]);
   }
 
   // ---- Grid + Log controllers, one pair per automation type ----
@@ -2355,10 +2436,10 @@
     var panel = panelFor(type);
     autoGridControllers[type] = createGridController({
       name: 'auto-' + type, tbody: panel.querySelector('.at-tbody'),
-      footer: panel.querySelector('.at-pager'), colSpan: (type === 'Playwright' ? 10 : 9),
+      footer: panel.querySelector('.at-pager'), colSpan: type === 'Playwright' ? 5 : 8,
       searchInput: panel.querySelector('.at-search'),
       emptyText: 'No test cases in this scope.',
-      onRendered: function(body){ wireGridRowActions(type, body); },
+      onRendered: function(body){ wireGridRowActions(type, body); syncHeaderCheckbox(type); },
     });
     autoLogControllers[type] = createGridController({
       name: 'auto-' + type + '-log', tbody: panel.querySelector('.at-log-tbody'),
@@ -2370,7 +2451,7 @@
   function initAutomation(){
     Object.keys(AUTO_TYPES).forEach(function(type){
       loadTypeScopes(type);
-      loadTypeLog(type);
+      clearTypeResults(type);
     });
     loadEnvironment();
     loadSqlEnvironment();
@@ -2463,18 +2544,23 @@
       domain: panel.querySelector('.at-domain').value,
       module: panel.querySelector('.at-module').value,
       knowledge_name: panel.querySelector('.at-knowledge').value,
+      version: panel.querySelector('.at-version').value,
+      document_type: panel.querySelector('.at-document-type').value,
+      source_knowledge_ids: sourcePickerIds(panel.querySelector('.at-source-picker')),
+      test_case_document: panel.querySelector('.at-document').value,
     };
   }
 
   function loadTypeTestCases(type){
     var scope = activeTypeScope(type);
-    if(!scope.domain || !scope.module || !scope.knowledge_name){
+    if(!scope.domain || !scope.module || !scope.knowledge_name || !scope.version || !scope.document_type || !scope.source_knowledge_ids.length || !scope.test_case_document){
       autoTestCasesByType[type] = [];
       autoGridControllers[type].setRows([]);
       return Promise.resolve();
     }
-    var params = new URLSearchParams(scope); params.set('automation_type', type);
-    return apiFetch('/api/automation/test-cases?' + params.toString()).then(function(data){
+    var params = new URLSearchParams(); ['domain','module','knowledge_name','version','document_type','test_case_document'].forEach(function(k){params.set(k,scope[k]);});
+    scope.source_knowledge_ids.forEach(function(id){params.append('source_knowledge_ids',id);}); params.set('automation_type', type); params.set('limit', '200');
+    return apiFetch('/api/automation/workspace?' + params.toString()).then(function(data){
       // The scoped /test-cases endpoint returns every automation type
       // in that Domain/Module/Knowledge together (Playwright/API/SQL/
       // None all share one pool of test cases from QA Engineering) —
@@ -2489,10 +2575,12 @@
   function renderTypeTestCases(type){
     var items = autoTestCasesByType[type];
     var rows = items.map(function(tc){
+      var hasScript = !!((type === 'Playwright' && tc.active_script_source === 'MANUAL') ? tc.recorded_script : tc.automation_script);
+      var latest = tc.latest_run || null;
+      var readiness = latest && ['Queued','Running'].indexOf(latest.status) !== -1 ? latest.status :
+        (!hasScript ? 'Not Automated' : (tc.status === 'Automated' ? 'Ready' : 'Draft Script'));
+      if(latest && latest.status === 'Error') readiness = 'Error';
       var scriptLabel = type === 'SQL' ? 'View SQL' : 'View Script';
-      var recordCell = type === 'Playwright'
-        ? '<button class="btn btn-sm at-record-btn" data-tc-id="' + tc.id + '">Record</button>'
-        : '<span class="muted-small">—</span>';
       var activeLabel = (tc.automation_type && tc.automation_type !== 'None')
         ? (tc.status === 'Automated' ? 'Active' : 'Draft')
         : '—';
@@ -2500,17 +2588,11 @@
         ? '<button class="btn btn-sm at-clickup-btn" data-tc-id="' + tc.id + '">Create Bug</button>'
         : '<span class="muted-small">—</span>';
       var checkboxCell = '<input type="checkbox" class="at-row-check" data-tc-id="' + tc.id + '">';
-      var cells =
-        '<td>' + checkboxCell + '</td>' +
-        '<td class="mono">' + escapeHtml(tc.tc_number) + '</td>' +
-        '<td>' + escapeHtml(tc.test_case || tc.scenario || '') + '</td>' +
-        '<td>' + escapeHtml(tc.status || 'Manual') + '</td>' +
-        '<td>' + resultPillHtml(tc.last_result === 'Not Run' ? null : tc.last_result) + '</td>' +
-        '<td><button class="btn btn-sm at-view-btn" data-tc-id="' + tc.id + '">' + scriptLabel + '</button></td>' +
-        (type === 'Playwright' ? '<td>' + recordCell + '</td>' : '') +
-        '<td>' + escapeHtml(activeLabel) + '</td>' +
-        '<td><button class="btn btn-sm at-generate-btn" data-tc-id="' + tc.id + '">AI Generate</button></td>' +
-        '<td>' + clickUpCell + '</td>';
+      activeLabel = tc.status === 'Automated' ? (type === 'SQL' ? 'Active' : (tc.active_script_source || 'AUTO')) : '\u2014';
+      var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(tc.test_case||tc.scenario||'')+'</td>';
+      var cells=type==='Playwright'
+        ? commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td>'
+        : commonCells+'<td>'+escapeHtml(readiness)+'</td><td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td><td>'+escapeHtml(activeLabel)+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">Open</button> <button class="btn btn-sm at-generate-btn" data-tc-id="'+tc.id+'">Generate</button></td>';
       var html = '<tr data-tc-id="' + tc.id + '">' + cells + '</tr>';
       return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '')).toLowerCase() };
     });
@@ -2518,6 +2600,7 @@
   }
 
   function wireGridRowActions(type, body){
+    body.querySelectorAll('.at-row-check').forEach(function(cb){cb.addEventListener('change',function(){syncHeaderCheckbox(type);});});
     body.querySelectorAll('.at-view-btn').forEach(function(btn){
       btn.addEventListener('click', function(){
         var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
@@ -2528,11 +2611,6 @@
       btn.addEventListener('click', function(){
         var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
         if(tc) selectTestCase(tc, type, function(){ document.getElementById('tcGenerateBtn').click(); });
-      });
-    });
-    body.querySelectorAll('.at-record-btn').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        toast('Manual Recording needs a live, human-drivable browser window (Playwright\'s own codegen) — this requires the desktop app; there is no remote-display bridge for this in the web port yet.', true);
       });
     });
     body.querySelectorAll('.at-clickup-btn').forEach(function(btn){
@@ -2552,36 +2630,44 @@
     }).then(function(){ if(btn) btn.disabled = false; });
   }
 
-  // ---- Select All / Clear All + Execute Selected / Execute All ----
+  function syncHeaderCheckbox(type){var panel=panelFor(type),header=panel.querySelector('.at-header-check'),boxes=Array.prototype.slice.call(panel.querySelectorAll('.at-row-check'));if(!header)return;var checked=boxes.filter(function(cb){return cb.checked;}).length;header.checked=boxes.length>0&&checked===boxes.length;header.indeterminate=checked>0&&checked<boxes.length;}
+
+  // ---- Header selection + batch actions ----
   Object.keys(AUTO_TYPES).forEach(function(type){
     var panel = panelFor(type);
     panel.querySelector('.at-header-check').addEventListener('change', function(e){
       panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = e.target.checked; });
+      syncHeaderCheckbox(type);
     });
-    panel.querySelector('.at-select-all').addEventListener('click', function(){
-      panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = true; });
-      panel.querySelector('.at-header-check').checked = true;
-    });
-    panel.querySelector('.at-clear-all').addEventListener('click', function(){
-      panel.querySelectorAll('.at-row-check').forEach(function(cb){ cb.checked = false; });
-      panel.querySelector('.at-header-check').checked = false;
-    });
+    var selectAllButton=panel.querySelector('.at-select-all');if(selectAllButton)selectAllButton.addEventListener('click',function(){panel.querySelectorAll('.at-row-check').forEach(function(cb){cb.checked=true;});syncHeaderCheckbox(type);});
+    var clearAllButton=panel.querySelector('.at-clear-all');if(clearAllButton)clearAllButton.addEventListener('click',function(){panel.querySelectorAll('.at-row-check').forEach(function(cb){cb.checked=false;});syncHeaderCheckbox(type);});
     panel.querySelector('.at-load').addEventListener('click', function(){ loadTypeTestCases(type); });
     panel.querySelector('.at-refresh').addEventListener('click', function(){
       loadTypeScopes(type).then(function(){ loadTypeTestCases(type); });
       loadTypeLog(type);
     });
-    panel.querySelector('.at-domain').addEventListener('change', function(){ refreshTypeModuleOptions(type); });
-    panel.querySelector('.at-module').addEventListener('change', function(){ refreshTypeKnowledgeOptions(type); });
+    panel.querySelector('.at-domain').addEventListener('change', function(){ refreshTypeModuleOptions(type); clearTypeResults(type); });
+    panel.querySelector('.at-module').addEventListener('change', function(){ refreshTypeKnowledgeOptions(type); clearTypeResults(type); });
+    panel.querySelector('.at-knowledge').addEventListener('change', function(){ refreshTypeVersionOptions(type); });
+    panel.querySelector('.at-version').addEventListener('change', function(){ refreshTypeDocumentTypeOptions(type); });
+    panel.querySelector('.at-document-type').addEventListener('change', function(){ refreshTypeSourceOptions(type); });
+    panel.querySelector('.at-source-picker')._onChange=function(){refreshTypeDocumentOptions(type);};
+    panel.querySelector('.at-document').addEventListener('change', function(){ refreshTypeScopeCount(type); clearTypeResults(type); });
     panel.querySelector('.at-exec-selected').addEventListener('click', function(){
       var ids = Array.prototype.slice.call(panel.querySelectorAll('.at-row-check:checked')).map(function(cb){ return parseInt(cb.getAttribute('data-tc-id'), 10); });
       if(!ids.length){ toast('Select at least one test case first.', true); return; }
       executeManyTestCases(type, ids);
     });
-    panel.querySelector('.at-exec-all').addEventListener('click', function(){
+    var executeAllButton=panel.querySelector('.at-exec-all');if(executeAllButton)executeAllButton.addEventListener('click', function(){
       var ids = autoTestCasesByType[type].map(function(tc){ return tc.id; });
       if(!ids.length){ toast('No test cases loaded for this scope.', true); return; }
       executeManyTestCases(type, ids);
+    });
+    panel.querySelector('.at-generate-selected').addEventListener('click', function(){
+      var button = this;
+      var ids = Array.prototype.slice.call(panel.querySelectorAll('.at-row-check:checked')).map(function(cb){ return parseInt(cb.getAttribute('data-tc-id'), 10); });
+      if(!ids.length){ toast('Select at least one Test Case first.', true); return; }
+      generateManyTestCases(type, ids, button);
     });
     panel.querySelector('.at-log-refresh').addEventListener('click', function(){ loadTypeLog(type); });
   });
@@ -2595,20 +2681,25 @@
   // called — never assumed from the active tab alone, so a stale/mixed
   // grid can never silently execute the wrong runner.
   function executeManyTestCases(type, ids){
+    var panel = panelFor(type);
+    var buttons = panel.querySelectorAll('.at-exec-selected,.at-exec-all');
+    buttons.forEach(function(button){ button.disabled = true; });
     var index = 0;
     var skipped = [];
     function next(){
       if(index >= ids.length){
-        toast('Finished executing ' + (ids.length - skipped.length) + ' of ' + ids.length + '.' + (skipped.length ? ' Skipped ' + skipped.length + ' (no automation script yet).' : ''));
+        buttons.forEach(function(button){ button.disabled = !autoCanExecute(); });
+        toast('Preflight complete. Ready: ' + (ids.length - skipped.length) + ', skipped: 0, blocked: ' + skipped.length + '.');
         loadTypeTestCases(type);
         loadTypeLog(type);
         return;
       }
       var tcId = ids[index++];
       var tc = autoTestCasesByType[type].find(function(t){ return t.id === tcId; });
-      if(!tc || !tc.automation_script){ skipped.push(tcId); next(); return; }
+      if(!tc || !tc.automation_script || tc.status !== 'Automated'){ skipped.push(tcId); next(); return; }
       var endpoint = type === 'SQL' ? '/execute-sql' : (type === 'API' ? '/execute-api' : '/execute');
       apiFetch('/api/automation/test-cases/' + tcId + endpoint, { method: 'POST' }).then(function(job){
+        if(job && (job.selection_required || job.executed === false)){ skipped.push(tcId); next(); return; }
         if(type === 'Playwright' && job && job.run_uuid){
           // A real background job — wait for it to actually finish
           // before starting the next one, so two heavy browser runs
@@ -2621,6 +2712,26 @@
         toast(tc.tc_number + ': ' + err.message, true);
         next();
       });
+    }
+    next();
+  }
+
+  function generateManyTestCases(type, ids, button){
+    var queue = ids.slice(), generated = 0, skipped = 0;
+    button.disabled = true;
+    function next(){
+      if(!queue.length){
+        button.disabled = !autoCanCreate();
+        toast('Generation complete. Drafts created: ' + generated + ', skipped (existing script): ' + skipped + '.');
+        loadTypeTestCases(type);
+        return;
+      }
+      var id = queue.shift();
+      var tc = autoTestCasesByType[type].find(function(item){ return item.id === id; });
+      if(!tc || tc.automation_script){ skipped++; next(); return; }
+      var suffix = type === 'SQL' ? '/generate-sql' : '/generate-automation';
+      var payload = type === 'SQL' ? {} : { automation_type:type, domain:tc.domain, module:tc.module, knowledge_name:tc.knowledge_name, version:tc.version || null };
+      apiFetch('/api/automation/test-cases/' + id + suffix, {method:'POST', body:JSON.stringify(payload)}).then(function(){ generated++; }).catch(function(err){ toast((tc.tc_number || id) + ': ' + err.message, true); }).then(next);
     }
     next();
   }
@@ -2639,9 +2750,12 @@
   // ---- Execution Log, per automation type ----
   function loadTypeLog(type){
     var scope = activeTypeScope(type);
+    if(!scope.domain || !scope.module || !scope.knowledge_name || !scope.version || !scope.document_type || !scope.source_knowledge_ids.length || !scope.test_case_document){
+      autoLogControllers[type].setRows([]); return Promise.resolve();
+    }
     var params = new URLSearchParams({ automation_type: type, limit: '100' });
-    if(scope.domain) params.set('domain', scope.domain);
-    if(scope.module) params.set('module', scope.module);
+    ['domain','module','knowledge_name','version','document_type','test_case_document'].forEach(function(k){params.set(k,scope[k]);});
+    scope.source_knowledge_ids.forEach(function(id){params.append('source_knowledge_ids',id);});
     return apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
       renderTypeLog(type, data.runs || []);
     }).catch(function(err){ toast(err.message, true); });
@@ -2701,7 +2815,9 @@
     document.getElementById('tcActiveSourceRow').style.display = isSql ? 'none' : 'block';
     document.getElementById('tcSourceButtons').style.display = isSql ? 'none' : 'flex';
     document.getElementById('tcGenerateTypeSel').style.display = isSql ? 'none' : 'inline-block';
-    document.getElementById('tcSuggestTypeBtn').style.display = isSql ? 'none' : 'inline-flex';
+    document.getElementById('tcGenerateTypeSel').value = autoSelectedType;
+    document.getElementById('tcGenerateTypeSel').disabled = true;
+    document.getElementById('tcSuggestTypeBtn').style.display = isApi ? 'inline-flex' : 'none';
     document.getElementById('tcSqlAssertionRow').style.display = isSql ? 'flex' : 'none';
 
     var editor = document.getElementById('tcScriptEditor');
@@ -2738,6 +2854,7 @@
     document.getElementById('tcGenerateBtn').disabled = !autoCanCreate();
     document.getElementById('tcSuggestTypeBtn').disabled = !autoCanCreate();
     document.getElementById('tcSaveScriptBtn').disabled = !autoCanEdit();
+    document.getElementById('tcActivateBtn').disabled = !autoCanEdit();
 
     document.getElementById('tcExecuteBtn').style.display = (!isApi && !isSql) ? 'inline-flex' : 'none';
     document.getElementById('tcExecuteApiBtn').style.display = isApi ? 'inline-flex' : 'none';
@@ -2852,7 +2969,7 @@
       }).catch(function(err){ toast(err.message, true); }).then(function(){ btn.disabled = !autoCanCreate(); });
       return;
     }
-    var type = document.getElementById('tcGenerateTypeSel').value;
+    var type = autoSelectedType;
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/generate-automation', {
       method: 'POST',
       body: JSON.stringify({
@@ -2891,6 +3008,14 @@
       return;
     }
     refreshExecuteReadiness();
+  });
+
+  document.getElementById('tcActivateBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var request = autoSelectedType === 'SQL'
+      ? apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/sql-active', {method:'PATCH', body:JSON.stringify({active:true})})
+      : apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {method:'PATCH', body:JSON.stringify({source:autoSelectedTc.active_script_source || 'AUTO'})});
+    request.then(function(tc){ autoSelectedTc = tc; toast('Validated and set Active for execution.'); selectTestCase(tc, autoSelectedType); loadTypeTestCases(autoSelectedType); }).catch(function(err){ toast(err.message, true); });
   });
 
   // ---- Execute (Playwright — real background job) ----
@@ -2939,6 +3064,10 @@
   function renderRunResult(el, run){
     var html =
       '<div class="kv">' +
+        '<div>Run ID</div><div class="mono">' + escapeHtml(run.run_uuid || '') + '</div>' +
+        '<div>Test Case</div><div>' + escapeHtml(run.tc_number || '') + '</div>' +
+        '<div>Tool</div><div>' + escapeHtml(run.automation_type || '') + '</div>' +
+        '<div>Executed By</div><div>' + escapeHtml(run.executed_by_username || '\u2014') + '</div>' +
         '<div>Result</div><div>' + runStatusPillHtml(run.status) + '</div>' +
         '<div>Started</div><div>' + formatDateTime(run.started_at) + '</div>' +
         '<div>Finished</div><div>' + formatDateTime(run.finished_at) + '</div>' +
@@ -2984,12 +3113,14 @@
   });
 
   // ---- Execute (API — real HTTP request) ----
-  function runExecuteApi(){
+  function runExecuteApi(endpointId){
     if(!autoSelectedTc) return;
     var btn = document.getElementById('tcExecuteApiBtn');
     btn.disabled = true;
-    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute-api', { method: 'POST' }).then(function(body){
-      if(!body.executed){
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute-api', { method: 'POST', body: JSON.stringify({endpoint_id:endpointId || null}) }).then(function(body){
+      if(body.selection_required){
+        renderApiEndpointSelection(body.endpoints || []);
+      } else if(!body.executed){
         renderMissingApiVariables(body);
       } else {
         renderApiExecuteResult(body);
@@ -2999,7 +3130,13 @@
       toast(err.message, true);
     }).then(function(){ btn.disabled = !autoCanExecute(); });
   }
-  document.getElementById('tcExecuteApiBtn').addEventListener('click', runExecuteApi);
+  document.getElementById('tcExecuteApiBtn').addEventListener('click', function(){ runExecuteApi(null); });
+
+  function renderApiEndpointSelection(endpoints){
+    var el = document.getElementById('tcRunResult');
+    el.innerHTML = '<div class="notice notice-warn"><div><strong>Select the grounded API endpoint</strong><div class="muted-small">Multiple endpoints match this Test Case scope; execution will not guess.</div><select id="tcApiEndpointSelect" style="margin-top:8px;max-width:100%;">' + endpoints.map(function(item){ return '<option value="' + item.id + '">' + escapeHtml((item.method || '') + ' ' + (item.name || item.url || '')) + '</option>'; }).join('') + '</select> <button class="btn btn-primary" id="tcApiEndpointRun">Execute Selected Endpoint</button></div></div>';
+    document.getElementById('tcApiEndpointRun').onclick = function(){ runExecuteApi(Number(document.getElementById('tcApiEndpointSelect').value)); };
+  }
 
   // ---- Execute (SQL — real, read-only query against the target DB) ----
   document.getElementById('tcExecuteSqlBtn').addEventListener('click', function(){
@@ -3049,6 +3186,8 @@
         (r.error ? '<div>Error</div><div style="color:var(--danger);">' + escapeHtml(r.error) + '</div>' : '') +
       '</div>' +
       '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Response Body</summary><pre class="code-block" style="max-height:220px;overflow:auto;">' + escapeHtml(r.response_body_text || '') + '</pre></details>';
+    loadTypeTestCases('API');
+    loadTypeLog('API');
   }
 
   // ---- Per-test-case History (Execute tab's History sub-tab) ----
@@ -3099,14 +3238,39 @@
   // task's spec (Manual Excel Import lives on the Playwright Automation
   // tab). Pre-fills from whatever Domain/Module/Knowledge is currently
   // selected there, same as the old Test Cases tab used to.
+  function refreshImportHierarchy(level){
+    var sources=(autoScopesByType.Playwright.sources || []), domain=document.getElementById('tcImportDomain').value,
+      module=document.getElementById('tcImportModule').value, knowledge=document.getElementById('tcImportKnowledge').value,
+      version=document.getElementById('tcImportVersion').value, docType=document.getElementById('tcImportDocumentType').value;
+    function set(id, values, placeholder, enabled){var sel=document.getElementById(id);fillSelect(sel,values,placeholder);sel.disabled=!enabled;}
+    if(level==='domain') set('tcImportModule',uniqueVals(sources.filter(function(s){return s.domain===domain;}).map(function(s){return s.module;})),'Select Module…',!!domain);
+    module=document.getElementById('tcImportModule').value;
+    if(level==='domain'||level==='module') set('tcImportKnowledge',uniqueVals(sources.filter(function(s){return s.domain===domain&&s.module===module;}).map(function(s){return s.knowledge_name;})),'Select Knowledge…',!!module);
+    knowledge=document.getElementById('tcImportKnowledge').value;
+    if(['domain','module','knowledge'].indexOf(level)!==-1) set('tcImportVersion',uniqueVals(sources.filter(function(s){return s.domain===domain&&s.module===module&&s.knowledge_name===knowledge;}).map(function(s){return s.version;})),'Select Version…',!!knowledge);
+    version=document.getElementById('tcImportVersion').value;
+    if(['domain','module','knowledge','version'].indexOf(level)!==-1) set('tcImportDocumentType',uniqueVals(sources.filter(function(s){return s.domain===domain&&s.module===module&&s.knowledge_name===knowledge&&s.version===version;}).map(function(s){return s.document_type;})),'Select Document Type…',!!version);
+    docType=document.getElementById('tcImportDocumentType').value;
+    var matchingSources=sources.filter(function(s){return s.domain===domain&&s.module===module&&s.knowledge_name===knowledge&&s.version===version&&s.document_type===docType;});
+    setSourcePicker(document.getElementById('tcImportSourcePicker'),matchingSources,!docType);
+  }
+  document.getElementById('tcImportDomain').addEventListener('change',function(){refreshImportHierarchy('domain');});
+  document.getElementById('tcImportModule').addEventListener('change',function(){refreshImportHierarchy('module');});
+  document.getElementById('tcImportKnowledge').addEventListener('change',function(){refreshImportHierarchy('knowledge');});
+  document.getElementById('tcImportVersion').addEventListener('change',function(){refreshImportHierarchy('version');});
+  document.getElementById('tcImportDocumentType').addEventListener('change',function(){refreshImportHierarchy('document_type');});
   document.getElementById('pwImportBtn').addEventListener('click', function(){
     document.getElementById('tcImportError').textContent = '';
     document.getElementById('tcImportSummary').innerHTML = '';
     var pwPanel = panelFor('Playwright');
-    document.getElementById('tcImportDomain').value = pwPanel.querySelector('.at-domain').value || '';
-    document.getElementById('tcImportModule').value = pwPanel.querySelector('.at-module').value || '';
-    document.getElementById('tcImportKnowledge').value = pwPanel.querySelector('.at-knowledge').value || '';
-    document.getElementById('tcImportVersion').value = '1.0';
+    var scope=activeTypeScope('Playwright'), sources=autoScopesByType.Playwright.sources || [];
+    fillSelect(document.getElementById('tcImportDomain'),uniqueVals(sources.map(function(s){return s.domain;})),'Select Domain…');
+    document.getElementById('tcImportDomain').value=scope.domain||''; refreshImportHierarchy('domain');
+    document.getElementById('tcImportModule').value=scope.module||''; refreshImportHierarchy('module');
+    document.getElementById('tcImportKnowledge').value=scope.knowledge_name||''; refreshImportHierarchy('knowledge');
+    document.getElementById('tcImportVersion').value=scope.version||''; refreshImportHierarchy('version');
+    document.getElementById('tcImportDocumentType').value=scope.document_type||''; refreshImportHierarchy('document_type');
+    setSourcePickerSelection(document.getElementById('tcImportSourcePicker'),scope.source_knowledge_ids);
     document.getElementById('tcImportFile').value = '';
     document.getElementById('tcImportModal').classList.add('show');
   });
@@ -3118,10 +3282,12 @@
     var module = document.getElementById('tcImportModule').value.trim();
     var knowledge = document.getElementById('tcImportKnowledge').value.trim();
     var version = document.getElementById('tcImportVersion').value.trim();
+    var documentType = document.getElementById('tcImportDocumentType').value;
+    var sourceIds = sourcePickerIds(document.getElementById('tcImportSourcePicker'));
     var fileInput = document.getElementById('tcImportFile');
     var errBox = document.getElementById('tcImportError');
     errBox.textContent = '';
-    if(!domain || !module || !knowledge){ errBox.textContent = 'Domain, Module and Knowledge name are required.'; return; }
+    if(!domain || !module || !knowledge || !version || !documentType || !sourceIds.length){ errBox.textContent = 'Complete the hierarchy and select at least one Source File.'; return; }
     if(!fileInput.files.length){ errBox.textContent = 'Choose an .xlsx file to import.'; return; }
     var formData = new FormData();
     formData.append('file', fileInput.files[0]);
@@ -3129,6 +3295,8 @@
     formData.append('module', module);
     formData.append('knowledge_name', knowledge);
     if(version) formData.append('version', version);
+    formData.append('document_type', documentType);
+    sourceIds.forEach(function(id){formData.append('source_knowledge_ids',id);});
     var runBtn = document.getElementById('tcImportRun');
     runBtn.disabled = true;
     fetch(API_BASE + '/api/automation/test-cases/import', {
@@ -3137,12 +3305,14 @@
       body: formData,
     }).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(data){
-        if(!res.ok) throw new Error(data.detail || ('Import failed (' + res.status + ')'));
+        if(!res.ok) throw new Error(normalizeApiError(data && data.detail, res.status));
         return data;
       });
     }).then(function(result){
       document.getElementById('tcImportSummary').innerHTML =
-        '<div class="muted-small">Imported ' + (result.imported || 0) + ', skipped ' + (result.skipped || 0) + '.' +
+        '<div class="muted-small">Imported: ' + (result.imported || 0) +
+        '<br>Skipped duplicates: ' + (result.skipped_duplicates || 0) +
+        '<br>Rejected: ' + (result.rejected || 0) + '.' +
         (result.errors && result.errors.length ? '<br>' + result.errors.map(escapeHtml).join('<br>') : '') + '</div>';
       toast('Imported ' + (result.imported || 0) + ' test case(s).');
       var pwPanel = panelFor('Playwright');
@@ -3152,6 +3322,15 @@
         pwPanel.querySelector('.at-module').value = module;
         refreshTypeKnowledgeOptions('Playwright');
         pwPanel.querySelector('.at-knowledge').value = knowledge;
+        refreshTypeVersionOptions('Playwright');
+        pwPanel.querySelector('.at-version').value = version;
+        refreshTypeDocumentTypeOptions('Playwright');
+        pwPanel.querySelector('.at-document-type').value = documentType;
+        refreshTypeSourceOptions('Playwright');
+        setSourcePickerSelection(pwPanel.querySelector('.at-source-picker'),sourceIds);
+        refreshTypeDocumentOptions('Playwright');
+        pwPanel.querySelector('.at-document').value = fileInput.files[0].name;
+        refreshTypeScopeCount('Playwright');
         return loadTypeTestCases('Playwright');
       });
     }).then(function(){
@@ -3368,6 +3547,11 @@
     return apiFetch('/api/automation/clickup/status').then(function(data){
       document.getElementById('clickupApiToken').value = '';
       document.getElementById('clickupListId').value = data.clickup_list_id || '';
+      var available = data.available !== false;
+      document.getElementById('clickupApiToken').disabled = !available;
+      document.getElementById('clickupListId').disabled = !available;
+      document.getElementById('clickupSaveBtn').disabled = !available;
+      if(!available){ document.getElementById('clickupStatusText').textContent = data.message || 'Unavailable.'; return; }
       var configured = !!data.clickup_api_token_is_set && !!data.clickup_list_id;
       document.getElementById('clickupStatusText').textContent = configured
         ? 'Configured.'
@@ -3455,7 +3639,7 @@
   function qeVersions(selected){var s=qeScope();qeFill(document.getElementById('qeVersion'),qeUnique(qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name;}).map(function(i){return i.version||'1.0';})),'Select Version…',!!selected);if(selected&&selected.version)document.getElementById('qeVersion').value=selected.version;qeDocumentTypes(selected);}
   function qeDocumentTypes(selected){var s=qeScope();qeFill(document.getElementById('qeDocumentType'),qeUnique(qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name&&(i.version||'1.0')===s.version;}).map(function(i){return i.document_type;})),'Select Document Type…',!!selected);if(selected&&selected.document_type)document.getElementById('qeDocumentType').value=selected.document_type;qeRenderSources();loadQeSaved();}
   function qeDefaultExportName(){var s=qeScope(),ids=s.knowledge_source_ids.join('-')||'source',name='Reviewed_TC_'+ids+'_'+(s.version||'1.0');return name.replace(/[<>:"/\\|?*\x00-\x1F]+/g,'_').replace(/\s+/g,'_').slice(0,100);}
-  function qeRenderSources(){var s=qeScope(),items=qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name&&(i.version||'1.0')===s.version&&i.document_type===s.document_type;}),area=document.getElementById('qeSources');area.innerHTML=items.length?items.map(function(item){var name=item.file_name||('Source '+item.id);return '<label title="'+escapeHtml(name)+'"><input type="checkbox" class="qe-source" value="'+Number(item.id)+'"><span class="qe-source-text"><strong class="qe-source-name">'+escapeHtml(name)+'</strong><span class="muted-small">Source Type: '+escapeHtml(canonicalSourceType(item.source_type))+'</span></span></label>';}).join(''):'<span class="muted-small">No sources match this hierarchy and Document Type.</span>';area.onchange=function(){qeUpdateSourceSummary();document.getElementById('qeExportFileName').value=qeDefaultExportName();loadQeSaved();};qeUpdateSourceSummary();document.getElementById('qeExportFileName').value=qeDefaultExportName();}
+  function qeRenderSources(){var s=qeScope(),selected=new Set(Array.from(document.querySelectorAll('.qe-source:checked')).map(function(box){return Number(box.value);})),items=qeScopeItems.filter(function(i){return i.domain===s.domain&&i.module===s.module&&i.knowledge_name===s.knowledge_name&&(i.version||'1.0')===s.version&&i.document_type===s.document_type;}),area=document.getElementById('qeSources'),valid=items.filter(function(item){if(String(item.display_name||item.file_name||'').trim())return true;console.warn('Knowledge source has no usable persisted display name.',{id:item.id,source_type:item.source_type});return false;});area.innerHTML=valid.length?valid.map(function(item){var name=String(item.display_name||item.file_name).trim(),checked=selected.has(Number(item.id))?' checked':'';return '<label title="'+escapeHtml(name)+'"><input type="checkbox" class="qe-source" value="'+Number(item.id)+'"'+checked+'><span class="qe-source-text"><strong class="qe-source-name">'+escapeHtml(name)+'</strong><span class="muted-small">'+escapeHtml(canonicalSourceType(item.source_type))+'</span></span></label>';}).join(''):'<span class="muted-small">No valid sources match this hierarchy and Document Type.</span>';area.onchange=function(){qeUpdateSourceSummary();document.getElementById('qeExportFileName').value=qeDefaultExportName();loadQeSaved();};qeUpdateSourceSummary();document.getElementById('qeExportFileName').value=qeDefaultExportName();}
   function qeUpdateSourceSummary(){var boxes=Array.from(document.querySelectorAll('.qe-source:checked')),button=document.getElementById('qeSourceSummary');button.textContent=(boxes.length?boxes.length+' source file(s) selected':'Select source files…')+' ▾';}
   function qeResetAndRefresh(){clearTimeout(qePollTimer);qeJobId=null;qeDraftRows=[];qeEditTarget=null;qeLogJobId=null;qePendingReview=null;qeLogsCleared=false;qeLogsHistoryMode=false;qeLogsPage=0;renderQeDrafts();document.getElementById('qeCaseCount').selectedIndex=0;document.getElementById('qeExportFileName').value='';document.getElementById('qeSaveDraftBtn').textContent='Reviewed & Saved';document.getElementById('qeSaveDraftBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeLogsHistory').textContent='History';document.querySelectorAll('.qe-type').forEach(function(box){box.checked=false;});document.getElementById('qeSearch').value='';document.getElementById('qeSourcePicker').classList.remove('open');['qeEditModal','qeLogModal','qeReviewedFileModal'].forEach(function(id){document.getElementById(id).classList.remove('show');});qeStatus('Idle','Ready for a grounded generation.');return loadQeScope(false).then(function(){return Promise.all([loadQeExecutionTools(),loadQeSaved(),loadQeLogs()]);});}
   function requestQeRefresh(){var dirty=qeDraftRows.some(function(row){return !row.id||row._state==='Modified'||row._state==='Pending Delete';});if(!dirty){return qeResetAndRefresh().then(function(){toast('QA Engineering refreshed.');});}document.getElementById('qeRefreshConfirmModal').classList.add('show');return Promise.resolve();}

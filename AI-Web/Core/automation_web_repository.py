@@ -62,6 +62,7 @@ from Core.git_service import GitService
 from Core.test_case_repository import TestCaseRepository
 from Core.test_execution_manager import TestExecutionManager
 from Core.test_environment_config import TestEnvironmentConfig
+from Core.qa_engineering_web_repository import QaEngineeringWeb
 from Core.api_automation_runner import ApiAutomationRunner
 from Core.sql_environment_config import SqlEnvironmentConfig
 from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
@@ -430,7 +431,8 @@ class TestCasesWeb:
         return [row for row in rows if row.get("execution_type") == "Automatable" and row.get("execution_tool") == tool]
 
     def list_workspace(
-        self, domain=None, module=None, knowledge_name=None,
+        self, domain=None, module=None, knowledge_name=None, version=None,
+        document_type=None, source_knowledge_ids=None, test_case_document=None,
         status=None, automation_type=None, q=None, limit=50, offset=0,
     ):
         """
@@ -440,11 +442,28 @@ class TestCasesWeb:
         see AutomationExecutionRepository.latest_runs_for_test_cases()).
         """
 
+        execution_tool = (
+            self.repository.execution_tool_for_automation_type(automation_type)
+            if automation_type else None
+        )
+
         result = self.repository.list_all_test_cases(
             domain=domain, module=module, knowledge_name=knowledge_name,
-            status=status, automation_type=automation_type, execution_type="Automatable", q=q,
-            limit=limit, offset=offset,
+            version=version, document_type=document_type,
+            status=status,
+            execution_type="Automatable", execution_tool=execution_tool, q=q,
+            limit=10000, offset=0,
         )
+
+        selected_sources = {int(value) for value in (source_knowledge_ids or [])}
+        rows = result["test_cases"]
+        if selected_sources:
+            rows = [row for row in rows if set(row.get("source_knowledge_ids") or []) == selected_sources]
+        if test_case_document:
+            rows = [row for row in rows if self._document_key(row) == test_case_document]
+        total = len(rows)
+        rows = rows[offset:offset + limit]
+        result = {"test_cases": rows, "total": total}
 
         test_case_ids = [tc["id"] for tc in result["test_cases"]]
 
@@ -457,8 +476,47 @@ class TestCasesWeb:
         return result
 
     def list_scopes(self):
+        sources = []
+        for item in QaEngineeringWeb().list_scope():
+            if not item.get("display_name"):
+                continue
+            sources.append({
+                "id": item.get("id"), "domain": item.get("domain") or "",
+                "module": item.get("module") or "", "knowledge_name": item.get("knowledge_name") or "",
+                "version": item.get("version") or "", "document_type": item.get("document_type") or "",
+                "display_name": item.get("display_name"), "source_type": item.get("source_type") or "",
+            })
+        rows = self.repository.list_all_test_cases(limit=10000, offset=0)["test_cases"]
+        documents = {}
+        for row in rows:
+            key = self._document_key(row)
+            if not key or row.get("review_state") != "Reviewed/Saved":
+                continue
+            group_key = (
+                row.get("domain"), row.get("module"), row.get("knowledge_name"), row.get("version"),
+                row.get("document_type"), tuple(sorted(row.get("source_knowledge_ids") or [])), key,
+            )
+            group = documents.setdefault(group_key, {
+                "key": key, "name": self._document_name(row), "domain": row.get("domain") or "",
+                "module": row.get("module") or "", "knowledge_name": row.get("knowledge_name") or "",
+                "version": row.get("version") or "", "document_type": row.get("document_type") or "",
+                "source_knowledge_ids": sorted(row.get("source_knowledge_ids") or []),
+                "counts": {"Playwright": 0, "API": 0, "SQL": 0}, "total": 0,
+            })
+            group["total"] += 1
+            tool = {"Playwright": "Playwright", "API Automation": "API", "SQL Automation": "SQL"}.get(row.get("execution_tool"))
+            if row.get("execution_type") == "Automatable" and tool:
+                group["counts"][tool] += 1
+        return {"sources": sources, "documents": list(documents.values())}
 
-        return self.repository.list_distinct_scopes()
+    @staticmethod
+    def _document_key(row):
+        return str(row.get("reviewed_workbook_path") or row.get("test_case_document_name") or "").strip()
+
+    @staticmethod
+    def _document_name(row):
+        value = str(row.get("test_case_document_name") or "").strip()
+        return value or Path(str(row.get("reviewed_workbook_path") or "")).name
 
     def get_test_case(self, test_case_id):
 
@@ -472,7 +530,8 @@ class TestCasesWeb:
     # Import
     # --------------------------------------------------
 
-    def import_from_excel(self, file_bytes, original_filename, domain, module, knowledge_name, version=None):
+    def import_from_excel(self, file_bytes, original_filename, domain, module, knowledge_name,
+                          version=None, document_type=None, source_knowledge_ids=None):
 
         if not file_bytes:
 
@@ -487,11 +546,13 @@ class TestCasesWeb:
 
         try:
 
-            manager = TestExecutionManager()
+            manager = TestExecutionManager(initialize_automation=False)
 
             result = manager.import_test_cases_from_excel(
                 file_path=str(temp_path), domain=domain, module=module,
                 knowledge_name=knowledge_name, version=version,
+                document_type=document_type, source_knowledge_ids=source_knowledge_ids,
+                test_case_document_name=safe_name,
             )
 
         finally:
@@ -649,6 +710,26 @@ class TestCasesWeb:
             else test_case.get("automation_script")
         ) or ""
 
+        if not script_text.strip():
+
+            raise ValueError(
+                "The selected script source is empty and cannot be activated."
+            )
+
+        expected_tool = self.repository.execution_tool_for_automation_type(
+            test_case.get("automation_type")
+        )
+
+        if (
+            test_case.get("execution_type") != "Automatable"
+            or not expected_tool
+            or test_case.get("execution_tool") != expected_tool
+        ):
+
+            raise ValueError(
+                "This Test Case is not eligible for the selected automation tool."
+            )
+
         if script_text.strip():
 
             syntax_error = manager.check_script_syntax(script_text)
@@ -662,6 +743,8 @@ class TestCasesWeb:
                 )
 
         manager.set_active_script(test_case_id, source)
+
+        self.repository.update_status(test_case_id, "Automated")
 
         return self.get_test_case(test_case_id)
 
@@ -687,6 +770,25 @@ class TestCasesWeb:
         def add(name, ok, detail=""):
 
             checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+        expected_tool = self.repository.execution_tool_for_automation_type(
+            automation_type
+        )
+
+        add(
+            "execution_tool_configured",
+            test_case.get("execution_type") == "Automatable"
+            and bool(expected_tool)
+            and test_case.get("execution_tool") == expected_tool,
+            "" if test_case.get("execution_type") == "Automatable" else
+            "The central Test Case is not classified as Automatable.",
+        )
+
+        add(
+            "active_script_approved", test_case.get("status") == "Automated",
+            "" if test_case.get("status") == "Automated" else
+            "The saved script is a Draft. Validate and activate it first.",
+        )
 
         add(
             "automation_type_set", automation_type != "None",
@@ -756,10 +858,10 @@ class TestCasesWeb:
                 ),
             )
 
-        elif automation_type in ("Selenium", "SQL"):
+        elif automation_type == "SQL":
 
             add(
-                "runner_available", False,
+                "runner_available", True,
                 f"{automation_type} automation has no execution runner "
                 f"in QA AI Studio yet — only Playwright (browser) and "
                 f"API (real HTTP request) can actually run here. Use "
@@ -779,6 +881,9 @@ class TestCasesWeb:
 
         return (
             test_case.get("automation_type") == "Playwright"
+            and test_case.get("execution_type") == "Automatable"
+            and test_case.get("execution_tool") == "Playwright"
+            and test_case.get("status") == "Automated"
             and bool(TestExecutionManager.get_active_script(test_case))
         )
 
@@ -886,12 +991,25 @@ class TestCasesWeb:
 
     def list_runs(
         self, domain=None, module=None, knowledge_name=None,
-        test_case_id=None, status=None, q=None, limit=50, offset=0,
+        version=None, document_type=None, source_knowledge_ids=None, test_case_document=None,
+        test_case_id=None, status=None, automation_type=None, q=None,
+        limit=50, offset=0,
     ):
 
+        scoped_ids = None
+        if version or document_type or source_knowledge_ids or test_case_document:
+            workspace = self.list_workspace(
+                domain=domain, module=module, knowledge_name=knowledge_name, version=version,
+                document_type=document_type, source_knowledge_ids=source_knowledge_ids,
+                test_case_document=test_case_document, automation_type=automation_type,
+                limit=10000, offset=0,
+            )
+            scoped_ids = [row["id"] for row in workspace["test_cases"]]
         return self.runs.list_runs(
             domain=domain, module=module, knowledge_name=knowledge_name,
-            test_case_id=test_case_id, status=status, q=q,
+            test_case_id=test_case_id, status=status,
+            test_case_ids=scoped_ids,
+            automation_type=automation_type, q=q,
             limit=limit, offset=offset,
         )
 
@@ -933,7 +1051,10 @@ class TestCasesWeb:
     # Core/api_automation_runner.py's module docstring for why).
     # --------------------------------------------------
 
-    def execute_api(self, test_case_id):
+    def execute_api(
+        self, test_case_id, endpoint_id=None, executed_by_user_id=None,
+        executed_by_username=None,
+    ):
 
         manager = TestExecutionManager()
 
@@ -949,6 +1070,22 @@ class TestCasesWeb:
                 "This test case's Automation Type is not 'API'."
             )
 
+        if (
+            test_case.get("execution_type") != "Automatable"
+            or test_case.get("execution_tool") != "API Automation"
+        ):
+
+            raise ValueError(
+                "This Test Case is not eligible for API Automation."
+            )
+
+        if test_case.get("status") != "Automated":
+
+            raise ValueError(
+                "The API automation asset is still Draft. Validate and "
+                "activate it before execution."
+            )
+
         endpoints = manager.get_relevant_endpoints_for_test_case(test_case)
 
         if not endpoints:
@@ -961,7 +1098,38 @@ class TestCasesWeb:
                 "Collection)."
             )
 
-        endpoint = endpoints[0]
+        if endpoint_id is not None:
+
+            endpoint = next(
+                (item for item in endpoints if item.get("id") == endpoint_id),
+                None,
+            )
+
+            if endpoint is None:
+
+                raise ValueError(
+                    "The selected endpoint does not belong to this Test Case scope."
+                )
+
+        elif len(endpoints) == 1:
+
+            endpoint = endpoints[0]
+
+        else:
+
+            return {
+                "executed": False,
+                "selection_required": True,
+                "missing_variables": [],
+                "endpoints": [
+                    {
+                        "id": item.get("id"), "name": item.get("name"),
+                        "method": item.get("method"),
+                        "url": item.get("url_resolved") or item.get("url_raw"),
+                    }
+                    for item in endpoints
+                ],
+            }
 
         config = TestEnvironmentConfig().load()
 
@@ -984,13 +1152,62 @@ class TestCasesWeb:
                 "endpoint": endpoint_summary,
             }
 
+        run = self.runs.create_run(
+            test_case, executed_by_user_id, executed_by_username,
+        )
+
+        self.runs.mark_running(run["run_uuid"])
+
         result = runner.send(endpoint, config)
+
+        if result.get("error"):
+
+            finished = self.runs.mark_finished(run["run_uuid"], {
+                "error": result["error"],
+                "duration": (result.get("elapsed_ms") or 0) / 1000,
+                "stderr": result["error"],
+            })
+
+        elif result.get("auto_verdict") == "Pass":
+
+            finished = self.runs.mark_finished(run["run_uuid"], {
+                "success": True,
+                "duration": (result.get("elapsed_ms") or 0) / 1000,
+                "stdout": json.dumps({
+                    "endpoint": endpoint_summary,
+                    "status_code": result.get("status_code"),
+                    "expected_status": result.get("expected_status"),
+                }),
+            })
+
+            self.repository.update_result(test_case_id, "Pass")
+
+        elif result.get("expected_status"):
+
+            finished = self.runs.mark_finished(run["run_uuid"], {
+                "success": False,
+                "duration": (result.get("elapsed_ms") or 0) / 1000,
+                "stderr": f"Expected HTTP {result.get('expected_status')}; "
+                f"received {result.get('status_code')}.",
+            })
+
+
+            self.repository.update_result(test_case_id, "Fail")
+
+        else:
+
+            finished = self.runs.mark_finished(run["run_uuid"], {
+                "error": "Blocked: no expected HTTP status is stored; "
+                "the result cannot be judged Pass or Fail.",
+                "duration": (result.get("elapsed_ms") or 0) / 1000,
+            })
 
         return {
             "executed": True,
             "missing_variables": [],
             "endpoint": endpoint_summary,
             "result": result,
+            "run": finished,
         }
 
 
@@ -1279,6 +1496,10 @@ class SqlAutomationWeb:
 
             self.repository.update_status(test_case_id, "Automated")
 
+        else:
+
+            self.repository.update_status(test_case_id, "Draft")
+
         return self.repository.get_test_case(test_case_id)
 
     # --------------------------------------------------
@@ -1297,6 +1518,21 @@ class SqlAutomationWeb:
         if (test_case.get("automation_type") or "") != "SQL":
 
             raise ValueError("This test case's Automation Type is not 'SQL'.")
+
+        if (
+            test_case.get("execution_type") != "Automatable"
+            or test_case.get("execution_tool") != "SQL Automation"
+        ):
+
+            raise ValueError(
+                "This Test Case is not eligible for SQL Automation."
+            )
+
+        if test_case.get("status") != "Automated":
+
+            raise ValueError(
+                "The SQL script is still Draft. Validate and activate it first."
+            )
 
         validation = self.validate_sql(test_case_id)
 
@@ -1329,7 +1565,7 @@ class SqlAutomationWeb:
                 "duration": query_result.get("duration_seconds"),
             })
 
-            self.repository.update_result(test_case_id, "Fail")
+            self.repository.update_result(test_case_id, "Error")
 
             return finished
 
