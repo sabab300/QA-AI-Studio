@@ -491,11 +491,25 @@ def record_result(
 
 
 @router.get("/test-cases/{test_case_id}/validate")
-def validate_test_case(test_case_id: int, current_user=Depends(require_permission("automation", "view"))):
+def validate_test_case(
+    test_case_id: int,
+    source: Optional[str] = Query(
+        None,
+        description=(
+            "Optional — 'AUTO' or 'MANUAL'. When given, validates that "
+            "specific saved script source (the Validate button's "
+            "'validate selected source' behavior, item 6) instead of "
+            "the currently Active one (the default 'execute readiness' "
+            "behavior used by the Execute tab / Execute Selected, item "
+            "8)."
+        ),
+    ),
+    current_user=Depends(require_permission("automation", "view")),
+):
 
     try:
 
-        return TestCasesWeb().validate_for_execution(test_case_id)
+        return TestCasesWeb().validate_for_execution(test_case_id, source=source)
 
     except ValueError as error:
 

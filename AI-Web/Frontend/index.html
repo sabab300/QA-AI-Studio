@@ -397,9 +397,25 @@
     width:100%; max-width:420px; background:var(--surface); border:1px solid var(--border); border-radius:14px;
     padding:22px; box-shadow:var(--shadow-2);
   }
+  /* Item 5: Script/Execute/History detail modal, enlarged ~50% over
+     its previous 820px-wide, content-height card so the script editor
+     actually has room to work in — a real flex column bounded to the
+     viewport (not just a wider box that still only shows ~6 lines of
+     script) so detail-head/detail-tabs stay fixed and detail-body
+     (and the editor inside it) fills and scrolls the rest. */
+  .tc-detail-card{
+    width:88vw; max-width:1450px; height:88vh; max-height:88vh;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  @media (max-width:900px){ .tc-detail-card{ width:96vw; height:94vh; max-height:94vh; } }
   .modal-card h3{ margin:0 0 4px; font-size:16px; }
   .modal-card .modal-sub{ font-size:12.5px; color:var(--ink-muted); margin-bottom:16px; }
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+  .modal-x{
+    position:absolute; top:10px; right:12px; background:none; border:none; color:var(--ink-muted);
+    opacity:.75; cursor:pointer; font-size:20px; line-height:1; padding:4px 6px; border-radius:6px; z-index:2;
+  }
+  .modal-x:hover{ opacity:1; background:var(--surface-2,rgba(0,0,0,0.06)); }
 
   /* ---------- Knowledge Hub workspace ---------- */
   .kh-workspace{ padding:0; overflow:hidden; }
@@ -1154,8 +1170,9 @@
                   <th>Test Case</th>
                   <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">Script</th>
+                  <th style="width:80px;">Actions</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="5" class="muted-small" style="padding:12px 10px;">Complete the hierarchy above, then Load Test Cases.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="6" class="muted-small" style="padding:12px 10px;">Complete the hierarchy above, then Load Test Cases.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1168,7 +1185,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1229,7 +1246,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">API runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">API runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1294,7 +1311,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">SQL runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;">Refresh</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">SQL runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1312,12 +1329,12 @@
          from) — its Script/Execute panels switch behavior based on the
          open test case's own automation_type. -->
     <div class="modal-overlay" id="tcDetailModal">
-      <div class="modal-card" style="max-width:820px;">
+      <div class="modal-card tc-detail-card" style="position:relative;">
+        <button class="modal-x" id="tcDetailCloseBtn" aria-label="Close" title="Close">&times;</button>
         <div class="detail-head">
           <div class="tc-id" id="detailId">—</div>
           <h3 id="detailTitle" style="flex:1;">Select a test case</h3>
           <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">—</span><span class="pill pill-notrun" id="detailResult">Not Run</span></div>
-          <button class="btn btn-sm" id="tcDetailCloseBtn">Close</button>
         </div>
         <div class="detail-tabs">
           <button class="dtab active" data-dtab="d-script">Script</button>
@@ -1327,14 +1344,46 @@
         <div class="detail-body">
           <div class="detail-panel-view active" id="d-script">
             <div class="notice notice-warn" id="tcScriptNotice" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div id="tcScriptNoticeText"></div></div>
-            <div class="field-label" id="tcActiveSourceRow">Active source: <span class="pill pill-notrun" id="tcActiveSourcePill">AUTO</span></div>
-            <div class="btn-row" id="tcSourceButtons" style="margin:4px 0 8px;">
-              <button class="btn" id="tcSetSourceAuto">Use AI-Generated Script</button>
-              <button class="btn" id="tcSetSourceManual">Use Manually Recorded Script</button>
+            <!-- Item 9: this row is visually its own distinct block
+                 (bordered, tinted, uppercase label) specifically so it
+                 never reads as just another tab/chip — it states what
+                 Execute actually runs, independent of whatever the
+                 chips below happen to be VIEWING. -->
+            <div id="tcActiveSourceRow" style="display:flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-sunken);margin-bottom:8px;">
+              <span class="field-label" style="margin:0;">Active for Execution</span>
+              <span class="pill pill-notrun" id="tcActiveSourcePill">None</span>
             </div>
+            <!-- Item 4/9: these are VIEW tabs only — clicking one
+                 switches which saved script is shown/edited below; it
+                 does NOT activate anything (that is Set Active's job,
+                 further down). "Viewed source" and "Active source" are
+                 deliberately different concepts — the caption under
+                 the tabs says so explicitly so this is never
+                 ambiguous in the UI itself, not just in code comments. -->
+            <div class="chip-filter" id="tcSourceButtons" style="margin:4px 0 2px;">
+              <button class="chip" id="tcSetSourceAuto" data-source="AUTO">AI-Generated Script</button>
+              <button class="chip" id="tcSetSourceManual" data-source="MANUAL">Manual / Recorded Script</button>
+              <div class="fbar-spacer"></div>
+              <button class="btn" id="tcRecordBtn" style="display:none;">Record</button>
+            </div>
+            <div class="muted-small" style="margin-bottom:8px;">Viewing only — switching tabs does not change what Execute runs. Use Set Active below to change that.</div>
 
-            <div class="field-label" id="tcScriptLabel">Automation Script</div>
-            <textarea id="tcScriptEditor" class="code-block" style="width:100%;min-height:200px;font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div class="field-label" id="tcScriptLabel" style="margin-bottom:0;">Automation Script</div>
+              <!-- Item 6: compact in-editor find. Deliberately never
+                   touches tcScriptEditor's .value — it only reads it
+                   and moves the native text-selection (setSelectionRange)
+                   to highlight/jump between matches, so searching can
+                   never accidentally modify the script. -->
+              <div class="fbar-search" id="tcScriptSearchBar" style="width:auto;min-width:260px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input id="tcScriptSearchInput" placeholder="Find in script (text or locator)…" autocomplete="off">
+                <span class="muted-small" id="tcScriptSearchCount" style="white-space:nowrap;padding:0 2px;">0 / 0</span>
+                <button type="button" class="btn" id="tcScriptSearchPrev" title="Previous match (Shift+Enter)" style="padding:3px 7px;">‹</button>
+                <button type="button" class="btn" id="tcScriptSearchNext" title="Next match (Enter)" style="padding:3px 7px;">›</button>
+              </div>
+            </div>
+            <textarea id="tcScriptEditor" class="code-block" style="width:100%;flex:1;min-height:min(50vh,440px);font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
 
             <!-- SQL-only assertion fields — hidden for Playwright/API -->
             <div id="tcSqlAssertionRow" style="display:none;gap:8px;margin-top:8px;">
@@ -1360,7 +1409,6 @@
 
             <div class="auth-error" id="tcScriptError"></div>
             <div class="btn-row">
-              <select id="tcGenerateTypeSel" style="max-width:150px;"><option value="Playwright">Playwright</option><option value="API">API</option></select>
               <button class="btn" id="tcGenerateBtn">Generate (AI)</button>
               <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
               <div class="fbar-spacer"></div>
@@ -1399,44 +1447,174 @@
       </div>
     </div>
 
-    <!-- ============ TEST ENVIRONMENT SETTING — Playwright / API ============ -->
-    <div class="modal-overlay" id="envModal">
-      <div class="modal-card" style="max-width:720px;">
-        <h3>Test Environment Setting — Playwright &amp; API</h3>
-        <div class="modal-sub">Applies to the next run — no need to regenerate scripts.</div>
-        <div class="env-grid">
-          <div class="card">
-            <div class="card-head"><h3>Playwright</h3></div>
-            <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-              <div class="field"><label for="envBaseUrl">Base URL</label><input id="envBaseUrl" placeholder="https://your-app.example"></div>
-              <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
-              <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-              <div style="display:flex; gap:8px;">
-                <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
-                <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
-              </div>
-              <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
-            </div>
+    <!-- ============ LIVE PLAYWRIGHT RECORDING (Web) ============ -->
+    <!-- See Core/web_recorder.py's module docstring for the full
+         architecture: a REAL, VISIBLE Playwright browser window
+         (headless=False) opens on the machine the Web server itself
+         runs on — this panel is NOT an embedded/streamed recording
+         (that was the prior version's design; TASK:
+         QA-AUTOMATION-PLAYWRIGHT-COMPLETE-WEB-DESKTOP-FIX item 1
+         explicitly disallows an iframe-like final recorder). Perform
+         your test steps in that real window; this panel only shows
+         state and the Runtime Activity log over a WebSocket, and
+         carries the Stop / Cancel controls. -->
+    <div class="modal-overlay" id="tcRecordModal">
+      <div class="modal-card" style="max-width:640px; position:relative;">
+        <button class="modal-x" id="tcRecordCloseBtn" aria-label="Close" title="Cancel and close">&times;</button>
+        <div class="detail-head" style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:10px;">
+          <div class="tc-id" id="recordTcId">—</div>
+          <h3 id="recordTcTitle" style="flex:1;">Record</h3>
+          <span class="pill" id="recordStateBadge">Idle</span>
+        </div>
+        <div id="recordStatusBanner" class="notice" style="margin-bottom:10px;">Connecting…</div>
+        <div>
+          <div class="field-label">Runtime Activity</div>
+          <div id="tcRecordActivity" class="code-block" style="height:260px; overflow-y:auto; font-size:11.5px; padding:8px;"></div>
+        </div>
+        <div class="modal-actions" style="justify-content:space-between; margin-top:12px;">
+          <div class="muted-small" id="recordUrlLabel"></div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" id="tcRecordCancelBtn">Cancel Recording</button>
+            <button class="btn btn-primary" id="tcRecordStopBtn" disabled>Stop Recording</button>
           </div>
-          <div class="card">
-            <div class="card-head"><h3>API Execution</h3></div>
-            <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-              <div class="field"><label for="envApiAuthType">Auth type</label><select id="envApiAuthType"><option value="None">None</option><option value="Bearer Token">Bearer Token</option><option value="Basic Auth">Basic Auth</option><option value="API Key Header">Custom Header</option></select></div>
-              <div class="field"><label for="envApiAuthToken">Bearer token</label><input id="envApiAuthToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-              <div style="display:flex; gap:8px;">
-                <div class="field" style="flex:1;"><label for="envApiHeaderName">Header name</label><input id="envApiHeaderName"></div>
-                <div class="field" style="flex:1;"><label for="envApiHeaderValue">Header value</label><input id="envApiHeaderValue" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-              </div>
-              <div style="display:flex; gap:8px;">
-                <div class="field" style="flex:1;"><label for="envApiUsername">Basic — username</label><input id="envApiUsername" autocomplete="off"></div>
-                <div class="field" style="flex:1;"><label for="envApiPassword">Basic — password</label><input id="envApiPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-              </div>
-              <div style="display:flex; gap:8px;">
-                <div class="field" style="flex:1;"><label for="envApiTimeout">Request timeout (s)</label><input id="envApiTimeout" placeholder="30"></div>
-                <div class="field" style="flex:1;"><label for="envApiBaseOverride">Base URL override</label><input id="envApiBaseOverride" placeholder="(optional)"></div>
-              </div>
-              <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="envApiVerifySsl" checked> Verify SSL certificates</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ INTERACTIVE LOCATOR REPAIR (Web) ============ -->
+    <!-- Web port of Desktop's LocatorRepairDialog — see
+         Core/web_interactive_execution.py's module docstring. Shown
+         when a Playwright step can't find its element during an
+         interactive Execute run; the real browser window stays open,
+         paused on the live page, while this is up. -->
+    <div class="modal-overlay" id="tcRepairModal">
+      <div class="modal-card" style="max-width:560px;">
+        <div class="detail-head" style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:10px;">
+          <h3 id="repairTitle" style="flex:1;">Step Failed — Element Not Found</h3>
+        </div>
+        <div class="field-label">Failing step</div>
+        <pre class="code-block" id="repairCode" style="max-height:50px;overflow:auto;"></pre>
+        <div class="auth-error" id="repairError" style="margin:6px 0;"></div>
+        <div class="muted-small" id="repairContext" style="margin-bottom:8px;"></div>
+        <div id="repairSimpleFields">
+          <div class="field"><label for="repairLocator">Locator</label><input id="repairLocator"></div>
+          <div class="field" id="repairValueField"><label for="repairValue">Value</label><input id="repairValue"></div>
+        </div>
+        <label class="muted-small" style="display:flex;align-items:center;gap:6px;margin:8px 0;">
+          <input type="checkbox" id="repairAdvancedCheckbox">
+          Advanced: edit this step's full code directly (needed e.g. for a dropdown that needs select_option() instead of fill()/click(), or a calendar day that needs a role-based click)
+        </label>
+        <textarea id="repairCodeEdit" rows="2" style="display:none;width:100%;font-family:monospace;font-size:12px;"></textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+          <button class="btn" id="repairVerifyBtn" type="button">Test Locator Against Current Page</button>
+          <div class="muted-small" id="repairVerifyStatus" style="flex:1;"></div>
+        </div>
+        <div id="repairAiArea" style="display:none;margin-top:8px;">
+          <div class="muted-small" id="repairAiStatus"></div>
+          <pre class="code-block" id="repairAiSuggestion" style="display:none;max-height:50px;overflow:auto;"></pre>
+          <div class="muted-small" id="repairAiExplanation" style="display:none;"></div>
+        </div>
+        <div class="modal-actions" style="justify-content:space-between;margin-top:12px;">
+          <button class="btn" id="repairCancelBtn" style="background:var(--danger);color:#fff;border-color:var(--danger);">Cancel Test Run</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" id="repairAskAiBtn">Ask AI for a Suggestion</button>
+            <button class="btn" id="repairApplyAiBtn" style="display:none;">Apply AI Suggestion</button>
+            <button class="btn btn-primary" id="repairRetryBtn">Retry With This Fix</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SAVE LOCATOR FIX? confirm ============ -->
+    <div class="modal-overlay" id="repairSaveConfirmModal"><div class="modal-card" style="max-width:520px">
+      <h3>Save Locator Fix?</h3>
+      <div class="modal-sub" id="repairSaveConfirmBody" style="white-space:pre-line;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="repairSaveConfirmNo">Don't Save</button>
+        <button type="button" class="btn btn-primary" id="repairSaveConfirmYes">Save Fix(es)</button>
+      </div>
+    </div></div>
+
+    <!-- ============ TEST ENVIRONMENT SETTING — Playwright / API ============ -->
+    <!-- Item 12/13: Playwright, API and SQL each get their OWN
+         Test Environment Setting modal with only their own relevant
+         fields — this used to be one combined modal ("Test
+         Environment Setting — Playwright & API") shown by BOTH the
+         Playwright and API buttons, which is exactly what the
+         requirement flagged: neither button opened only its own
+         settings, and the two field-sets were visually mixed
+         together. All three modals still read/write the SAME backend
+         (EnvironmentConfigWeb / TestEnvironmentConfig for Playwright+
+         API, SqlAutomationWeb's own store for SQL, already separate)
+         — nothing here duplicates storage, each modal's Save just
+         sends its OWN subset of fields; the backend's update() (see
+         Core/automation_web_repository.py) already merges a partial
+         payload rather than overwriting the rest, so saving Playwright
+         settings can never blank out API settings or vice versa. -->
+    <div class="modal-overlay" id="envModal">
+      <div class="modal-card" style="max-width:520px;">
+        <h3>Playwright Environment Setting</h3>
+        <div class="modal-sub">Applies to the next run — no need to regenerate scripts.</div>
+        <div class="card">
+          <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+            <div class="field"><label for="envBaseUrl">Base URL</label><input id="envBaseUrl" placeholder="https://your-app.example"></div>
+            <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
+            <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
+              <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
             </div>
+            <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
+          </div>
+        </div>
+        <!-- ClickUp is a single global integration (not per Domain/
+             Module, and not specific to any one automation type) --
+             it lives here, in the Playwright modal, purely as one
+             settled home for it rather than duplicating it across all
+             three modals; it is only ever used to create a bug task
+             for a FAILED test case's ClickUp column/button — see the
+             "ClickUp" grid column and the tcClickUpBtn in the shared
+             test case detail modal, used by all 3 automation types. -->
+        <div class="card">
+          <div class="card-head"><h3>ClickUp Integration</h3><span class="muted-small" id="clickupStatusText" style="margin-left:auto;">Checking status…</span></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="clickupApiToken">API token</label><input id="clickupApiToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+              <div class="field" style="flex:1;"><label for="clickupListId">List ID</label><input id="clickupListId" autocomplete="off"></div>
+            </div>
+            <div class="btn-row"><button class="btn" id="clickupSaveBtn">Save ClickUp Configuration</button></div>
+          </div>
+        </div>
+        <div id="envSecretHints" class="muted-small"></div>
+        <div class="modal-actions">
+          <button class="btn" id="envCloseBtn">Close</button>
+          <button class="btn btn-primary" id="envSaveBtn">Save Configuration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TEST ENVIRONMENT SETTING — API ============ -->
+    <div class="modal-overlay" id="apiEnvModal">
+      <div class="modal-card" style="max-width:560px;">
+        <h3>API Environment Setting</h3>
+        <div class="modal-sub">Applies to the next "Execute Against Real Server" run.</div>
+        <div class="card">
+          <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
+            <div class="field"><label for="envApiAuthType">Auth type</label><select id="envApiAuthType"><option value="None">None</option><option value="Bearer Token">Bearer Token</option><option value="Basic Auth">Basic Auth</option><option value="API Key Header">Custom Header</option></select></div>
+            <div class="field"><label for="envApiAuthToken">Bearer token</label><input id="envApiAuthToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="envApiHeaderName">Header name</label><input id="envApiHeaderName"></div>
+              <div class="field" style="flex:1;"><label for="envApiHeaderValue">Header value</label><input id="envApiHeaderValue" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="envApiUsername">Basic — username</label><input id="envApiUsername" autocomplete="off"></div>
+              <div class="field" style="flex:1;"><label for="envApiPassword">Basic — password</label><input id="envApiPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <div class="field" style="flex:1;"><label for="envApiTimeout">Request timeout (s)</label><input id="envApiTimeout" placeholder="30"></div>
+              <div class="field" style="flex:1;"><label for="envApiBaseOverride">Base URL override</label><input id="envApiBaseOverride" placeholder="(optional)"></div>
+            </div>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="envApiVerifySsl" checked> Verify SSL certificates</label>
           </div>
         </div>
         <div class="card">
@@ -1453,26 +1631,10 @@
             <button class="btn" id="envVarSaveBtn">Remember Variable</button>
           </div>
         </div>
-        <!-- ClickUp is a single global integration (not per Domain/Module),
-             so it is configured once, here, rather than duplicated across
-             the Playwright/API/SQL Test Environment Setting modals. It is
-             only ever used to create a bug task for a FAILED test case's
-             ClickUp column/button — see the "ClickUp" grid column and the
-             tcClickUpBtn in the test case detail modal. -->
-        <div class="card">
-          <div class="card-head"><h3>ClickUp Integration</h3><span class="muted-small" id="clickupStatusText" style="margin-left:auto;">Checking status…</span></div>
-          <div class="card-body" style="display:flex; flex-direction:column; gap:8px;">
-            <div style="display:flex; gap:8px;">
-              <div class="field" style="flex:1;"><label for="clickupApiToken">API token</label><input id="clickupApiToken" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
-              <div class="field" style="flex:1;"><label for="clickupListId">List ID</label><input id="clickupListId" autocomplete="off"></div>
-            </div>
-            <div class="btn-row"><button class="btn" id="clickupSaveBtn">Save ClickUp Configuration</button></div>
-          </div>
-        </div>
-        <div id="envSecretHints" class="muted-small"></div>
+        <div id="apiEnvSecretHints" class="muted-small"></div>
         <div class="modal-actions">
-          <button class="btn" id="envCloseBtn">Close</button>
-          <button class="btn btn-primary" id="envSaveBtn">Save Configuration</button>
+          <button class="btn" id="apiEnvCloseBtn">Close</button>
+          <button class="btn btn-primary" id="apiEnvSaveBtn">Save Configuration</button>
         </div>
       </div>
     </div>
@@ -1937,12 +2099,12 @@
 
   var authState = { token: null, user: null, permissions: {} };
 
-  function toast(msg, isError){
+  function toast(msg, isError, durationMs){
     var t = document.getElementById('toast');
     document.getElementById('toastMsg').textContent = msg;
     t.className = 'toast show' + (isError ? ' error' : '');
     clearTimeout(t._hideTimer);
-    t._hideTimer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
+    t._hideTimer = setTimeout(function(){ t.classList.remove('show'); }, durationMs || 3200);
   }
   document.getElementById('toastClose').addEventListener('click', function(){
     var t = document.getElementById('toast');
@@ -2351,6 +2513,32 @@
   var autoSelectedTc = null;
   var autoPollTimer = null;
   var autoCurrentRunUuid = null;
+  // Item 4/5 — which script source (AUTO|MANUAL) the Automation tab is
+  // currently VIEWING/editing. Deliberately separate from
+  // autoSelectedTc.active_script_source (what's Active for Execution)
+  // and from the server — switching this never calls the API; only
+  // Set Active does. Reset whenever a different test case is opened
+  // (see selectTestCase()).
+  var autoViewedSource = 'AUTO';
+  // Item 5 — "editing a validated script must invalidate/require
+  // re-validation": last script text (per source) that a Validate
+  // call actually confirmed valid. Set Active/Execute warn instead of
+  // silently trusting a stale Validated result once the editor no
+  // longer matches this. No persisted validated_at column exists
+  // server-side (see automation_web_repository.py's
+  // validate_for_execution docstring) — this is a client-side-only
+  // safety net, cleared whenever a different test case is opened.
+  var autoLastValidated = { AUTO: null, MANUAL: null };
+  // Item 14 — separate from the above: explicitly set the moment a
+  // saved locator repair changes a script slot THIS SESSION (see the
+  // "repairs_saved" handler), so renderScriptEditor() can show an
+  // immediate, unambiguous staleness notice — unlike autoLastValidated
+  // being null, which is ALSO the normal "haven't checked yet, no
+  // claim either way" state on a freshly opened test case and would
+  // otherwise show a false-alarm notice on every single open. Cleared
+  // the moment a fresh Validate actually succeeds for that source, and
+  // reset whenever a different test case is opened (selectTestCase()).
+  var autoRepairInvalidated = { AUTO: false, MANUAL: false };
 
   function panelFor(type){ return document.getElementById(AUTO_TYPES[type].panel); }
 
@@ -2398,8 +2586,28 @@
   }
   function refreshTypeSourceOptions(type){
     var panel=panelFor(type), version=panel.querySelector('.at-version').value, docType=panel.querySelector('.at-document-type').value;
+    var picker=panel.querySelector('.at-source-picker');
+    // Pre-existing bug fixed 2026-09-09: setSourcePicker() below always
+    // rebuilds the source-file checkbox menu from scratch (all
+    // unchecked), so calling this during a plain "Refresh" (which
+    // re-fetches /api/automation/scope and rebuilds every cascade
+    // level, including this one) silently wiped out whichever source
+    // files the operator had checked. That in turn collapsed
+    // scope.source_knowledge_ids to [] and made BOTH the test-case
+    // grid and the Execution Log go blank ("No runs yet.") until the
+    // operator manually re-checked the box -- discovered while
+    // verifying the Execution Log Clear button (item 10). Capture the
+    // previously-checked ids first and restore whichever of them are
+    // still valid for the (possibly unchanged) scope after rebuilding.
+    var previouslySelected=sourcePickerIds(picker);
     var sources=docType ? scopeSources(type).filter(function(s){return s.version===version && s.document_type===docType;}) : [];
-    setSourcePicker(panel.querySelector('.at-source-picker'),sources,!docType); refreshTypeDocumentOptions(type);
+    setSourcePicker(picker,sources,!docType);
+    if(previouslySelected.length){
+      var availableIds=sources.map(function(s){return s.id;});
+      var keep=previouslySelected.filter(function(id){return availableIds.indexOf(id)!==-1;});
+      if(keep.length) setSourcePickerSelection(picker, keep);
+    }
+    refreshTypeDocumentOptions(type);
   }
   function sourcePickerIds(picker){return Array.prototype.slice.call(picker.querySelectorAll('.source-picker-check:checked')).map(function(cb){return parseInt(cb.value,10);}).sort(function(a,b){return a-b;});}
   function updateSourcePickerSummary(picker){var selected=Array.prototype.slice.call(picker.querySelectorAll('.source-picker-check:checked')),label=picker.querySelector('.source-picker-label');label.textContent=!selected.length?'Select source files…':(selected.length===1?selected[0].getAttribute('data-name'):selected.length+' source files selected');label.title=selected.length===1?selected[0].getAttribute('data-name'):'';}
@@ -2436,7 +2644,7 @@
     var panel = panelFor(type);
     autoGridControllers[type] = createGridController({
       name: 'auto-' + type, tbody: panel.querySelector('.at-tbody'),
-      footer: panel.querySelector('.at-pager'), colSpan: type === 'Playwright' ? 5 : 8,
+      footer: panel.querySelector('.at-pager'), colSpan: type === 'Playwright' ? 6 : 8,
       searchInput: panel.querySelector('.at-search'),
       emptyText: 'No test cases in this scope.',
       onRendered: function(body){ wireGridRowActions(type, body); syncHeaderCheckbox(type); },
@@ -2453,7 +2661,8 @@
       loadTypeScopes(type);
       clearTypeResults(type);
     });
-    loadEnvironment();
+    loadPlaywrightEnvironment();
+    loadApiEnvironment();
     loadSqlEnvironment();
     refreshClickUpStatus();
   }
@@ -2581,17 +2790,17 @@
         (!hasScript ? 'Not Automated' : (tc.status === 'Automated' ? 'Ready' : 'Draft Script'));
       if(latest && latest.status === 'Error') readiness = 'Error';
       var scriptLabel = type === 'SQL' ? 'View SQL' : 'View Script';
-      var activeLabel = (tc.automation_type && tc.automation_type !== 'None')
-        ? (tc.status === 'Automated' ? 'Active' : 'Draft')
-        : '—';
       var clickUpCell = tc.last_result === 'Fail'
         ? '<button class="btn btn-sm at-clickup-btn" data-tc-id="' + tc.id + '">Create Bug</button>'
         : '<span class="muted-small">—</span>';
       var checkboxCell = '<input type="checkbox" class="at-row-check" data-tc-id="' + tc.id + '">';
-      activeLabel = tc.status === 'Automated' ? (type === 'SQL' ? 'Active' : (tc.active_script_source || 'AUTO')) : '\u2014';
+      // Item 4 — never show the raw AUTO/MANUAL enum in the grid
+      // either; same friendly-label helper the Automation tab uses.
+      var activeLabel = tc.status !== 'Automated' ? '—'
+        : (type === 'SQL' ? 'Active' : friendlyActiveSourceLabel(tc.active_script_source || 'AUTO', tc));
       var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(tc.test_case||tc.scenario||'')+'</td>';
       var cells=type==='Playwright'
-        ? commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td>'
+        ? commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td><td><button class="btn btn-sm at-record-btn" data-tc-id="'+tc.id+'" title="Record a Manually Recorded Script by driving a live browser">Record</button></td>'
         : commonCells+'<td>'+escapeHtml(readiness)+'</td><td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td><td>'+escapeHtml(activeLabel)+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">Open</button> <button class="btn btn-sm at-generate-btn" data-tc-id="'+tc.id+'">Generate</button></td>';
       var html = '<tr data-tc-id="' + tc.id + '">' + cells + '</tr>';
       return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '')).toLowerCase() };
@@ -2619,6 +2828,12 @@
         createClickUpBug(tcId, btn);
       });
     });
+    body.querySelectorAll('.at-record-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
+        if(tc) openRecordModal(tc, type);
+      });
+    });
   }
 
   function createClickUpBug(tcId, btn){
@@ -2643,8 +2858,19 @@
     var clearAllButton=panel.querySelector('.at-clear-all');if(clearAllButton)clearAllButton.addEventListener('click',function(){panel.querySelectorAll('.at-row-check').forEach(function(cb){cb.checked=false;});syncHeaderCheckbox(type);});
     panel.querySelector('.at-load').addEventListener('click', function(){ loadTypeTestCases(type); });
     panel.querySelector('.at-refresh').addEventListener('click', function(){
-      loadTypeScopes(type).then(function(){ loadTypeTestCases(type); });
-      loadTypeLog(type);
+      // Pre-existing race fixed 2026-09-09: loadTypeScopes()'s own
+      // resolution cascades (refreshType*Options -> ... ->
+      // refreshTypeDocumentOptions -> clearTypeResults) synchronously
+      // wipes the Execution Log rows to []. Calling loadTypeLog() in
+      // parallel with loadTypeScopes() meant whichever fetch happened
+      // to resolve last decided whether the log ended up showing real
+      // rows or "No runs yet" -- intermittent depending on network
+      // timing, discovered while verifying the Execution Log Clear
+      // button (item 10). Sequencing loadTypeLog() inside the SAME
+      // .then() as loadTypeTestCases() guarantees it always runs
+      // after loadTypeScopes' internal clearTypeResults has already
+      // fired, so its freshly-fetched rows can never be clobbered.
+      loadTypeScopes(type).then(function(){ loadTypeTestCases(type); loadTypeLog(type); });
     });
     panel.querySelector('.at-domain').addEventListener('change', function(){ refreshTypeModuleOptions(type); clearTypeResults(type); });
     panel.querySelector('.at-module').addEventListener('change', function(){ refreshTypeKnowledgeOptions(type); clearTypeResults(type); });
@@ -2669,7 +2895,18 @@
       if(!ids.length){ toast('Select at least one Test Case first.', true); return; }
       generateManyTestCases(type, ids, button);
     });
-    panel.querySelector('.at-log-refresh').addEventListener('click', function(){ loadTypeLog(type); });
+    // Item 10: relabeled Refresh -> Clear. Clears ONLY what's
+    // currently rendered in this Execution Log table, client-side —
+    // never touches the server, never deletes a persisted run/Run
+    // Details/audit record. Because nothing marks "cleared since" on
+    // the server, a scope Load/Refresh, a fresh Execute finishing, or
+    // simply reloading the page will naturally repopulate this table
+    // from the real persisted history again — that's expected, not a
+    // bug, and the button's tooltip says so up front.
+    panel.querySelector('.at-log-refresh').addEventListener('click', function(){
+      autoLogControllers[type].setRows([]);
+      toast('Execution log display cleared — persisted history and Run Details are not affected.');
+    });
   });
 
   // Sequential, one-at-a-time execution — deliberately not parallel:
@@ -2680,36 +2917,106 @@
   // test case's own real automation type decides which endpoint is
   // called — never assumed from the active tab alone, so a stale/mixed
   // grid can never silently execute the wrong runner.
+  // Item 8/9 — Execute Selected must report a REAL, per-test-case
+  // reason for every test case it doesn't run, using the exact same
+  // eligibility logic (validate_for_execution / GET .../validate) the
+  // single-test-case Execute tab's readiness panel already uses —
+  // never a bare "blocked: N" with no explanation. Runs a real
+  // preflight check per candidate before attempting to execute it, so
+  // "No script"/"Not saved"/"Validation required"/"No active
+  // source"/etc are always attributable to a specific check that
+  // actually failed, never guessed.
   function executeManyTestCases(type, ids){
     var panel = panelFor(type);
     var buttons = panel.querySelectorAll('.at-exec-selected,.at-exec-all');
     buttons.forEach(function(button){ button.disabled = true; });
     var index = 0;
-    var skipped = [];
-    function next(){
-      if(index >= ids.length){
-        buttons.forEach(function(button){ button.disabled = !autoCanExecute(); });
-        toast('Preflight complete. Ready: ' + (ids.length - skipped.length) + ', skipped: 0, blocked: ' + skipped.length + '.');
-        loadTypeTestCases(type);
-        loadTypeLog(type);
+    var ran = [];
+    var blocked = []; // [{tc_number, reason}]
+    function finish(){
+      buttons.forEach(function(button){ button.disabled = !autoCanExecute(); });
+      loadTypeTestCases(type);
+      loadTypeLog(type);
+      if(!blocked.length){
+        toast('Preflight complete. Ready: ' + ran.length + ', blocked: 0.');
         return;
       }
+      var lines = blocked.slice(0, 5).map(function(b){ return b.tc_number + ': blocked — ' + b.reason; });
+      var more = blocked.length > 5 ? ' (+' + (blocked.length - 5) + ' more)' : '';
+      toast(
+        'Preflight complete. Ready: ' + ran.length + ', blocked: ' + blocked.length + '. ' +
+        lines.join(' | ') + more,
+        true,
+        4000 + 1200 * Math.min(blocked.length, 5)
+      );
+    }
+    function runOne(tc){
+      if(type === 'Playwright'){
+        // 2026-09-08 scope decision: Execute Selected/Execute All now
+        // offer the SAME interactive locator-repair pause a
+        // single-test Execute does, matching the current Desktop
+        // behavior (App/UI/QAAutomation/test_execution_page.py's
+        // confirm_and_run_playwright() — "the same as a single-test
+        // run, regardless of how many are queued here"). This queue
+        // already runs strictly one test case at a time, so only one
+        // real browser window is ever open; see
+        // Core/web_interactive_execution.py's module docstring.
+        ran.push(tc.id);
+        runInteractivePlaywright(tc, next);
+        return;
+      }
+      var endpoint = type === 'SQL' ? '/execute-sql' : '/execute-api';
+      apiFetch('/api/automation/test-cases/' + tc.id + endpoint, { method: 'POST' }).then(function(job){
+        if(job && (job.selection_required || job.executed === false)){
+          blocked.push({ tc_number: tc.tc_number, reason: 'Ambiguous — open View Script for details.' });
+          next();
+          return;
+        }
+        ran.push(tc.id);
+        next();
+      }).catch(function(err){
+        // The eligibility preflight below already screens out the
+        // common cases (no script / not validated / not Automated),
+        // so a rejection reaching here is something that changed
+        // between preflight and this call (e.g. another operator
+        // edited it) — still capture the REAL server message rather
+        // than discarding it, per item 8's "never silently swallow".
+        blocked.push({ tc_number: tc.tc_number, reason: err.message });
+        next();
+      });
+    }
+    function next(){
+      if(index >= ids.length){ finish(); return; }
       var tcId = ids[index++];
       var tc = autoTestCasesByType[type].find(function(t){ return t.id === tcId; });
-      if(!tc || !tc.automation_script || tc.status !== 'Automated'){ skipped.push(tcId); next(); return; }
-      var endpoint = type === 'SQL' ? '/execute-sql' : (type === 'API' ? '/execute-api' : '/execute');
-      apiFetch('/api/automation/test-cases/' + tcId + endpoint, { method: 'POST' }).then(function(job){
-        if(job && (job.selection_required || job.executed === false)){ skipped.push(tcId); next(); return; }
-        if(type === 'Playwright' && job && job.run_uuid){
-          // A real background job — wait for it to actually finish
-          // before starting the next one, so two heavy browser runs
-          // never overlap from one "Execute All" click.
-          waitForRun(job.run_uuid, next);
-        } else {
+      if(!tc){ blocked.push({ tc_number: '#' + tcId, reason: 'Test case no longer found in this list.' }); next(); return; }
+      if(type === 'SQL'){
+        // SQL has no execute-readiness endpoint (no runner exists yet
+        // — see validate_for_execution()'s SQL branch); keep the
+        // existing lightweight local check for that type only.
+        if(!tc.automation_script || tc.status !== 'Automated'){
+          blocked.push({ tc_number: tc.tc_number, reason: !tc.automation_script ? 'No SQL script saved.' : 'Not Active — Validate and Set Active first.' });
           next();
+          return;
         }
+        runOne(tc);
+        return;
+      }
+      apiFetch('/api/automation/test-cases/' + tcId + '/validate').then(function(readiness){
+        if(!readiness.ready){
+          var firstFailure = readiness.checks.filter(function(c){ return !c.ok; })[0];
+          blocked.push({
+            tc_number: tc.tc_number,
+            reason: (firstFailure && firstFailure.detail) ||
+              (firstFailure && firstFailure.check.replace(/_/g, ' ')) ||
+              'Not ready to execute — open View Script for details.',
+          });
+          next();
+          return;
+        }
+        runOne(tc);
       }).catch(function(err){
-        toast(tc.tc_number + ': ' + err.message, true);
+        blocked.push({ tc_number: tc.tc_number, reason: err.message });
         next();
       });
     }
@@ -2802,6 +3109,15 @@
   function selectTestCase(tc, type, afterOpen){
     autoSelectedTc = tc;
     autoSelectedType = type || tc.automation_type || 'Playwright';
+    // Item 4/5 — default the VIEW to whichever source is currently
+    // Active (the most useful starting point), but this is only a
+    // starting point: it never mutates the server, and the operator
+    // can freely switch tabs from here without activating anything.
+    // Any "last validated" memory from a previously-open test case
+    // must not leak into this one.
+    autoViewedSource = tc.active_script_source || 'AUTO';
+    autoLastValidated = { AUTO: null, MANUAL: null };
+    autoRepairInvalidated = { AUTO: false, MANUAL: false };
     stopAutoPoll();
     document.getElementById('tcDetailModal').classList.add('show');
     document.getElementById('detailId').textContent = tc.tc_number;
@@ -2812,11 +3128,16 @@
     var isSql = autoSelectedType === 'SQL';
     var isApi = autoSelectedType === 'API';
 
-    document.getElementById('tcActiveSourceRow').style.display = isSql ? 'none' : 'block';
+    document.getElementById('tcActiveSourceRow').style.display = isSql ? 'none' : 'flex';
     document.getElementById('tcSourceButtons').style.display = isSql ? 'none' : 'flex';
-    document.getElementById('tcGenerateTypeSel').style.display = isSql ? 'none' : 'inline-block';
-    document.getElementById('tcGenerateTypeSel').value = autoSelectedType;
-    document.getElementById('tcGenerateTypeSel').disabled = true;
+    // Item 7: the old always-disabled "Playwright" type <select> here
+    // was removed outright (not just hidden) — it was pure visual
+    // clutter duplicating the SAME automation type this whole detail
+    // modal is already scoped to (autoSelectedType, set by which
+    // top-level Automation tab/grid row opened this modal). Every
+    // place that used to read the select's value already used
+    // autoSelectedType directly (see tcGenerateBtn below) — backend
+    // automation_type enforcement is completely untouched.
     document.getElementById('tcSuggestTypeBtn').style.display = isApi ? 'inline-flex' : 'none';
     document.getElementById('tcSqlAssertionRow').style.display = isSql ? 'flex' : 'none';
 
@@ -2833,20 +3154,25 @@
       document.getElementById('tcSqlAssertionColumn').value = script.assertion_column || '';
       document.getElementById('tcSqlAssertionValue').value = script.assertion_value || '';
     } else {
-      document.getElementById('tcScriptLabel').textContent = 'Automation Script';
-      var source = tc.active_script_source || 'AUTO';
-      document.getElementById('tcActiveSourcePill').textContent = source;
-      editor.value = (source === 'MANUAL' ? tc.recorded_script : tc.automation_script) || '';
+      renderScriptEditor();
     }
     editor.disabled = !autoCanEdit();
 
-    var notice = document.getElementById('tcScriptNotice');
-    if(isApi){
-      notice.style.display = 'flex';
-      document.getElementById('tcScriptNoticeText').textContent =
-        'This is an API test case — the script editor below is for reference/documentation only. Execution uses the real imported API endpoint directly (see the Execute tab), never this script text.';
-    } else {
-      notice.style.display = 'none';
+    // Record is a Playwright-only capability (see item 22-25): a live,
+    // remotely-driven browser recording session over WebSocket — see
+    // openRecordModal(). Never shown for API/SQL. For SQL specifically
+    // the button is force-hidden right below (renderScriptEditor() —
+    // which recomputes visibility for the Playwright/API case on
+    // every viewed-source switch — never even runs for SQL).
+    if(isSql){
+      document.getElementById('tcRecordBtn').style.display = 'none';
+    }
+
+    // API/Playwright notice text is fully handled inside
+    // renderScriptEditor() above (it knows autoViewedSource); SQL has
+    // no equivalent notice.
+    if(isSql){
+      document.getElementById('tcScriptNotice').style.display = 'none';
     }
 
     document.getElementById('tcSetSourceAuto').disabled = !autoCanEdit();
@@ -2924,15 +3250,23 @@
       return;
     }
     var text = document.getElementById('tcScriptEditor').value;
-    var source = autoSelectedTc.active_script_source || 'AUTO';
+    // Item 4/5 — saves whichever source is currently VIEWED, never
+    // whichever is currently Active. Saving never activates (item 5:
+    // "Save saves selected source only, must NOT activate") and never
+    // touches the other source's independently-persisted script.
+    var source = autoViewedSource;
     var path = '/api/automation/test-cases/' + autoSelectedTc.id + (source === 'MANUAL' ? '/recorded-script' : '/script');
     apiFetch(path, { method: 'PUT', body: JSON.stringify({ script_text: text }) }).then(function(data){
       autoSelectedTc = data.test_case;
+      // Item 5 — editing invalidates a prior Validate result for this
+      // source; only a fresh Validate call (below) re-establishes it.
+      autoLastValidated[source] = null;
       if(data.syntax_warning){
         document.getElementById('tcScriptError').textContent = 'Saved, but with a syntax warning: ' + data.syntax_warning;
       } else {
-        toast('Script saved.');
+        toast('Script saved. Validate it, then Set Active before it can execute.');
       }
+      renderScriptEditor();
       refreshExecuteReadiness();
       loadTypeTestCases(autoSelectedType);
     }).catch(function(err){
@@ -2940,17 +3274,366 @@
     });
   });
 
+  // TASK-10 #32 / item 4: never show raw internal enum values
+  // (AUTO/MANUAL) — always a plain-language label, whether or not a
+  // script actually exists yet for that source.
+  function friendlyActiveSourceLabel(source, tc){
+    if(source === 'MANUAL') return tc && tc.recorded_script ? 'Manually Recorded Script' : 'None';
+    if(source === 'AUTO') return tc && tc.automation_script ? 'AI-Generated Script' : 'None';
+    return 'None';
+  }
+
+  // Item 4 — renders the Automation tab strictly from autoViewedSource
+  // (what the operator is looking at) plus autoSelectedTc's persisted
+  // data. Never mutates the server; safe to call as often as needed
+  // (after Save, after Validate, on tab switch, after Set Active).
+  function renderScriptEditor(){
+    if(!autoSelectedTc || autoSelectedType === 'SQL') return;
+    resetScriptSearch(); // new script text is about to replace the old — stale match positions must not carry over
+    var tc = autoSelectedTc;
+    var isApi = autoSelectedType === 'API';
+    document.getElementById('tcScriptLabel').textContent =
+      'Automation Script — Viewing: ' + (autoViewedSource === 'MANUAL' ? 'Manual / Recorded Script' : 'AI-Generated Script');
+    document.getElementById('tcActiveSourcePill').textContent =
+      friendlyActiveSourceLabel(tc.active_script_source || 'AUTO', tc);
+    document.getElementById('tcScriptEditor').value =
+      (autoViewedSource === 'MANUAL' ? tc.recorded_script : tc.automation_script) || '';
+
+    // Item 14 (validation staleness lifecycle): make "this script
+    // changed since it was last Validated" visible right here, not
+    // just enforced silently the next time Set Active is clicked.
+    // autoLastValidated[source] is null on a fresh test-case open (no
+    // claim either way) and only ever non-null once Validate has
+    // actually run in THIS session — so this only fires when a real,
+    // known-validated script has since been changed underneath it
+    // (typing an edit, or a locator repair getting saved — see the
+    // "repairs_saved" handler, which clears this same slot).
+    var lastValidatedText = autoLastValidated[autoViewedSource];
+    var currentScriptText = document.getElementById('tcScriptEditor').value;
+    var editedSinceValidated = lastValidatedText !== null && lastValidatedText !== currentScriptText;
+    if(!isApi && (autoRepairInvalidated[autoViewedSource] || editedSinceValidated)){
+      document.getElementById('tcValidateResult').innerHTML =
+        '<div class="notice notice-warn">Script changed since it was last Validated (e.g. a locator repair was saved) — Validate, then Set Active, before your next Execute.</div>';
+    } else {
+      document.getElementById('tcValidateResult').innerHTML = '';
+    }
+
+    // Selected-vs-unselected chip styling (item 4 — obvious, distinct
+    // from the separate "Active for Execution" pill above).
+    document.getElementById('tcSetSourceAuto').classList.toggle('active', autoViewedSource === 'AUTO');
+    document.getElementById('tcSetSourceManual').classList.toggle('active', autoViewedSource === 'MANUAL');
+
+    // Item 8 — the grid-level Record action (see the automation grid
+    // row buttons) always stays available regardless of this; THIS
+    // button (inside the detail modal) is scoped to whichever script
+    // is currently being VIEWED here: shown only while Manual/
+    // Recorded Script is the viewed tab, hidden while viewing
+    // AI-Generated Script — recomputed on every call to
+    // renderScriptEditor(), i.e. both on first opening the modal and
+    // on every subsequent AI-Generated <-> Manual/Recorded tab click.
+    document.getElementById('tcRecordBtn').style.display =
+      (!isApi && autoViewedSource === 'MANUAL' && autoCanEdit()) ? 'inline-flex' : 'none';
+
+    var notice = document.getElementById('tcScriptNotice');
+    if(isApi){
+      notice.style.display = 'flex';
+      document.getElementById('tcScriptNoticeText').textContent =
+        'This is an API test case — the script editor below is for reference/documentation only. Execution uses the real imported API endpoint directly (see the Execute tab), never this script text.';
+    } else if(autoViewedSource === 'MANUAL' && !tc.recorded_script){
+      notice.style.display = 'flex';
+      document.getElementById('tcScriptNoticeText').textContent =
+        'No recorded script yet — click Record above to open a live browser, perform your steps, and capture a Manually Recorded Script for this test case.';
+    } else {
+      notice.style.display = 'none';
+    }
+  }
+
+  // ---- Item 6: compact in-editor Find (never mutates the script) ----
+  var tcSearchMatches = [];
+  var tcSearchIndex = -1;
+
+  function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  function computeScriptSearchMatches(term){
+    var text = document.getElementById('tcScriptEditor').value || '';
+    if(!term) return [];
+    var re = new RegExp(escapeRegExp(term), 'gi'); // case-insensitive by default
+    var matches = [];
+    var m;
+    while((m = re.exec(text)) !== null){
+      matches.push({ start: m.index, end: m.index + m[0].length });
+      if(m[0].length === 0) re.lastIndex++; // guard against zero-length loops
+    }
+    return matches;
+  }
+
+  function updateScriptSearchCount(){
+    var countEl = document.getElementById('tcScriptSearchCount');
+    if(!tcSearchMatches.length){ countEl.textContent = '0 / 0'; return; }
+    countEl.textContent = (tcSearchIndex + 1) + ' / ' + tcSearchMatches.length;
+  }
+
+  function gotoScriptSearchMatch(step){
+    if(!tcSearchMatches.length) return;
+    if(step !== 0){
+      tcSearchIndex = (tcSearchIndex + step + tcSearchMatches.length) % tcSearchMatches.length;
+    } else if(tcSearchIndex < 0){
+      tcSearchIndex = 0;
+    }
+    var match = tcSearchMatches[tcSearchIndex];
+    var editor = document.getElementById('tcScriptEditor');
+    editor.focus();
+    editor.setSelectionRange(match.start, match.end); // highlight = native text selection; .value is never touched
+    // Approximate "scroll the match into view" — textareas don't
+    // expose a native scroll-to-selection API, so estimate the
+    // match's line from newline count and center it.
+    var before = editor.value.slice(0, match.start);
+    var lineIndex = (before.match(/\n/g) || []).length;
+    var lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 18;
+    var target = (lineIndex * lineHeight) - (editor.clientHeight / 2);
+    editor.scrollTop = Math.max(0, target);
+    updateScriptSearchCount();
+  }
+
+  function runScriptSearch(){
+    var term = document.getElementById('tcScriptSearchInput').value;
+    var previousStart = (tcSearchIndex >= 0 && tcSearchMatches[tcSearchIndex]) ? tcSearchMatches[tcSearchIndex].start : -1;
+    tcSearchMatches = computeScriptSearchMatches(term);
+    if(!tcSearchMatches.length){
+      tcSearchIndex = -1;
+      updateScriptSearchCount();
+      return;
+    }
+    // Keep roughly the same position when re-typing rather than
+    // always jumping back to the first match.
+    var keepIndex = 0;
+    if(previousStart >= 0){
+      for(var i = 0; i < tcSearchMatches.length; i++){
+        if(tcSearchMatches[i].start >= previousStart){ keepIndex = i; break; }
+      }
+    }
+    tcSearchIndex = keepIndex;
+    gotoScriptSearchMatch(0);
+  }
+
+  function resetScriptSearch(){
+    tcSearchMatches = [];
+    tcSearchIndex = -1;
+    document.getElementById('tcScriptSearchInput').value = '';
+    updateScriptSearchCount();
+  }
+
+  document.getElementById('tcScriptSearchInput').addEventListener('input', runScriptSearch);
+  document.getElementById('tcScriptSearchNext').addEventListener('click', function(){ gotoScriptSearchMatch(1); });
+  document.getElementById('tcScriptSearchPrev').addEventListener('click', function(){ gotoScriptSearchMatch(-1); });
+  document.getElementById('tcScriptSearchInput').addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      gotoScriptSearchMatch(e.shiftKey ? -1 : 1);
+    }
+  });
+  // Ctrl+F / Cmd+F focuses the search box instead of the browser's own
+  // find-in-page, but ONLY while the Script tab of this modal is
+  // actually the one showing — never hijacks Ctrl+F anywhere else in
+  // the app.
+  document.addEventListener('keydown', function(e){
+    if((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')){
+      var modal = document.getElementById('tcDetailModal');
+      var scriptPanel = document.getElementById('d-script');
+      if(modal.classList.contains('show') && scriptPanel.classList.contains('active')){
+        e.preventDefault();
+        document.getElementById('tcScriptSearchInput').focus();
+        document.getElementById('tcScriptSearchInput').select();
+      }
+    }
+  });
+
+  // Item 7 — Set Active activates whichever source is currently
+  // VIEWED (autoViewedSource), and requires it to be saved + valid
+  // (enforced server-side in automation_web_repository.py's
+  // set_active_script() regardless of what the client already
+  // checked). Never called merely from switching tabs.
   function setActiveScriptSource(source){
     if(!autoSelectedTc) return;
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {
       method: 'PATCH', body: JSON.stringify({ source: source }),
     }).then(function(tc){
-      selectTestCase(tc, autoSelectedType);
-      toast('Active script source set to ' + source + '.');
+      autoSelectedTc = tc;
+      renderScriptEditor();
+      refreshExecuteReadiness();
+      loadTypeTestCases(autoSelectedType);
+      toast('Active for Execution set to ' + friendlyActiveSourceLabel(source, tc) + '.');
     }).catch(function(err){ toast(err.message, true); });
   }
-  document.getElementById('tcSetSourceAuto').addEventListener('click', function(){ setActiveScriptSource('AUTO'); });
-  document.getElementById('tcSetSourceManual').addEventListener('click', function(){ setActiveScriptSource('MANUAL'); });
+
+  // Item 4 — VIEW-only tab switch. Deliberately does not call the
+  // API and does not change what's Active for Execution.
+  function viewScriptSource(source){
+    autoViewedSource = source;
+    renderScriptEditor();
+  }
+  document.getElementById('tcSetSourceAuto').addEventListener('click', function(){ viewScriptSource('AUTO'); });
+  document.getElementById('tcSetSourceManual').addEventListener('click', function(){ viewScriptSource('MANUAL'); });
+  document.getElementById('tcRecordBtn').addEventListener('click', function(){
+    if(autoSelectedTc) openRecordModal(autoSelectedTc, autoSelectedType);
+  });
+
+  // ================================================================
+  // LIVE PLAYWRIGHT RECORDING (Web) — see Core/web_recorder.py and
+  // Web/routers/recorder_router.py for the server side. A REAL,
+  // VISIBLE browser window opens on the machine the Web server runs
+  // on (item 1) — this panel only shows recording state and the
+  // Runtime Activity log over a WebSocket, and carries Stop/Cancel.
+  // What you do in that real window is what gets recorded — this is
+  // not a replica
+  // or a simulation.
+  // ================================================================
+  var recordSocket = null;
+  var recordTc = null;
+
+  function recordActivityLine(text){
+    var el = document.getElementById('tcRecordActivity');
+    var line = document.createElement('div');
+    line.textContent = text;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Item 1 — explicit Idle/Starting/Recording/Stopping/Captured/Failed
+  // state machine, shown both as the header pill and as a plain-
+  // language banner (the recorder has no streamed image to look at
+  // any more — the real browser window IS the recording surface, so
+  // this banner is the only in-app indication of what state it's in).
+  var RECORD_STATE_BANNERS = {
+    'Starting': 'Starting recorder — a real browser window is about to open on this machine…',
+    'Recording': 'A real browser window is open on this machine. Perform your test steps there, then click "Stop Recording" when you’re done.',
+    'Stopping': 'Stopping recorder and saving the captured script…',
+    'Captured': 'Recording captured and saved as the Manually Recorded Script.',
+    'Failed': 'Recording failed — see Runtime Activity below for details.',
+    'Idle': 'Recording cancelled — nothing was saved.',
+    'Closed': 'Connection to the recorder closed.',
+  };
+
+  function recordSetState(label){
+    document.getElementById('recordStateBadge').textContent = label;
+    var banner = document.getElementById('recordStatusBanner');
+    banner.textContent = RECORD_STATE_BANNERS[label] || label;
+    banner.className = 'notice' + (label === 'Failed' ? ' notice-warn' : '');
+  }
+
+  function wsBaseUrl(){
+    return API_BASE.replace(/^http/, 'ws');
+  }
+
+  function openRecordModal(tc, type){
+    if(type && type !== 'Playwright'){
+      toast('Recording is only available for Playwright test cases.', true);
+      return;
+    }
+    recordTc = tc;
+    document.getElementById('tcDetailModal').classList.remove('show');
+    document.getElementById('recordTcId').textContent = tc.tc_number || '';
+    document.getElementById('recordTcTitle').textContent = 'Record — ' + (tc.test_case || tc.scenario || '');
+    document.getElementById('recordUrlLabel').textContent = '';
+    document.getElementById('tcRecordActivity').innerHTML = '';
+    document.getElementById('tcRecordStopBtn').disabled = true;
+    recordSetState('Starting');
+    document.getElementById('tcRecordModal').classList.add('show');
+
+    var url = wsBaseUrl() + '/api/automation/test-cases/' + tc.id + '/record/ws?token=' + encodeURIComponent(authState.token || '');
+    // Item 29: pass the currently selected Domain/Module/Knowledge Name
+    // scope so the recorder can prefer real, already-captured Knowledge
+    // Hub locators over freshly-guessed ones — same scope concept the
+    // Generate (AI) flow already grounds itself in (see
+    // _build_playwright_requirement() server-side); recording only
+    // reads this data, never writes to Knowledge Hub (item 29).
+    if(type === 'Playwright'){
+      var recordScope = activeTypeScope(type);
+      if(recordScope.domain) url += '&domain=' + encodeURIComponent(recordScope.domain);
+      if(recordScope.module) url += '&module=' + encodeURIComponent(recordScope.module);
+      if(recordScope.knowledge_name) url += '&knowledge=' + encodeURIComponent(recordScope.knowledge_name);
+    }
+    var socket = new WebSocket(url);
+    socket.binaryType = 'blob';
+    recordSocket = socket;
+
+    socket.addEventListener('open', function(){ recordActivityLine('Connecting to recorder...'); });
+
+    socket.addEventListener('close', function(ev){
+      if(recordSocket === socket){
+        recordSetState('Closed');
+        if(ev.code === 4409){
+          recordActivityLine('Another recording is already in progress on this server — only one can run at a time.');
+          toast('Another recording is already in progress. Try again once it finishes.', true);
+        } else if(ev.code === 4401){
+          recordActivityLine('Not authorized.');
+        }
+      }
+    });
+
+    socket.addEventListener('error', function(){
+      recordActivityLine('Connection error.');
+    });
+
+    socket.addEventListener('message', function(ev){
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch(e){ return; }
+
+      if(msg.type === 'started'){
+        recordSetState('Recording');
+        document.getElementById('tcRecordStopBtn').disabled = false;
+      } else if(msg.type === 'activity'){
+        recordActivityLine(msg.text);
+      } else if(msg.type === 'error'){
+        recordActivityLine('Error: ' + msg.message);
+        toast(msg.message, true);
+        recordSetState('Failed');
+      } else if(msg.type === 'stopped'){
+        recordSetState('Captured');
+        recordActivityLine('Recording saved.');
+        closeRecordModal();
+        toast('Recording saved as the Manually Recorded Script.');
+        loadTypeTestCases('Playwright');
+        // Re-open View Script on the Manually Recorded tab so the
+        // operator can immediately review/edit what was captured —
+        // item 24 step 8-9 ("Open/show the captured script...").
+        apiFetch('/api/automation/test-cases/' + recordTc.id).then(function(tc){
+          selectTestCase(tc, 'Playwright');
+        });
+      } else if(msg.type === 'cancelled'){
+        recordSetState('Idle');
+        recordActivityLine('Recording cancelled — nothing was saved.');
+        closeRecordModal();
+      }
+    });
+  }
+
+  function closeRecordModal(){
+    document.getElementById('tcRecordModal').classList.remove('show');
+    if(recordSocket && recordSocket.readyState === WebSocket.OPEN){
+      try { recordSocket.close(); } catch(e){}
+    }
+    recordSocket = null;
+  }
+
+  function recordSend(payload){
+    if(recordSocket && recordSocket.readyState === WebSocket.OPEN){
+      recordSocket.send(JSON.stringify(payload));
+    }
+  }
+
+  document.getElementById('tcRecordCloseBtn').addEventListener('click', function(){
+    recordSend({ type: 'cancel' });
+    closeRecordModal();
+  });
+  document.getElementById('tcRecordCancelBtn').addEventListener('click', function(){
+    recordSend({ type: 'cancel' });
+  });
+  document.getElementById('tcRecordStopBtn').addEventListener('click', function(){
+    document.getElementById('tcRecordStopBtn').disabled = true;
+    recordSetState('Stopping');
+    recordSend({ type: 'stop' });
+  });
 
   document.getElementById('tcGenerateBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
@@ -2992,30 +3675,75 @@
     if(!autoSelectedTc) return;
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/suggest-type', { method: 'POST' }).then(function(data){
       toast('AI suggests: ' + data.suggested_type + ' — ' + data.reason);
-      document.getElementById('tcGenerateTypeSel').value = data.suggested_type;
     }).catch(function(err){ toast(err.message, true); });
   });
 
+  // Item 6 — Validate validates whichever source is currently VIEWED
+  // (autoViewedSource), and the result is rendered right under the
+  // button (#tcValidateResult) so it is actually visible — the prior
+  // bug routed this into refreshExecuteReadiness(), which only wrote
+  // into the separate, often-hidden Execute-tab readiness panel, so
+  // clicking Validate on the Automation tab appeared to do nothing.
   document.getElementById('tcValidateBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
+    var resultEl = document.getElementById('tcValidateResult');
     if(autoSelectedType === 'SQL'){
       apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/validate-sql').then(function(data){
-        document.getElementById('tcValidateResult').innerHTML =
+        resultEl.innerHTML =
           '<div class="notice" style="background:' + (data.valid ? 'var(--success-soft)' : 'var(--warning-soft)') + ';border:1px solid ' + (data.valid ? 'var(--success)' : 'var(--warning)') + ';">' +
             (data.valid ? 'Safe to execute.' : escapeHtml(data.error)) +
           '</div>';
-      }).catch(function(err){ toast(err.message, true); });
+      }).catch(function(err){
+        resultEl.innerHTML = '<div class="notice notice-warn">' + escapeHtml(err.message) + '</div>';
+      });
       return;
     }
-    refreshExecuteReadiness();
+    var source = autoViewedSource;
+    resultEl.innerHTML = '<div class="muted-small">Validating…</div>';
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/validate?source=' + source).then(function(data){
+      renderReadiness(resultEl, data);
+      if(data.ready){
+        // Item 5 — remember exactly what was validated so an edit
+        // afterwards can be detected and re-validation required.
+        autoLastValidated[source] = document.getElementById('tcScriptEditor').value;
+        autoRepairInvalidated[source] = false; // this Validate supersedes any earlier repair-staleness flag
+        toast('Validated.');
+      } else {
+        autoLastValidated[source] = null;
+      }
+      // The Execute tab's readiness panel reflects the ACTIVE source,
+      // which may differ from what was just validated — keep it in
+      // sync too rather than leaving it stale.
+      refreshExecuteReadiness();
+    }).catch(function(err){
+      resultEl.innerHTML = '<div class="notice notice-warn">' + escapeHtml(err.message) + '</div>';
+    });
   });
 
+  // Item 7 — Set Active activates whichever source is currently
+  // VIEWED. Server-side (automation_web_repository.py's
+  // set_active_script()) independently re-checks the script is
+  // non-empty, tool-eligible, and syntactically valid immediately
+  // before activating — an invalid script genuinely cannot become
+  // Active no matter what the client believes. This client-side
+  // check only improves the message the operator sees first.
   document.getElementById('tcActivateBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
+    if(autoSelectedType !== 'SQL'){
+      var currentText = document.getElementById('tcScriptEditor').value;
+      if(autoLastValidated[autoViewedSource] === null || autoLastValidated[autoViewedSource] !== currentText){
+        toast('This script hasn’t been Validated since it was last changed. Click Validate first — attempting to activate anyway; the server will reject it if it isn’t actually valid.', true);
+      }
+    }
     var request = autoSelectedType === 'SQL'
       ? apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/sql-active', {method:'PATCH', body:JSON.stringify({active:true})})
-      : apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {method:'PATCH', body:JSON.stringify({source:autoSelectedTc.active_script_source || 'AUTO'})});
-    request.then(function(tc){ autoSelectedTc = tc; toast('Validated and set Active for execution.'); selectTestCase(tc, autoSelectedType); loadTypeTestCases(autoSelectedType); }).catch(function(err){ toast(err.message, true); });
+      : apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {method:'PATCH', body:JSON.stringify({source:autoViewedSource})});
+    request.then(function(tc){
+      autoSelectedTc = tc;
+      toast('Active for Execution set to ' + (autoSelectedType === 'SQL' ? 'SQL Query' : friendlyActiveSourceLabel(autoViewedSource, tc)) + '.');
+      selectTestCase(tc, autoSelectedType);
+      loadTypeTestCases(autoSelectedType);
+    }).catch(function(err){ toast(err.message, true); });
   });
 
   // ---- Execute (Playwright — real background job) ----
@@ -3093,15 +3821,367 @@
     }
   }
 
+  // ---- Interactive Locator Repair (Web port of Desktop's feature) ----
+  // See Core/web_interactive_execution.py's module docstring for the
+  // full architecture. Every Playwright Execute — single, or one at a
+  // time as part of Execute Selected/Execute All (see runOne() in
+  // executeManyTestCases()) — goes through here now: if a step's
+  // locator/value can't be found, the run pauses and this dialog asks
+  // for a fix instead of the run just failing, exactly like Desktop's
+  // LocatorRepairDialog.
+  var interactiveSocket = null;
+  var currentRepairEvent = null;
+  var lastAiSuggestionCode = '';
+
+  function interactiveSend(payload){
+    if(interactiveSocket && interactiveSocket.readyState === WebSocket.OPEN){
+      interactiveSocket.send(JSON.stringify(payload));
+    }
+  }
+
+  function openRepairModal(event){
+    currentRepairEvent = event;
+    lastAiSuggestionCode = '';
+    document.getElementById('repairTitle').textContent =
+      'Step ' + event.step + ' Failed — Element Not Found' + (event.attempt > 1 ? ' (attempt ' + event.attempt + ')' : '');
+    document.getElementById('repairCode').textContent = event.code || '';
+    document.getElementById('repairError').textContent = 'Error: ' + (event.error || '');
+    document.getElementById('repairContext').textContent = 'Page: ' + (event.title || '(unknown)') + '  (' + (event.url || '') + ')';
+    document.getElementById('repairLocator').value = event.locator || '';
+    var hasValue = !!event.value;
+    document.getElementById('repairValue').value = event.value || '';
+    document.getElementById('repairValueField').style.display = hasValue ? '' : 'none';
+    document.getElementById('repairAdvancedCheckbox').checked = false;
+    document.getElementById('repairLocator').disabled = false;
+    document.getElementById('repairValue').disabled = false;
+    document.getElementById('repairCodeEdit').value = event.code || '';
+    document.getElementById('repairCodeEdit').style.display = 'none';
+    document.getElementById('repairAiArea').style.display = 'none';
+    document.getElementById('repairAiStatus').textContent = '';
+    document.getElementById('repairAiSuggestion').style.display = 'none';
+    document.getElementById('repairAiExplanation').style.display = 'none';
+    document.getElementById('repairApplyAiBtn').style.display = 'none';
+    document.getElementById('repairAskAiBtn').disabled = false;
+    document.getElementById('repairVerifyBtn').disabled = false;
+    document.getElementById('repairVerifyStatus').textContent = '';
+    document.getElementById('repairVerifyStatus').style.color = '';
+    document.getElementById('tcRepairModal').classList.add('show');
+  }
+
+  // Pulls the same "first quoted string in this line" that
+  // Core/playwright_runner.py's _qa_extract_locator_and_value() uses
+  // server-side, so "Test Locator" can check whatever's in the
+  // Advanced code box (including a just-applied AI suggestion) the
+  // exact same way the simple Locator field is checked.
+  function extractLocatorFromCode(code){
+    var m = String(code || '').match(/'([^']*)'|"([^"]*)"/);
+    if(!m) return '';
+    return m[1] !== undefined ? m[1] : m[2];
+  }
+
+  function closeRepairModal(){
+    document.getElementById('tcRepairModal').classList.remove('show');
+  }
+
+  document.getElementById('repairAdvancedCheckbox').addEventListener('change', function(){
+    var checked = this.checked;
+    document.getElementById('repairCodeEdit').style.display = checked ? '' : 'none';
+    document.getElementById('repairLocator').disabled = checked;
+    document.getElementById('repairValue').disabled = checked;
+  });
+
+  document.getElementById('repairRetryBtn').addEventListener('click', function(){
+    var decision;
+    if(document.getElementById('repairAdvancedCheckbox').checked){
+      decision = { action: 'retry_code', code: document.getElementById('repairCodeEdit').value.trim() };
+    } else {
+      var hasValueField = document.getElementById('repairValueField').style.display !== 'none';
+      decision = {
+        action: 'retry',
+        locator: document.getElementById('repairLocator').value,
+        value: hasValueField ? document.getElementById('repairValue').value : (currentRepairEvent ? currentRepairEvent.value : ''),
+      };
+    }
+    var stepNum = currentRepairEvent ? currentRepairEvent.step : '';
+    var kv = document.getElementById('tcRunLiveKv');
+    if(kv) kv.innerHTML =
+      '<div>Status</div><div class="muted-small">Retrying step ' + escapeHtml(String(stepNum)) + ' with the fix…</div>';
+    closeRepairModal();
+    interactiveSend({ type: 'decision', decision: decision });
+  });
+
+  // "Test Locator Against Current Page" -- a live-page existence/
+  // visibility check ONLY (backend action "verify_locator"): never
+  // clicks/fills anything and never consumes a repair attempt, so the
+  // operator (or an applied AI suggestion) can be checked against the
+  // real page as many times as needed before ever pressing Retry With
+  // This Fix. This is the concrete answer to "do not blindly accept
+  // an AI locator without checking it against the current page."
+  document.getElementById('repairVerifyBtn').addEventListener('click', function(){
+    var candidate = document.getElementById('repairAdvancedCheckbox').checked
+      ? extractLocatorFromCode(document.getElementById('repairCodeEdit').value)
+      : document.getElementById('repairLocator').value;
+    var statusEl = document.getElementById('repairVerifyStatus');
+    if(!candidate){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'No locator to test — enter one first.';
+      return;
+    }
+    this.disabled = true;
+    statusEl.style.color = '';
+    statusEl.textContent = 'Testing locator against the current page…';
+    interactiveSend({ type: 'decision', decision: { action: 'verify_locator', locator: candidate } });
+  });
+
+  document.getElementById('repairCancelBtn').addEventListener('click', function(){
+    closeRepairModal();
+    interactiveSend({ type: 'decision', decision: { action: 'cancel' } });
+  });
+
+  document.getElementById('repairAskAiBtn').addEventListener('click', function(){
+    // Only ever reachable by the operator clicking this — the AI is
+    // never called automatically on the first failure, same as
+    // Desktop's LocatorRepairDialog._on_ask_ai().
+    this.disabled = true;
+    document.getElementById('repairAiArea').style.display = '';
+    document.getElementById('repairAiStatus').textContent = 'Asking the local AI model for a suggestion — this can take a few seconds…';
+    interactiveSend({ type: 'ask_ai' });
+  });
+
+  document.getElementById('repairApplyAiBtn').addEventListener('click', function(){
+    // Applying a suggestion no longer retries immediately -- it loads
+    // the suggested code into Advanced edit mode and automatically
+    // runs the SAME "Test Locator Against Current Page" check used
+    // for a manually-typed locator, so the operator sees a real
+    // found/not-found result on the live page before ever pressing
+    // Retry With This Fix (never a silent, blind accept).
+    document.getElementById('repairAdvancedCheckbox').checked = true;
+    document.getElementById('repairCodeEdit').value = lastAiSuggestionCode;
+    document.getElementById('repairCodeEdit').style.display = '';
+    document.getElementById('repairLocator').disabled = true;
+    document.getElementById('repairValue').disabled = true;
+    document.getElementById('repairVerifyBtn').click();
+  });
+
+  function offerToSaveRepairs(tcNumber, repairs, callback){
+    var lines = repairs.map(function(r){ return 'Step ' + r.step + ':\n  was: ' + r.original + '\n  now: ' + r.corrected; });
+    document.getElementById('repairSaveConfirmBody').textContent =
+      tcNumber + ' needed ' + repairs.length + ' locator/value fix(es) to pass this run:\n\n' + lines.join('\n\n') +
+      '\n\nSave these into the stored script so future runs don’t need to repair them again?';
+    document.getElementById('repairSaveConfirmModal').classList.add('show');
+    var yesBtn = document.getElementById('repairSaveConfirmYes');
+    var noBtn = document.getElementById('repairSaveConfirmNo');
+    function cleanup(){
+      document.getElementById('repairSaveConfirmModal').classList.remove('show');
+      yesBtn.removeEventListener('click', onYes);
+      noBtn.removeEventListener('click', onNo);
+    }
+    function onYes(){ cleanup(); callback(true); }
+    function onNo(){ cleanup(); callback(false); }
+    yesBtn.addEventListener('click', onYes);
+    noBtn.addEventListener('click', onNo);
+  }
+
+  // Runs ONE Playwright test case interactively — used by both the
+  // single Execute button and Execute Selected/Execute All's
+  // per-test-case queue (runOne() below), matching the current
+  // Desktop behavior of offering interactive repair for every
+  // Playwright run, batch or not (2026-09-08 scope decision — see
+  // Core/web_interactive_execution.py's module docstring). Always
+  // calls onDone() exactly once, whatever happens.
+  function runInteractivePlaywright(tc, onDone){
+    var isSelectedTc = autoSelectedTc && autoSelectedTc.id === tc.id;
+    document.getElementById('tcRunLive').style.display = 'block';
+    document.getElementById('tcRunLiveKv').innerHTML =
+      '<div>Test Case</div><div>' + escapeHtml(tc.tc_number || '') + '</div>' +
+      '<div>Status</div><div class="muted-small">Launching browser and running the script…</div>';
+    document.getElementById('tcRunResult').innerHTML = '';
+    if(isSelectedTc){
+      document.getElementById('tcExecuteBtn').disabled = true;
+      document.getElementById('tcCancelBtn').style.display = 'inline-flex';
+    }
+
+    var url = wsBaseUrl() + '/api/automation/test-cases/' + tc.id + '/execute/interactive/ws?token=' + encodeURIComponent(authState.token || '');
+    var socket = new WebSocket(url);
+    interactiveSocket = socket;
+    var finished = false;
+
+    function done(){
+      if(finished) return;
+      finished = true;
+      if(interactiveSocket === socket) interactiveSocket = null;
+      try { socket.close(); } catch(e){}
+      if(autoSelectedTc && autoSelectedTc.id === tc.id){
+        document.getElementById('tcExecuteBtn').disabled = !autoCanExecute();
+        document.getElementById('tcCancelBtn').style.display = 'none';
+      }
+      document.getElementById('tcRunLive').style.display = 'none';
+      onDone();
+    }
+
+    socket.addEventListener('close', function(ev){
+      if(interactiveSocket === socket){
+        if(ev.code === 4409){
+          toast('Another recording or interactive execution is already using the real browser window on this server — try again once it finishes.', true);
+        } else if(ev.code === 4401){
+          toast('Not authorized.', true);
+        }
+        done();
+      }
+    });
+
+    socket.addEventListener('message', function(ev){
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch(e){ return; }
+
+      if(msg.type === 'progress'){
+        var kv = document.getElementById('tcRunLiveKv');
+        if(kv) kv.innerHTML =
+          '<div>Test Case</div><div>' + escapeHtml(tc.tc_number || '') + '</div>' +
+          '<div>Status</div><div class="muted-small">' + escapeHtml(msg.text) + '</div>';
+      } else if(msg.type === 'step_failed'){
+        openRepairModal(msg.event);
+      } else if(msg.type === 'step_repaired'){
+        toast('Step ' + msg.repair.step + ' fixed — the run is continuing.');
+      } else if(msg.type === 'ai_suggestion'){
+        document.getElementById('repairAskAiBtn').disabled = false;
+        if(!msg.result || !msg.result.success){
+          document.getElementById('repairAiStatus').textContent =
+            'AI suggestion failed: ' + ((msg.result && msg.result.error) || 'unknown error') + '. You can try again or fix it manually above.';
+          return;
+        }
+        lastAiSuggestionCode = msg.result.corrected_code || '';
+        // "grounded" (Core/test_execution_manager.py's
+        // suggest_locator_fix()) is a best-effort static check that
+        // the suggestion actually quotes a real selector/name seen on
+        // the page — a useful early signal, but NOT a substitute for
+        // the live "Test Locator" check the operator still gets after
+        // clicking Apply (never skip straight to Retry on this alone).
+        var groundedNote = msg.result.grounded
+          ? 'it references a real element seen on this page —'
+          : 'it could NOT be matched to a known element on this page —';
+        document.getElementById('repairAiStatus').textContent =
+          'AI suggestion found (strategy: ' + (msg.result.strategy || 'n/a') +
+          ', confidence: ' + (msg.result.confidence || 'n/a') + '). ' +
+          groundedNote.charAt(0).toUpperCase() + groundedNote.slice(1) +
+          ' click Apply AI Suggestion, then Test Locator Against Current Page before retrying.';
+        var sug = document.getElementById('repairAiSuggestion');
+        sug.textContent = lastAiSuggestionCode;
+        sug.style.display = '';
+        var expl = document.getElementById('repairAiExplanation');
+        expl.textContent = msg.result.explanation || '';
+        expl.style.display = '';
+        document.getElementById('repairApplyAiBtn').style.display = 'inline-flex';
+      } else if(msg.type === 'locator_verified'){
+        var vbtn = document.getElementById('repairVerifyBtn');
+        vbtn.disabled = false;
+        var vstatus = document.getElementById('repairVerifyStatus');
+        var ev = msg.event || {};
+        if(ev.found && ev.visible){
+          vstatus.style.color = 'var(--success, #1a7f37)';
+          vstatus.textContent = '✓ Locator verified — found and visible on the current page (' + ev.count + ' match' + (ev.count === 1 ? '' : 'es') + ').';
+        } else if(ev.found){
+          vstatus.style.color = '#b8860b';
+          vstatus.textContent = '⚠ Locator found (' + ev.count + ' match' + (ev.count === 1 ? '' : 'es') + ') but not currently visible — retrying may still fail.';
+        } else {
+          vstatus.style.color = 'var(--danger)';
+          vstatus.textContent = '✗ Locator not found on the current page (0 matches).' + (ev.error ? ' ' + ev.error : '') + ' Retry will likely fail — try another locator or ask AI again.';
+        }
+      } else if(msg.type === 'error'){
+        toast(msg.message, true);
+      } else if(msg.type === 'repairs_saved'){
+        // Confirms apply_script_repairs() has now actually written the
+        // fix server-side (the router awaits it before sending this) —
+        // only at this point is it safe to re-read the test case
+        // without a race against that write. autoSelectedTc / the
+        // grid's cached rows still hold whatever was fetched before
+        // this run started, so without this the Script tab would keep
+        // showing the OLD (pre-fix) text until the page was reloaded,
+        // even though the fix was genuinely persisted. Refresh in
+        // place — never a full selectTestCase() re-render here, since
+        // that would yank the operator off whichever tab they're on
+        // (e.g. the Execute tab showing the run result they just
+        // watched finish) — and only if they haven't since navigated
+        // to a different test case.
+        apiFetch('/api/automation/test-cases/' + tc.id).then(function(freshTc){
+          // Item 14 (validation staleness lifecycle): the script slot
+          // that was just repaired (whichever was active_script_source
+          // at repair time — apply_script_repairs() always writes into
+          // exactly that slot, never the other one) no longer matches
+          // whatever text was last Validated, if anything was. Clearing
+          // it here — rather than relying only on the text-mismatch
+          // check tcActivateBtn already does — makes the "Locator Fix ->
+          // Script Modified -> Validate -> Set Active" lifecycle
+          // explicit and immediate instead of a coincidental side effect
+          // of string comparison. This has NO effect on the CURRENTLY
+          // paused/running interactive replay — that subprocess is
+          // already using the verified in-memory fix and is never
+          // routed through Validate/Set Active at all (see
+          // Core/web_interactive_execution.py) — only a FUTURE Execute
+          // needs this script re-validated + re-activated first.
+          var repairedSource = (freshTc.active_script_source || 'AUTO').toUpperCase();
+          if(autoLastValidated.hasOwnProperty(repairedSource)){
+            autoLastValidated[repairedSource] = null;
+            autoRepairInvalidated[repairedSource] = true;
+          }
+          if(autoSelectedTc && autoSelectedTc.id === freshTc.id){
+            autoSelectedTc = freshTc;
+            renderScriptEditor();
+          }
+          loadTypeTestCases('Playwright');
+        }).catch(function(){}).then(function(){ done(); });
+      } else if(msg.type === 'finished'){
+        closeRepairModal();
+        var result = msg.result || {};
+        if(msg.run_uuid){
+          apiFetch('/api/automation/runs/' + msg.run_uuid).then(function(run){
+            renderRunResult(document.getElementById('tcRunResult'), run);
+            if(autoSelectedTc) loadTcHistory(autoSelectedTc.id);
+            refreshExecuteReadiness();
+            loadTypeTestCases('Playwright');
+          }).catch(function(){});
+        }
+        if(result.success && result.repairs && result.repairs.length){
+          offerToSaveRepairs(tc.tc_number || '', result.repairs, function(save){
+            if(save){
+              interactiveSend({ type: 'save_repairs', repairs: result.repairs });
+              toast((tc.tc_number || '') + ': script updated with ' + result.repairs.length +
+                ' locator/value fix(es). Validate and Set Active before your NEXT Execute so it runs clean ' +
+                'without pausing for repair again.');
+              // done() is deliberately NOT called here — it happens once
+              // the "repairs_saved" handler above actually confirms the
+              // write and refreshes the editor/grid, so a queued Execute
+              // Selected batch never advances to the next test case
+              // while this one's persistence is still in flight.
+            } else {
+              interactiveSend({ type: 'discard_repairs' });
+              toast((tc.tc_number || '') + ': fix(es) NOT saved — this run’s corrections were used once and discarded.');
+              done();
+            }
+          });
+        } else {
+          done();
+        }
+      }
+    });
+  }
+
   document.getElementById('tcExecuteBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
-    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/execute', { method: 'POST' }).then(function(job){
-      toast('Execution started (Run ' + job.run_uuid.slice(0, 8) + '…).');
-      startAutoPoll(job.run_uuid);
-    }).catch(function(err){ toast(err.message, true); });
+    // Interactive by default — pauses on a broken locator instead of
+    // just failing. Falls back to a normal (non-interactive) run
+    // transparently, server-side, if this particular script's
+    // structure doesn't support step-by-step repair (see
+    // Core/web_interactive_execution.py).
+    runInteractivePlaywright(autoSelectedTc, function(){});
   });
 
   document.getElementById('tcCancelBtn').addEventListener('click', function(){
+    if(interactiveSocket){
+      interactiveSend({ type: 'cancel_run' });
+      toast('Cancel requested.');
+      return;
+    }
     if(!autoCurrentRunUuid) return;
     apiFetch('/api/automation/runs/' + autoCurrentRunUuid + '/cancel', { method: 'POST' }).then(function(){
       toast('Cancel requested.');
@@ -3362,14 +4442,31 @@
   // thrown ReferenceErrors/TypeErrors on page load if left in place.
 
   // ---- Environment Settings ----
-  function loadEnvironment(){
-    apiFetch('/api/automation/environment').then(function(env){
+  // Item 12/13: Playwright and API each read/write only their OWN
+  // field subset from the SAME /api/automation/environment resource —
+  // see the envModal/apiEnvModal HTML comment above for why this is
+  // safe (the backend merges a partial payload, never overwrites the
+  // other type's fields).
+  function loadPlaywrightEnvironment(){
+    return apiFetch('/api/automation/environment').then(function(env){
       document.getElementById('envBaseUrl').value = env.base_url || '';
       document.getElementById('envUsername').value = env.username || '';
       document.getElementById('envPassword').value = '';
       document.getElementById('envSlowMo').value = env.slow_mo_ms || '';
       document.getElementById('envTimeout').value = env.default_timeout_ms || '';
       document.getElementById('envNotes').value = env.notes || '';
+
+      document.getElementById('envSecretHints').textContent = env.password_is_set
+        ? 'Password is set (unchanged unless you type a new one).' : '';
+
+      var canEdit = autoCanEdit();
+      ['envBaseUrl','envUsername','envPassword','envSlowMo','envTimeout','envNotes','envSaveBtn']
+        .forEach(function(id){ document.getElementById(id).disabled = !canEdit; });
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  function loadApiEnvironment(){
+    return apiFetch('/api/automation/environment').then(function(env){
       document.getElementById('envApiAuthType').value = env.api_auth_type || 'None';
       document.getElementById('envApiAuthToken').value = '';
       document.getElementById('envApiHeaderName').value = env.api_auth_header_name || '';
@@ -3381,17 +4478,15 @@
       document.getElementById('envApiVerifySsl').checked = env.api_verify_ssl !== false;
 
       var hints = [];
-      if(env.password_is_set) hints.push('Password is set (unchanged unless you type a new one).');
       if(env.api_auth_token_is_set) hints.push('Bearer token is set (unchanged unless you type a new one).');
       if(env.api_auth_header_value_is_set) hints.push('Custom header value is set (unchanged unless you type a new one).');
       if(env.api_password_is_set) hints.push('Basic auth password is set (unchanged unless you type a new one).');
-      document.getElementById('envSecretHints').textContent = hints.join(' ');
+      document.getElementById('apiEnvSecretHints').textContent = hints.join(' ');
 
       var canEdit = autoCanEdit();
-      ['envBaseUrl','envUsername','envPassword','envSlowMo','envTimeout','envNotes',
-       'envApiAuthType','envApiAuthToken','envApiHeaderName','envApiHeaderValue',
+      ['envApiAuthType','envApiAuthToken','envApiHeaderName','envApiHeaderValue',
        'envApiUsername','envApiPassword','envApiTimeout','envApiBaseOverride','envApiVerifySsl',
-       'envSaveBtn','envVarName','envVarValue','envVarSaveBtn'].forEach(function(id){
+       'apiEnvSaveBtn','envVarName','envVarValue','envVarSaveBtn'].forEach(function(id){
         document.getElementById(id).disabled = !canEdit;
       });
 
@@ -3418,6 +4513,20 @@
       notes: document.getElementById('envNotes').value,
       slow_mo_ms: document.getElementById('envSlowMo').value,
       default_timeout_ms: document.getElementById('envTimeout').value,
+    };
+    // Secret fields: only sent if the operator actually typed something —
+    // an empty/untouched secret field must never overwrite what's stored.
+    var pw = document.getElementById('envPassword').value;
+    if(pw) payload.password = pw;
+
+    apiFetch('/api/automation/environment', { method: 'PUT', body: JSON.stringify(payload) }).then(function(){
+      toast('Playwright Environment Setting saved.');
+      loadPlaywrightEnvironment();
+    }).catch(function(err){ toast(err.message, true); });
+  });
+
+  document.getElementById('apiEnvSaveBtn').addEventListener('click', function(){
+    var payload = {
       api_auth_type: document.getElementById('envApiAuthType').value,
       api_auth_header_name: document.getElementById('envApiHeaderName').value,
       api_username: document.getElementById('envApiUsername').value,
@@ -3425,10 +4534,6 @@
       api_base_url_override: document.getElementById('envApiBaseOverride').value,
       api_verify_ssl: document.getElementById('envApiVerifySsl').checked,
     };
-    // Secret fields: only sent if the operator actually typed something —
-    // an empty/untouched secret field must never overwrite what's stored.
-    var pw = document.getElementById('envPassword').value;
-    if(pw) payload.password = pw;
     var tok = document.getElementById('envApiAuthToken').value;
     if(tok) payload.api_auth_token = tok;
     var hv = document.getElementById('envApiHeaderValue').value;
@@ -3437,8 +4542,8 @@
     if(apw) payload.api_password = apw;
 
     apiFetch('/api/automation/environment', { method: 'PUT', body: JSON.stringify(payload) }).then(function(){
-      toast('Environment settings saved.');
-      loadEnvironment();
+      toast('API Environment Setting saved.');
+      loadApiEnvironment();
     }).catch(function(err){ toast(err.message, true); });
   });
 
@@ -3450,25 +4555,30 @@
       document.getElementById('envVarName').value = '';
       document.getElementById('envVarValue').value = '';
       toast('Variable remembered.');
-      loadEnvironment();
+      loadApiEnvironment();
     }).catch(function(err){ toast(err.message, true); });
   });
 
   // ---- Test Environment Setting modals ----
-  // Playwright & API share one modal (envModal — same fields/endpoint
-  // as before); SQL gets its own connection-profile modal, since a
-  // database connection profile has nothing in common with a browser/
-  // HTTP environment.
+  // Playwright, API and SQL each get their OWN modal/button now (item
+  // 12/13) — envModal (Playwright-only fields + ClickUp), apiEnvModal
+  // (API-only fields + Remembered Variables), sqlEnvModal (already its
+  // own modal from an earlier delivery). All three still read/write
+  // existing backend storage — see the HTML comment above envModal.
   document.getElementById('pwEnvBtn').addEventListener('click', function(){
-    loadEnvironment();
+    loadPlaywrightEnvironment();
+    refreshClickUpStatus();
     document.getElementById('envModal').classList.add('show');
   });
   document.getElementById('apiEnvBtn').addEventListener('click', function(){
-    loadEnvironment();
-    document.getElementById('envModal').classList.add('show');
+    loadApiEnvironment();
+    document.getElementById('apiEnvModal').classList.add('show');
   });
   document.getElementById('envCloseBtn').addEventListener('click', function(){
     document.getElementById('envModal').classList.remove('show');
+  });
+  document.getElementById('apiEnvCloseBtn').addEventListener('click', function(){
+    document.getElementById('apiEnvModal').classList.remove('show');
   });
 
   function sqlEnvToggleFields(){

@@ -753,7 +753,32 @@ class TestCasesWeb:
     # valid merely because the file exists.")
     # --------------------------------------------------
 
-    def validate_for_execution(self, test_case_id):
+    def validate_for_execution(self, test_case_id, source=None):
+        """
+        Two modes, selected by `source` (item 5/6 lifecycle: "Validate
+        validates selected source only, must NOT execute/activate"):
+
+        - source=None (default) — EXECUTE READINESS. "Is this test
+          case ready to run right now, as currently configured?" Used
+          by the Execute tab's readiness panel and by Execute
+          Selected's per-test-case preflight (item 8). Always checks
+          the currently ACTIVE script (whichever
+          active_script_source already points at), and includes the
+          execution_tool_configured / active_script_approved checks
+          that only make sense for "about to execute right now".
+
+        - source="AUTO"|"MANUAL" — VALIDATE (SELECTED) SCRIPT. "Is
+          THIS saved draft — which may or may not be the currently
+          Active one — syntactically/structurally sound?" Used by the
+          Validate button on the Automation tab (item 6), which must
+          validate whichever source tab the operator is currently
+          viewing, independent of what's Active. Skips the
+          execution_tool_configured / active_script_approved checks
+          entirely — those describe "ready to execute", not "this
+          draft is valid", and Set Active (set_active_script(), above)
+          independently re-checks syntax/eligibility right before
+          activation regardless of what Validate already reported.
+        """
 
         manager = TestExecutionManager()
 
@@ -771,24 +796,28 @@ class TestCasesWeb:
 
             checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
-        expected_tool = self.repository.execution_tool_for_automation_type(
-            automation_type
-        )
+        validating_selected_source = source in ("AUTO", "MANUAL")
 
-        add(
-            "execution_tool_configured",
-            test_case.get("execution_type") == "Automatable"
-            and bool(expected_tool)
-            and test_case.get("execution_tool") == expected_tool,
-            "" if test_case.get("execution_type") == "Automatable" else
-            "The central Test Case is not classified as Automatable.",
-        )
+        if not validating_selected_source:
 
-        add(
-            "active_script_approved", test_case.get("status") == "Automated",
-            "" if test_case.get("status") == "Automated" else
-            "The saved script is a Draft. Validate and activate it first.",
-        )
+            expected_tool = self.repository.execution_tool_for_automation_type(
+                automation_type
+            )
+
+            add(
+                "execution_tool_configured",
+                test_case.get("execution_type") == "Automatable"
+                and bool(expected_tool)
+                and test_case.get("execution_tool") == expected_tool,
+                "" if test_case.get("execution_type") == "Automatable" else
+                "The central Test Case is not classified as Automatable.",
+            )
+
+            add(
+                "active_script_approved", test_case.get("status") == "Automated",
+                "" if test_case.get("status") == "Automated" else
+                "The saved script is a Draft. Validate and activate it first.",
+            )
 
         add(
             "automation_type_set", automation_type != "None",
@@ -797,7 +826,13 @@ class TestCasesWeb:
             ),
         )
 
-        script = TestExecutionManager.get_active_script(test_case)
+        if validating_selected_source:
+            script = (
+                test_case.get("recorded_script") if source == "MANUAL"
+                else test_case.get("automation_script")
+            ) or ""
+        else:
+            script = TestExecutionManager.get_active_script(test_case)
 
         add(
             "script_present", bool(script and script.strip()),

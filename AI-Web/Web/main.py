@@ -4,10 +4,28 @@
 QA AI Studio — Web
 FastAPI Application Entry Point
 
-Version: 1.0
+Version: 1.1
 
 Run locally with:
-    uvicorn Web.main:app --reload --port 8000
+    python run_web.py
+
+(run_web.py lives alongside this Web/ folder, at the AI-Web/ root.)
+
+Do NOT run a bare `uvicorn Web.main:app --reload --port 8000` —
+without restricting which folders the reload watcher looks at, it
+watches this whole working directory for *.py changes, including
+Output/AutomationRuns/, where Core/playwright_runner.py writes a
+fresh *.py script for every single Playwright execution. uvicorn then
+sees that new script as a "source change" and restarts the entire
+server mid-execution, silently killing the run that just started —
+which then shows up in the UI as
+"Interrupted: the server restarted while this run was in progress."
+even though nothing actually crashed. run_web.py fixes this by
+pointing uvicorn's reload watcher only at the real source directories
+(Core/, Web/, Database/, Config/) — see its own module docstring for
+the full diagnosis. If you must invoke uvicorn directly, pass the
+same restriction explicitly:
+    uvicorn Web.main:app --reload --port 8000 --reload-dir Core --reload-dir Web --reload-dir Database --reload-dir Config
 
 This is the very first piece of the desktop-to-web migration: an
 API server that reuses the existing Core/Database business logic
@@ -50,6 +68,10 @@ from Web.routers.users_router import (
 )
 from Web.routers.knowledge_router import router as knowledge_router
 from Web.routers.automation_router import router as automation_router
+from Web.routers.recorder_router import router as recorder_router
+from Web.routers.interactive_execution_router import (
+    router as interactive_execution_router,
+)
 from Web.routers.ai_assistant_router import router as ai_assistant_router
 from Web.routers.dashboard_router import router as dashboard_router
 from Web.routers.qa_engineering_router import router as qa_engineering_router
@@ -119,6 +141,8 @@ app.include_router(audit_router)
 app.include_router(knowledge_router)
 app.include_router(qa_engineering_router)
 app.include_router(automation_router)
+app.include_router(recorder_router)
+app.include_router(interactive_execution_router)
 app.include_router(ai_assistant_router)
 app.include_router(dashboard_router)
 app.include_router(settings_router)

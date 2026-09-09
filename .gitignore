@@ -116,3 +116,7 @@ AI-Web/Config/qa_engineering_export.json
 # IDE / temporary
 .vscode/
 *.log
+
+# Local AI working files and backups
+AI/Claude outputs/
+*.zip

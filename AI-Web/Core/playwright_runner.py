@@ -47,6 +47,19 @@ from Core.test_environment_config import TestEnvironmentConfig
 # after a restart from a different directory. Anchored to this file's
 # own location instead, exactly like GIT_WORKSPACE_ROOT in
 # automation_web_repository.py already does.
+#
+# IMPORTANT for whoever runs the Web server locally: this folder is
+# written to (a brand-new *.py file) on every single Playwright
+# execution. If it ever sits inside a directory that uvicorn's
+# --reload file watcher is watching, each execution triggers uvicorn
+# to see a "source change" and restart the whole server mid-run,
+# silently killing the run it just started — surfacing later as
+# "Interrupted: the server restarted while this run was in progress."
+# This is NOT a crash; it's a self-inflicted restart loop. Always
+# launch the Web server via Web/../run_web.py (AI-Web/run_web.py),
+# which explicitly restricts the reload watcher to Core/, Web/,
+# Database/, and Config/ so this folder is never watched. See
+# run_web.py's own module docstring for the full diagnosis.
 OUTPUT_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "AutomationRuns"
 
 # WEB PORT ADDITION: where failure screenshots (see EVIDENCE_SHIM_TEMPLATE
@@ -340,8 +353,66 @@ def _qa_flatten_accessibility(node, out, max_nodes=150):
     return out
 
 
+def _qa_capture_dom_candidates():
+    # Real, ready-to-use selector STRINGS for whatever stable
+    # attributes actually exist on the live page right now, in the
+    # same priority order QA AI Studio asks locator repair to follow:
+    # data-testid/data-test/data-cy/data-qa, then id, then name.
+    # Giving the AI these literal strings (instead of only role/name
+    # pairs from the accessibility tree, which it then has to guess
+    # how to turn into correct Playwright syntax itself) is what
+    # actually fixes "AI suggestion isn't reliably useful" — the model
+    # can quote one of these directly instead of inventing one.
+    # NOTE: this whole function's TEXT lives inside
+    # INTERACTIVE_HARNESS_TEMPLATE's own outer raw triple-single-quoted
+    # string below (see that variable's own comment -- everything in
+    # this template is written out and run in a separate subprocess,
+    # not live Python here) -- so the JS source below is deliberately
+    # wrapped in PYTHON's OTHER triple-quote style (double quotes, not
+    # single) purely to avoid a nested triple-single-quote prematurely
+    # closing that outer string; it has no effect on the JS itself.
+    try:
+        return page.evaluate("""() => {
+            const out = [];
+            const seen = new Set();
+            const attrPriority = ["data-testid", "data-test", "data-cy", "data-qa", "id", "name"];
+            const nodes = document.querySelectorAll(
+                "input, button, select, textarea, a, [role], " +
+                "[data-testid], [data-test], [data-cy], [data-qa]"
+            );
+            for (const el of nodes) {
+                if (out.length >= 80) break;
+                let selector = null, attrUsed = null;
+                for (const attr of attrPriority) {
+                    const val = el.getAttribute(attr);
+                    if (val) {
+                        attrUsed = attr;
+                        selector = attr === "id"
+                            ? ("#" + CSS.escape(val))
+                            : ("[" + attr + '="' + val.replace(/"/g, '\\\\"') + '"]');
+                        break;
+                    }
+                }
+                if (!selector || seen.has(selector)) continue;
+                seen.add(selector);
+                const text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 60);
+                const rects = el.getClientRects();
+                out.push({
+                    selector: selector,
+                    tag: el.tagName.toLowerCase(),
+                    attr: attrUsed,
+                    text: text,
+                    visible: !!(el.offsetWidth || el.offsetHeight || rects.length),
+                });
+            }
+            return out;
+        }""")
+    except Exception:
+        return []
+
+
 def _qa_capture_context():
-    context = {"url": "", "title": "", "accessibility": []}
+    context = {"url": "", "title": "", "accessibility": [], "dom_candidates": []}
     try:
         context["url"] = page.url
     except Exception:
@@ -353,6 +424,10 @@ def _qa_capture_context():
     try:
         snapshot = page.accessibility.snapshot() or {}
         context["accessibility"] = _qa_flatten_accessibility(snapshot, [])
+    except Exception:
+        pass
+    try:
+        context["dom_candidates"] = _qa_capture_dom_candidates()
     except Exception:
         pass
     return context
@@ -388,6 +463,36 @@ def _qa_rebuild_code(code_text, old_locator, old_value, new_locator, new_value):
     return result
 
 
+def _qa_verify_locator(raw_locator):
+    # Live-page check only -- deliberately does NOT click/fill/exec
+    # anything. This is what lets QA AI Studio show "Locator verified"
+    # / "Locator not found" for a candidate (typed manually or from an
+    # AI suggestion) BEFORE the operator commits to Retry With This
+    # Fix, per the explicit "do not blindly accept an AI locator
+    # without checking it against the current page" requirement.
+    # Playwright's page.locator() already auto-detects a leading "//"
+    # or ".//" as XPath, so no special-casing is needed here for
+    # XPath vs CSS/text/etc locators.
+    result = {"found": False, "count": 0, "visible": False, "error": ""}
+    if not raw_locator:
+        result["error"] = "No locator provided."
+        return result
+    try:
+        loc = page.locator(raw_locator)
+        count = loc.count()
+        result["count"] = count
+        result["found"] = count > 0
+        if result["found"]:
+            try:
+                loc.first.wait_for(state="visible", timeout=1500)
+                result["visible"] = True
+            except Exception:
+                result["visible"] = False
+    except Exception as ex:
+        result["error"] = str(ex)
+    return result
+
+
 def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
     locator, value = _qa_extract_locator_and_value(code_text)
     context = _qa_capture_context()
@@ -402,16 +507,37 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
         "url": context["url"],
         "title": context["title"],
         "accessibility": context["accessibility"],
+        "dom_candidates": context["dom_candidates"],
     })
-    command = _qa_read_command()
-    action = command.get("action")
-    if action == "retry_code":
-        return command.get("code") or code_text
-    if action == "retry":
-        new_locator = command.get("locator", locator)
-        new_value = command.get("value", value)
-        return _qa_rebuild_code(code_text, locator, value, new_locator, new_value)
-    return None
+    # Loop reading commands for this SAME pause -- "verify_locator" is
+    # a non-terminal, repeatable check (it does not count as a repair
+    # attempt and does not resume the run): it reports back a
+    # "locator_verified" event and waits for the NEXT command. Only a
+    # terminal action (retry / retry_code / cancel) ever returns from
+    # this function.
+    while True:
+        command = _qa_read_command()
+        action = command.get("action")
+        if action == "verify_locator":
+            check_locator = command.get("locator") or locator
+            verify_result = _qa_verify_locator(check_locator)
+            _qa_send_event({
+                "event": "locator_verified",
+                "step": step_number,
+                "locator": check_locator,
+                "found": verify_result["found"],
+                "count": verify_result["count"],
+                "visible": verify_result["visible"],
+                "error": verify_result["error"],
+            })
+            continue
+        if action == "retry_code":
+            return command.get("code") or code_text
+        if action == "retry":
+            new_locator = command.get("locator", locator)
+            new_value = command.get("value", value)
+            return _qa_rebuild_code(code_text, locator, value, new_locator, new_value)
+        return None
 
 
 def _qa_run_step(step_number, code_text):
@@ -1063,6 +1189,58 @@ class PlaywrightRunner:
 
         return statements or None
 
+    def _extract_script_imports(self, script_text):
+        """
+        Returns the exact source text of every top-level import
+        statement in the recorded script (e.g. "from playwright.sync_api
+        import Playwright, sync_playwright, expect"), in original
+        order, or "" if none/parsing fails.
+
+        Root cause fix (2026-09-09): a Manually Recorded (Playwright
+        codegen) script's steps commonly reference names from that
+        import line INSIDE run()'s body — most importantly expect()
+        for assertions, which `--target python` emits by default for
+        every recorded assertion. _build_generic_interactive_script()
+        below only ever wraps run()'s BODY statements; it never
+        carried the script's own import line along, so the interactive
+        harness executed every such statement with
+        exec(code, globals()) against the HARNESS's globals(), which
+        only defines what INTERACTIVE_HARNESS_TEMPLATE itself imports
+        (json/re/sys/sync_playwright) — never expect(). The result:
+        any step using expect(...) failed with
+        "NameError: name 'expect' is not defined" on every single
+        attempt, forever, no matter what locator/value fix the
+        operator applied — and because that failure still routes
+        through the SAME step_failed event as a real locator miss, the
+        operator was shown a locator-repair prompt for a problem no
+        locator fix could ever solve, making replay LOOK like it
+        "doesn't properly continue" past that step. Carrying the
+        script's own imports along fixes this at the source, for
+        whatever names it actually imports — not just expect().
+        """
+
+        try:
+
+            tree = ast.parse(script_text)
+
+        except SyntaxError:
+
+            return ""
+
+        lines = []
+
+        for node in tree.body:
+
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+
+                source = ast.get_source_segment(script_text, node)
+
+                if source:
+
+                    lines.append(source)
+
+        return "\n".join(lines)
+
     def _build_generic_interactive_script(
         self, script_text, slow_mo_ms, timeout_ms, max_repair_rounds
     ):
@@ -1145,9 +1323,22 @@ class PlaywrightRunner:
 
         steps_code = "\n".join(body_lines)
 
+        # Carry the recorded script's OWN top-level imports along —
+        # see _extract_script_imports()'s docstring for why this is
+        # required for expect() (and anything else the script itself
+        # imports) to actually be defined when each step's exact
+        # source text is exec()'d inside _qa_run_step(). Placed after
+        # the harness so nothing here can shadow the harness's own
+        # names; re-importing sync_playwright itself (already imported
+        # above) is harmless.
+        script_imports = self._extract_script_imports(script_text)
+
+        imports_block = (script_imports + "\n\n") if script_imports else ""
+
         return (
             shim
             + harness
+            + imports_block
             + "with sync_playwright() as playwright:\n"
             f"{steps_code}\n\n"
             "_qa_send_event({\"event\": \"run_finished\", "
@@ -1161,6 +1352,7 @@ class PlaywrightRunner:
         tc_number="script",
         on_step_failed=None,
         on_repaired=None,
+        on_locator_verified=None,
         max_repair_rounds=3,
     ):
         """
@@ -1171,8 +1363,21 @@ class PlaywrightRunner:
         case is being run).
 
         Whenever a step fails, calls on_step_failed(event_dict)
-        SYNCHRONOUSLY and uses whatever decision dict it returns —
-        the caller (a background QThread; see
+        SYNCHRONOUSLY and uses whatever decision dict it returns. If
+        that decision is {"action": "verify_locator", "locator": ...}
+        (a live-page existence/visibility check that does NOT attempt
+        the step and does NOT count as a repair round), the harness
+        reports the result as a "locator_verified" event, which this
+        method relays to on_locator_verified(event_dict) the exact
+        same way, and keeps doing so for as many verify round-trips as
+        the operator asks for — only once a terminal decision (retry /
+        retry_code / cancel) comes back does the harness resume the
+        run. This is what lets the UI test an AI-suggested or manually
+        typed locator against the CURRENT live page before committing
+        to Retry With This Fix.
+
+        On the original terminal decision path, the caller (a
+        background QThread; see
         App/UI/QAAutomation/test_execution_worker.py's
         PlaywrightInteractiveWorker) is expected to relay the event
         to the UI thread, show the repair dialog, and block until
@@ -1285,6 +1490,28 @@ class PlaywrightRunner:
 
                     decision = (
                         on_step_failed(event) if on_step_failed
+                        else {"action": "cancel"}
+                    )
+
+                    command = decision or {"action": "cancel"}
+
+                    process.stdin.write(json.dumps(command) + "\n")
+
+                    process.stdin.flush()
+
+                elif event_type == "locator_verified":
+
+                    # Result of a non-terminal "verify_locator" check
+                    # the harness performed for the SAME still-open
+                    # step_failed pause — relay it and, exactly like
+                    # step_failed above, write back whatever decision
+                    # comes back (which may itself be another
+                    # verify_locator, another round of Ask AI having
+                    # happened out-of-band, or a terminal retry/
+                    # retry_code/cancel that finally lets the harness
+                    # resume).
+                    decision = (
+                        on_locator_verified(event) if on_locator_verified
                         else {"action": "cancel"}
                     )
 

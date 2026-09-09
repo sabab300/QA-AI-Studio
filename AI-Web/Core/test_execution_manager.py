@@ -191,17 +191,45 @@ class TestExecutionManager:
 
                     break
 
+        # ROOT CAUSE (confirmed 2026-09-09 by reproducing an actual
+        # POST /api/automation/test-cases/import against a file this
+        # app itself produces): "Execution Type" / "Execution Tool"
+        # used to be hard-required SHEET-LEVEL columns here, but
+        # Core/excel_exporter.py's ExcelExporter.export_test_cases()
+        # -- the real "Export as Excel" QA Engineering already offers,
+        # called from Core/test_case_generator.py -- has NEVER written
+        # those two columns at all (QA Engineering only drafts
+        # Scenario/Importance/Test Type/Test Case/Pre-Conditions/
+        # Steps/Expected Result/Actual Result; deciding automation
+        # type/tool is Automation's own job, later, per test case).
+        # The result: the extremely natural "export from QA
+        # Engineering, then import into Automation" round trip always
+        # failed with HTTP 400 "Required column(s) missing: Execution
+        # Type, Execution Tool." — even though the SAMPLE template
+        # (which does include both columns) imports fine, making the
+        # feature look broken/inconsistent rather than obviously so.
+        # Fix: these two are now OPTIONAL at the sheet level. A file
+        # that omits them entirely imports every row as Execution
+        # Type=Manual (Execution Tool blank — always valid per the
+        # existing per-row rule below), matching how a test case
+        # created any other way in this app starts out
+        # (status='Manual', automation_type='None' — see this
+        # method's own docstring above). A file that DOES include
+        # either column still has every row's value validated exactly
+        # as before (Manual/Automatable; Automatable requires a
+        # registered tool) — this only relaxes the "column missing
+        # entirely" rejection, never the per-row business rule.
         required_columns = {
             "scenario": "Scenario", "importance": "Importance",
             "test_type": "Test Type(s)", "test_case": "Test Case",
             "pre_conditions": "Preconditions", "steps": "Steps",
-            "expected_result": "Expected Result", "execution_type": "Execution Type",
-            "execution_tool": "Execution Tool",
+            "expected_result": "Expected Result",
         }
         missing = [label for field, label in required_columns.items() if field not in column_fields.values()]
         if missing:
             summary["error"] = "Required column(s) missing: " + ", ".join(missing) + "."
             return summary
+        has_execution_type_column = "execution_type" in column_fields.values()
 
         parsed_rows = []
         tool_aliases = {}
@@ -233,13 +261,21 @@ class TestExecutionManager:
 
             row_errors = []
             for field, label in required_columns.items():
-                if field != "execution_tool" and not str(row.get(field) or "").strip():
+                if not str(row.get(field) or "").strip():
                     row_errors.append(f"{label} is required")
-            execution_type = str(row.get("execution_type") or "").strip().lower()
-            if execution_type not in {"manual", "automatable"}:
-                row_errors.append("Execution Type must be Manual or Automatable")
+            if has_execution_type_column:
+                execution_type = str(row.get("execution_type") or "").strip().lower()
+                if execution_type not in {"manual", "automatable"}:
+                    row_errors.append("Execution Type must be Manual or Automatable")
+                else:
+                    row["execution_type"] = execution_type.title()
             else:
-                row["execution_type"] = execution_type.title()
+                # No Execution Type column in this sheet at all -- see
+                # the sheet-level comment above: default to Manual
+                # rather than rejecting every row in a legitimately
+                # QA-Engineering-exported file.
+                execution_type = "manual"
+                row["execution_type"] = "Manual"
             raw_tool = str(row.get("execution_tool") or "").strip()
             if execution_type == "automatable":
                 mapped_tool = tool_aliases.get(normalize(raw_tool))
@@ -249,7 +285,7 @@ class TestExecutionManager:
                     row_errors.append(f'Execution Tool "{raw_tool}" is not registered')
                 else:
                     row["execution_tool"] = mapped_tool
-            elif execution_type == "manual":
+            else:
                 row["execution_tool"] = ""
             if row_errors:
                 summary["rejected"] += 1
@@ -1706,7 +1742,7 @@ class TestExecutionManager:
 
     def execute_playwright_interactive(
         self, test_case_id, on_step_failed, on_repaired=None,
-        max_repair_rounds=3,
+        on_locator_verified=None, max_repair_rounds=3,
     ):
         """
         Interactive counterpart to execute_playwright(). Works for
@@ -1744,6 +1780,7 @@ class TestExecutionManager:
             tc_number=test_case.get("tc_number", "script"),
             on_step_failed=on_step_failed,
             on_repaired=on_repaired,
+            on_locator_verified=on_locator_verified,
             max_repair_rounds=max_repair_rounds,
         )
 
@@ -1866,6 +1903,30 @@ class TestExecutionManager:
             or "(no accessibility information captured)"
         )
 
+        # 2026-09-09: dom_candidates gives the model REAL, ready-to-use
+        # selector strings for whatever stable attributes actually
+        # exist on the page (see playwright_runner.py's
+        # _qa_capture_dom_candidates()) — id/data-testid/name — rather
+        # than only role/name pairs it then has to guess how to turn
+        # into correct Playwright syntax itself. This is the fix for
+        # "AI suggestion isn't reliably finding a useful locator": the
+        # model can quote one of these candidates directly.
+        dom_candidates = event.get("dom_candidates") or []
+
+        candidates_block = (
+            "\n".join(
+                "- {0}  (<{1}>{2}{3})".format(
+                    c.get("selector", ""),
+                    c.get("tag", ""),
+                    (" text=\"%s\"" % c["text"]) if c.get("text") else "",
+                    "" if c.get("visible", True) else " NOT VISIBLE",
+                )
+                for c in dom_candidates[:80]
+                if c.get("selector")
+            )
+            or "(no stable-attribute elements captured)"
+        )
+
         test_case_block = ""
 
         if test_case:
@@ -1879,16 +1940,40 @@ class TestExecutionManager:
             "A Playwright automation step just failed. Suggest a "
             "corrected replacement for ONLY that one line of code, "
             "using the REAL elements actually present on the page "
-            "right now (listed below) — do not invent an element "
-            "that isn't in that list.\n\n"
+            "right now (listed below) — do not invent an element, "
+            "id, or attribute value that isn't in one of the two "
+            "lists below.\n\n"
             f"{test_case_block}"
             f"Failing step (step {event.get('step')}): "
             f"{event.get('code', '')}\n"
             f"Error: {event.get('error', '')}\n"
             f"Page URL: {event.get('url', '')}\n"
             f"Page Title: {event.get('title', '')}\n\n"
-            f"Real elements currently on the page (role: name):\n"
+            "Known stable selectors on this page right now — PREFER "
+            "one of these verbatim when one fits the failing step; "
+            "they are already confirmed to exist:\n"
+            f"{candidates_block}\n\n"
+            "Other real elements on the page (role: name), for "
+            "anything not covered above:\n"
             f"{accessibility_block}\n\n"
+            "Locator strategy, in priority order — use the highest "
+            "one that actually fits an element from the lists above:\n"
+            "1. a data-testid/data-test/data-cy/data-qa attribute "
+            "selector from the stable-selectors list\n"
+            "2. a stable #id selector from the stable-selectors list\n"
+            "3. page.get_by_role(\"role\", name=\"...\") using an "
+            "exact role/name pair from the accessibility list\n"
+            "4. a label/placeholder/text-based locator (e.g. "
+            "page.get_by_label(...), page.get_by_text(...))\n"
+            "5. a robust CSS selector (prefer an attribute selector "
+            "like [name=\"...\"] over a fragile nth-child chain)\n"
+            "6. a robust RELATIVE XPath as a last resort — Playwright "
+            "auto-detects any locator starting with \"//\" as XPath, "
+            "so //input[@name='username'] or "
+            "//button[normalize-space()='Login'] are both fully "
+            "supported. NEVER use an absolute, index-heavy XPath like "
+            "/html/body/div[3]/div[1]/button[2] — that is exactly the "
+            "kind of brittle locator this repair exists to replace.\n\n"
             "Common causes worth checking: a native <select> "
             "dropdown needs page.select_option(selector, "
             "label=\"...\") or value=/index= — NOT fill() or "
@@ -1900,7 +1985,9 @@ class TestExecutionManager:
             "Respond with ONLY a JSON object, no explanation "
             "outside it, no markdown fences:\n"
             '{"corrected_code": "the one corrected Python '
-            'statement", "explanation": "one short sentence on '
+            'statement", "strategy": "which of the 6 numbered '
+            'strategies above you used", "confidence": "high, '
+            'medium, or low", "explanation": "one short sentence on '
             'why"}'
         )
 
@@ -1933,10 +2020,49 @@ class TestExecutionManager:
 
                 raise ValueError("Empty corrected_code")
 
+            if corrected_code.strip() == (event.get("code") or "").strip():
+
+                # The model just echoed the already-failing line back —
+                # never present that as if it were a fix (the operator
+                # would retry the exact same broken statement and get
+                # the exact same failure again).
+                raise ValueError(
+                    "AI returned the same failing code unchanged"
+                )
+
+            # Best-effort static grounding check (2026-09-09): does the
+            # suggested code actually reference one of the REAL
+            # selectors/elements we told the model about, rather than
+            # something it invented? This can't replace actually
+            # running it against the live page (that still happens for
+            # real when the operator clicks Apply/Retry, via the exact
+            # same step-failure/retry protocol as a manual fix — see
+            # playwright_runner.py's _qa_run_step()), but it gives the
+            # operator an honest signal BEFORE they spend a retry
+            # attempt on it, per the "don't blindly accept an AI
+            # locator" requirement.
+            known_selectors = [
+                c.get("selector", "") for c in dom_candidates if c.get("selector")
+            ]
+
+            grounded = any(
+                sel and sel in corrected_code for sel in known_selectors
+            ) or any(
+                # role/name-based suggestions won't literally contain a
+                # CSS selector — fall back to checking whether any
+                # accessible name we showed the model appears quoted
+                # in the suggestion.
+                line.split(": ", 1)[-1] and line.split(": ", 1)[-1] in corrected_code
+                for line in accessibility_lines[:150]
+            )
+
             return {
                 "success": True,
                 "corrected_code": corrected_code,
+                "strategy": parsed.get("strategy", ""),
+                "confidence": parsed.get("confidence", ""),
                 "explanation": parsed.get("explanation", ""),
+                "grounded": grounded,
             }
 
         except (TypeError, ValueError, json.JSONDecodeError):
