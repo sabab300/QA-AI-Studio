@@ -41,9 +41,9 @@ class NavigationPanel(QFrame):
 
         layout = QVBoxLayout(self)
 
-        layout.setContentsMargins(10, 15, 10, 15)
+        layout.setContentsMargins(8, 10, 8, 10)
 
-        layout.setSpacing(8)
+        layout.setSpacing(4)
 
         pages = [
 
@@ -73,7 +73,7 @@ class NavigationPanel(QFrame):
 
             button.setCursor(Qt.PointingHandCursor)
 
-            button.setMinimumHeight(42)
+            button.setMinimumHeight(36)
 
             button.setSizePolicy(
                 QSizePolicy.Expanding,

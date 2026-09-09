@@ -131,16 +131,14 @@ class QAEngineeringHubPage(QWidget):
         tabstrip = QFrame()
         tabstrip.setObjectName("DesktopTabStrip")
         row = QHBoxLayout(tabstrip)
-        row.setContentsMargins(15, 10, 15, 10)
-        row.setSpacing(8)
-        title = QLabel("QA Engineering")
-        title.setObjectName("SectionTitle")
-        row.addWidget(title)
-        row.addSpacing(20)
+        row.setContentsMargins(12, 0, 12, 0)
+        row.setSpacing(18)
 
         self.tab_buttons = [QPushButton(label) for label in self.TAB_LABELS]
         for button in self.tab_buttons:
-            button.setMinimumHeight(36)
+            button.setObjectName("DesktopTabButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(30)
             button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             row.addWidget(button)
         row.addStretch(1)
@@ -169,8 +167,4 @@ class QAEngineeringHubPage(QWidget):
 
     def _update_tabs(self, active_index):
         for index, button in enumerate(self.tab_buttons):
-            button.setStyleSheet(
-                "QPushButton{background:#005B96;color:white;font-weight:bold;border-radius:6px;padding:8px 14px;}"
-                if index == active_index else
-                "QPushButton{background:transparent;border-radius:6px;padding:8px 14px;} QPushButton:hover{background:rgba(0,91,150,0.12);}"
-            )
+            button.setChecked(index == active_index)

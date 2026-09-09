@@ -41,13 +41,8 @@ class KnowledgeHubPage(QWidget):
         tabstrip = QFrame()
         tabstrip.setObjectName("DesktopTabStrip")
         tabstrip_layout = QHBoxLayout(tabstrip)
-        tabstrip_layout.setContentsMargins(15, 10, 15, 10)
-        tabstrip_layout.setSpacing(8)
-
-        title = QLabel("Knowledge Hub")
-        title.setObjectName("SectionTitle")
-        tabstrip_layout.addWidget(title)
-        tabstrip_layout.addSpacing(20)
+        tabstrip_layout.setContentsMargins(12, 0, 12, 0)
+        tabstrip_layout.setSpacing(18)
 
         self.btn_manage = QPushButton(self.TAB_LABELS[0])
         self.btn_upload = QPushButton(self.TAB_LABELS[1])
@@ -55,7 +50,9 @@ class KnowledgeHubPage(QWidget):
         self.tab_buttons = (self.btn_manage, self.btn_upload, self.btn_smart)
 
         for button in self.tab_buttons:
-            button.setMinimumHeight(36)
+            button.setObjectName("DesktopTabButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(30)
             button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             tabstrip_layout.addWidget(button)
 
@@ -96,13 +93,4 @@ class KnowledgeHubPage(QWidget):
 
     def update_tabstrip(self, active_index):
         for index, button in enumerate(self.tab_buttons):
-            if index == active_index:
-                button.setStyleSheet(
-                    "QPushButton{background:#005B96;color:white;font-weight:bold;"
-                    "border-radius:6px;padding:8px 14px;}"
-                )
-            else:
-                button.setStyleSheet(
-                    "QPushButton{background:transparent;border-radius:6px;padding:8px 14px;}"
-                    "QPushButton:hover{background:rgba(0,91,150,0.12);}"
-                )
+            button.setChecked(index == active_index)

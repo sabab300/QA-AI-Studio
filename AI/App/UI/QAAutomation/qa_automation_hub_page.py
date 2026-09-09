@@ -130,17 +130,9 @@ class QAAutomationHubPage(QWidget):
 
         tabstrip_layout = QHBoxLayout(tabstrip)
 
-        tabstrip_layout.setContentsMargins(15, 10, 15, 10)
+        tabstrip_layout.setContentsMargins(12, 0, 12, 0)
 
-        tabstrip_layout.setSpacing(8)
-
-        title = QLabel("QA Automation")
-
-        title.setObjectName("SectionTitle")
-
-        tabstrip_layout.addWidget(title)
-
-        tabstrip_layout.addSpacing(20)
+        tabstrip_layout.setSpacing(18)
 
         self.btn_playwright = QPushButton(labels[0])
 
@@ -156,7 +148,9 @@ class QAAutomationHubPage(QWidget):
 
         for btn in self.tab_buttons:
 
-            btn.setMinimumHeight(36)
+            btn.setObjectName("DesktopTabButton")
+            btn.setCheckable(True)
+            btn.setMinimumHeight(30)
 
             # QA-AUTOMATION-FINAL-ARCHITECTURE-04 hidden-bug fix: this
             # used to call btn.setCursor(0) — passing a plain int
@@ -228,32 +222,4 @@ class QAAutomationHubPage(QWidget):
     def update_tabstrip(self, active_index):
 
         for index, button in enumerate(self.tab_buttons):
-
-            if index == active_index:
-
-                button.setStyleSheet(
-                    """
-                    QPushButton{
-                        background:#005B96;
-                        color:white;
-                        font-weight:bold;
-                        border-radius:6px;
-                        padding:8px 14px;
-                    }
-                    """
-                )
-
-            else:
-
-                button.setStyleSheet(
-                    """
-                    QPushButton{
-                        background:transparent;
-                        border-radius:6px;
-                        padding:8px 14px;
-                    }
-                    QPushButton:hover{
-                        background:rgba(0,91,150,0.12);
-                    }
-                    """
-                )
+            button.setChecked(index == active_index)

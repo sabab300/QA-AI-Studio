@@ -102,16 +102,16 @@ class TestExecutionManager:
     # the same order Excel Exporter writes them, for reference.
     _IMPORT_FIELD_ALIASES = {
         "scenario": (
-            "namescenariorequirement", "scenario", "requirement",
+            "namescenariorequirement", "namescenarioreq", "scenario", "requirement",
             "name",
         ),
         "importance": (
-            "importancehighmediumlow", "importance", "priority",
+            "importancehighmediumlow", "priorityhighmediumlow", "importance", "priority",
         ),
-        "test_type": ("testtype", "type"),
+        "test_type": ("testtype", "testtypes", "testtypepositivenegative", "type", "testcategory", "testcategories"),
         "test_case": ("testcase", "testcasetitle", "title"),
         "pre_conditions": (
-            "preconditions", "precondition", "prerequisites",
+            "preconditions", "precondition", "preconditionsrequired", "prerequisites",
         ),
         "steps": ("steps", "teststeps"),
         "expected_result": ("expectedresult", "expected"),
@@ -2054,6 +2054,42 @@ class TestExecutionManager:
                     "AI returned the same failing code unchanged"
                 )
 
+            # ROOT CAUSE (confirmed 2026-09-09 from a real production
+            # run: TC_D22_M29_KN34_V32_CRF_FIL_0001, run id 36, step 6)
+            # — a real local model can respond with a bare locator/
+            # XPath string instead of a full "page.<method>(...)"
+            # statement (in the observed crash it echoed a malformed,
+            # self-nested XPath). Nothing previously checked that
+            # corrected_code is actually valid, executable Python
+            # before it was shown to the operator as a ready-to-apply
+            # suggestion — "Test Locator Against Current Page" only
+            # regex-extracts the first quoted substring, so it can
+            # report a false "Verified" even when the surrounding code
+            # is garbage, and clicking Retry then crashes the whole
+            # interactive subprocess several steps later with an
+            # opaque SyntaxError instead of failing here, where there
+            # is still a clear, actionable message and the operator
+            # can just ask again or fix it manually. Reject anything
+            # that isn't valid Python, or doesn't look like a
+            # Playwright statement, right here.
+            try:
+                ast.parse(corrected_code, mode="exec")
+            except SyntaxError as syntax_error:
+                raise ValueError(
+                    "AI returned code that is not valid Python "
+                    f"({syntax_error.msg}) — not applying it. "
+                    f"Raw suggestion: {corrected_code[:200]}"
+                )
+
+            if not re.search(r"\bpage\s*\.\s*\w+\s*\(", corrected_code):
+
+                raise ValueError(
+                    "AI returned text that doesn't look like a "
+                    "Playwright statement (no page.<method>(...) "
+                    f"call) — not applying it. Raw suggestion: "
+                    f"{corrected_code[:200]}"
+                )
+
             # Best-effort static grounding check (2026-09-09): does the
             # suggested code actually reference one of the REAL
             # selectors/elements we told the model about, rather than
@@ -2089,7 +2125,22 @@ class TestExecutionManager:
                 "grounded": grounded,
             }
 
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except ValueError as validation_error:
+
+            # A ValueError raised deliberately above (empty
+            # corrected_code, an unchanged echo, invalid Python
+            # syntax, or text that doesn't look like a Playwright
+            # statement) already carries a specific, actionable
+            # message — surface it as-is instead of masking it with
+            # the generic "wasn't in the expected format" text below,
+            # which used to happen here and made every one of those
+            # distinct problems look identical to the operator.
+            return {
+                "success": False,
+                "error": str(validation_error),
+            }
+
+        except (TypeError, json.JSONDecodeError):
 
             return {
                 "success": False,

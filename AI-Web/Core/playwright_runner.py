@@ -568,7 +568,25 @@ def _qa_run_step(step_number, code_text):
                     "code": current_code,
                     "error": str(ex),
                 })
-                raise
+                # ROOT CAUSE (confirmed 2026-09-09 from a real
+                # production run -- id 36 -- that ended with the
+                # unhelpful error_message "SyntaxError: invalid
+                # syntax"): this used to be a bare `raise`, which
+                # propagates the LAST attempt's exception uncaught out
+                # of the whole subprocess -- Python then dumps a full
+                # traceback to stderr (exit code 1, indistinguishable
+                # from any other crash) and playwright_runner.py's
+                # run_script_interactive() readline loop had no
+                # "step_gave_up" branch at all, so that event was
+                # silently dropped and the operator only ever saw the
+                # LAST attempt's raw error text, not "gave up after N
+                # repair attempts". A clean, distinct exit code here
+                # (matching run_cancelled_by_operator's sys.exit(2)
+                # pattern just below) lets run_script_interactive()
+                # recognize this specific outcome and report it
+                # properly instead of treating it as an unexplained
+                # crash.
+                sys.exit(3)
             outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt)
             if outcome is None:
                 _qa_send_event({
@@ -1445,6 +1463,8 @@ class PlaywrightRunner:
 
         cancelled = False
 
+        gave_up = None
+
         stdout_lines = []
 
         process = subprocess.Popen(
@@ -1539,6 +1559,25 @@ class PlaywrightRunner:
 
                     cancelled = True
 
+                elif event_type == "step_gave_up":
+
+                    # ROOT CAUSE (confirmed 2026-09-09, real run id
+                    # 36): the interactive harness (see
+                    # INTERACTIVE_HARNESS_TEMPLATE's _qa_run_step()
+                    # above) already sent this event once
+                    # _QA_MAX_REPAIR_ROUNDS was exhausted on a single
+                    # step, but nothing here ever listened for it —
+                    # the branch simply didn't exist, so the event was
+                    # silently dropped and the operator's only signal
+                    # was whatever raw text ended up on stderr. Capture
+                    # it so the final result carries a clean, specific
+                    # reason instead of a bare stack-trace tail.
+                    gave_up = {
+                        "step": event.get("step"),
+                        "code": event.get("code"),
+                        "error": event.get("error"),
+                    }
+
         finally:
 
             try:
@@ -1561,11 +1600,11 @@ class PlaywrightRunner:
 
         self.logger.info(
             f"Interactive Playwright run finished in {duration:.1f}s "
-            f"— {'PASS' if success else ('CANCELLED' if cancelled else 'FAIL')} "
+            f"— {'PASS' if success else ('CANCELLED' if cancelled else ('GAVE UP' if gave_up else 'FAIL'))} "
             f"(exit code {return_code}, {len(repairs)} repair(s))"
         )
 
-        return {
+        result = {
             "interactive_supported": True,
             "success": success,
             "cancelled": cancelled,
@@ -1578,6 +1617,33 @@ class PlaywrightRunner:
             "timeout_ms": timeout_ms,
             "repairs": repairs,
         }
+
+        if gave_up:
+
+            # AutomationExecutionRepository.mark_finished() reads
+            # result["error"] FIRST and only falls back to the last
+            # non-empty line of stderr when it's absent -- populating
+            # it here is what actually fixes Execution Log/Run Details
+            # showing "SyntaxError: invalid syntax" (an opaque
+            # traceback tail) instead of a real explanation. Note this
+            # also makes mark_finished() classify the run as "Error"
+            # rather than "Failed" (its has_hard_error check is `there
+            # IS an "error" key and no stdout`) -- deliberate: giving
+            # up after exhausting repair attempts on one step is not
+            # the same thing as a script running cleanly to a failed
+            # assertion, so "Error" is the more honest status here,
+            # consistent with how this same method already treats
+            # "Playwright isn't installed" as Error rather than Fail.
+            result["gave_up"] = gave_up
+            result["error"] = (
+                f"Step {gave_up.get('step')} could not be repaired "
+                f"after {max_repair_rounds} attempt(s) — the run was "
+                f"stopped rather than left hanging. Last attempted "
+                f"code: {gave_up.get('code')!r}. Last error: "
+                f"{gave_up.get('error')}"
+            )
+
+        return result
 
     def cancel_current_run(self):
         """

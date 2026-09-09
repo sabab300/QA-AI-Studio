@@ -41,9 +41,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("QA AI Studio")
 
-        self.resize(1600, 900)
+        self.resize(1500, 860)
 
-        self.setMinimumSize(1300, 800)
+        self.setMinimumSize(1100, 700)
 
         self._load_stylesheet()
 
@@ -118,13 +118,13 @@ class MainWindow(QMainWindow):
         content_layout = QVBoxLayout(content)
 
         content_layout.setContentsMargins(
-            25,
-            20,
-            25,
-            20
+            18,
+            12,
+            18,
+            12
         )
 
-        content_layout.setSpacing(15)
+        content_layout.setSpacing(8)
 
         # ------------------------------------------------
 

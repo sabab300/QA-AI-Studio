@@ -11,6 +11,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -168,6 +169,43 @@ class _RoleDialog(QDialog):
         }
 
 
+
+
+class _TemporaryPasswordDialog(QDialog):
+    """One-time credential handoff with explicit clipboard action."""
+    def __init__(self, username, password, parent=None):
+        super().__init__(parent)
+        self.password = password
+        self.setWindowTitle("User created")
+        self.setMinimumWidth(430)
+        layout = QVBoxLayout(self)
+        title = QLabel("User created successfully")
+        title.setObjectName("SectionTitle")
+        layout.addWidget(title)
+        note = QLabel(f"Username: <b>{username}</b><br>The temporary password is shown once. The user must change it on first login.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.password_box = QLineEdit(password)
+        self.password_box.setReadOnly(True)
+        self.password_box.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.password_box)
+        actions = QHBoxLayout()
+        show_btn = QPushButton("Show")
+        copy_btn = QPushButton("Copy Password")
+        close_btn = QPushButton("Close")
+        show_btn.clicked.connect(lambda: self.password_box.setEchoMode(QLineEdit.Normal if self.password_box.echoMode() == QLineEdit.Password else QLineEdit.Password))
+        copy_btn.clicked.connect(lambda: self._copy(copy_btn))
+        close_btn.clicked.connect(self.accept)
+        actions.addWidget(show_btn)
+        actions.addWidget(copy_btn)
+        actions.addStretch()
+        actions.addWidget(close_btn)
+        layout.addLayout(actions)
+
+    def _copy(self, button):
+        QApplication.clipboard().setText(self.password)
+        button.setText("Copied ✓")
+
 class UserManagementPage(QWidget):
     """Real Desktop UI over the shared user/role/permission repository."""
 
@@ -185,18 +223,16 @@ class UserManagementPage(QWidget):
         tabstrip = QFrame()
         tabstrip.setObjectName("DesktopTabStrip")
         row = QHBoxLayout(tabstrip)
-        row.setContentsMargins(12, 8, 12, 8)
-        row.setSpacing(8)
-        title = QLabel("User Management")
-        title.setObjectName("SectionTitle")
-        row.addWidget(title)
-        row.addSpacing(16)
+        row.setContentsMargins(12, 0, 12, 0)
+        row.setSpacing(18)
         self.users_tab = QPushButton("Users")
         self.roles_tab = QPushButton("Roles & Permissions")
         self.audit_tab = QPushButton("Audit Log")
         self.tab_buttons = [self.users_tab, self.roles_tab, self.audit_tab]
         for button in self.tab_buttons:
-            button.setMinimumHeight(36)
+            button.setObjectName("DesktopTabButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(30)
             row.addWidget(button)
         row.addStretch()
         root.addWidget(tabstrip)
@@ -288,11 +324,7 @@ class UserManagementPage(QWidget):
     def show_tab(self, index):
         self.pages.setCurrentIndex(index)
         for i, button in enumerate(self.tab_buttons):
-            button.setStyleSheet(
-                "QPushButton{background:#005B96;color:white;font-weight:bold;border-radius:6px;padding:8px 14px;}"
-                if i == index else
-                "QPushButton{background:transparent;border-radius:6px;padding:8px 14px;} QPushButton:hover{background:rgba(0,91,150,0.12);}"
-            )
+            button.setChecked(i == index)
 
     @staticmethod
     def _item(value):
@@ -364,7 +396,7 @@ class UserManagementPage(QWidget):
             QMessageBox.warning(self, "Could not create user", str(exc))
             return
         self.refresh_users()
-        QMessageBox.information(self, "User created", f"User created.\n\nTemporary password:\n{password}\n\nThe user must change it on first login.")
+        _TemporaryPasswordDialog(values["username"], password, self).exec()
 
     def edit_user(self, user):
         dialog = _UserDialog(self.repository, user=user, parent=self)
