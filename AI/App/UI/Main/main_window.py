@@ -6,10 +6,9 @@ Version: 3.0
 """
 
 from pathlib import Path
-from UI.QAEngineering.test_case_generation_page import TestCaseGenerationPage
-from UI.QAAutomation.test_execution_page import TestExecutionPage
-from UI.QAAutomation.test_execution_page import TestExecutionPage
+from UI.QAEngineering.qa_engineering_hub_page import QAEngineeringHubPage
 from UI.QAAutomation.qa_automation_hub_page import QAAutomationHubPage
+from UI.UserManagement.user_management_page import UserManagementPage
 
 
 
@@ -191,7 +190,7 @@ class MainWindow(QMainWindow):
         # QA Engineering
         # ------------------------------------------------
 
-        self.qa_page = TestCaseGenerationPage()
+        self.qa_page = QAEngineeringHubPage()
  
         self.pages.addWidget(
             self.qa_page
@@ -217,6 +216,16 @@ class MainWindow(QMainWindow):
 
         self.pages.addWidget(
             self.ai_page
+        )
+
+        # ------------------------------------------------
+        # User Management
+        # ------------------------------------------------
+
+        self.user_management_page = UserManagementPage()
+
+        self.pages.addWidget(
+            self.user_management_page
         )
 
         # ------------------------------------------------

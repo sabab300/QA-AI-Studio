@@ -304,9 +304,33 @@
   .detail-tabs{ display:flex; gap:14px; padding:0 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
   .dtab{ padding:9px 0; font-size:12.5px; font-weight:600; color:var(--ink-muted); border-bottom:2px solid transparent; cursor:pointer; background:none; border-top:none; border-left:none; border-right:none; }
   .dtab.active{ color:var(--accent); border-bottom-color:var(--accent); }
-  .detail-body{ padding:14px 16px; overflow:auto; flex:1; min-height:0; }
-  .detail-panel-view{ display:none; flex-direction:column; gap:12px; }
+  /* PLAYWRIGHT-LOCATOR-SCRIPT-IMPORT-DEFECT-FIX 2026-09-09: .detail-body
+     used to be the scrolling element itself (overflow:auto), so the
+     WHOLE panel -- including the bottom action buttons (Save Script /
+     Set Active / Validate, or Execute / Cancel) -- scrolled together
+     with the script editor's content. On a normal desktop viewport
+     the combined content routinely exceeds the available height, so
+     those buttons silently scrolled off the bottom until the operator
+     scrolled the whole modal down to find them. Fixed by making
+     detail-body a plain non-scrolling flex container that just sizes
+     its active panel to fill the remaining modal height; each panel
+     (.detail-panel-view.active) is itself a flex column that clips
+     overflow, and ONLY the one element inside it that can genuinely
+     grow large (the script textarea; the run-output area on Execute;
+     the history table) is given flex:1 + overflow:auto so IT scrolls
+     internally while every fixed row (source tabs, search toolbar,
+     the action button row) keeps flex-shrink:0 and stays on screen. */
+  .detail-body{ padding:14px 16px; overflow:hidden; display:flex; flex:1; min-height:0; }
+  .detail-panel-view{ display:none; flex-direction:column; gap:10px; flex:1; min-height:0; overflow:hidden; width:100%; }
   .detail-panel-view.active{ display:flex; }
+  /* Deliberately no blanket flex-shrink rule here: a flex item's
+     default min-height is "auto" (its own content's minimum size),
+     so the fixed rows (source tabs, search toolbar, button rows)
+     already resist shrinking below their natural size without any
+     extra CSS -- only the elements below are explicitly given
+     flex:1 + min-height:0 to opt IN to being the one scrolling
+     region per panel. */
+  .detail-scroll-area{ flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:10px; }
 
   .notice{ border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.5; display:flex; gap:8px; }
   .notice-warn{ background:var(--warning-soft); color:#7A4E08; border:1px solid #EBD190; }
@@ -397,17 +421,16 @@
     width:100%; max-width:420px; background:var(--surface); border:1px solid var(--border); border-radius:14px;
     padding:22px; box-shadow:var(--shadow-2);
   }
-  /* Item 5: Script/Execute/History detail modal, enlarged ~50% over
-     its previous 820px-wide, content-height card so the script editor
-     actually has room to work in — a real flex column bounded to the
-     viewport (not just a wider box that still only shows ~6 lines of
-     script) so detail-head/detail-tabs stay fixed and detail-body
-     (and the editor inside it) fills and scrolls the rest. */
+  /* Script/Execute/History detail modal -- a real flex column bounded
+     to the viewport (not just a wider box) so detail-head/detail-tabs
+     stay fixed and detail-body (and the ONE scrolling element inside
+     whichever panel is active) fills and scrolls the rest. Sized
+     ~90vw/90vh per PLAYWRIGHT-LOCATOR-SCRIPT-IMPORT-DEFECT-FIX. */
   .tc-detail-card{
-    width:88vw; max-width:1450px; height:88vh; max-height:88vh;
+    width:90vw; max-width:1500px; height:90vh; max-height:90vh;
     display:flex; flex-direction:column; overflow:hidden;
   }
-  @media (max-width:900px){ .tc-detail-card{ width:96vw; height:94vh; max-height:94vh; } }
+  @media (max-width:900px){ .tc-detail-card{ width:97vw; height:95vh; max-height:95vh; } }
   .modal-card h3{ margin:0 0 4px; font-size:16px; }
   .modal-card .modal-sub{ font-size:12.5px; color:var(--ink-muted); margin-bottom:16px; }
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
@@ -1383,7 +1406,13 @@
                 <button type="button" class="btn" id="tcScriptSearchNext" title="Next match (Enter)" style="padding:3px 7px;">›</button>
               </div>
             </div>
-            <textarea id="tcScriptEditor" class="code-block" style="width:100%;flex:1;min-height:min(50vh,440px);font-family:var(--mono,monospace);white-space:pre;resize:vertical;" spellcheck="false"></textarea>
+            <!-- The ONE element in this panel that actually scrolls:
+                 flex:1 + min-height:0 lets it absorb whatever space
+                 is left after every fixed row above/below has taken
+                 its natural size, and overflow:auto (a textarea's own
+                 native scrolling) keeps long scripts scrollable
+                 WITHOUT the surrounding modal ever needing to scroll. -->
+            <textarea id="tcScriptEditor" class="code-block" style="width:100%;flex:1;min-height:0;overflow:auto;font-family:var(--mono,monospace);white-space:pre;resize:none;" spellcheck="false"></textarea>
 
             <!-- SQL-only assertion fields — hidden for Playwright/API -->
             <div id="tcSqlAssertionRow" style="display:none;gap:8px;margin-top:8px;">
@@ -1429,10 +1458,16 @@
               <div class="fbar-spacer"></div>
               <button class="btn" id="tcClickUpBtn" style="display:none;">Create ClickUp Bug</button>
             </div>
-            <div id="tcRunLive" style="display:none;">
-              <div class="kv" id="tcRunLiveKv"></div>
+            <!-- Run output (live KV + final result: stdout/stderr,
+                 evidence, repairs made) can get long -- this is the
+                 ONE scrolling element on this tab, so Execute/Cancel/
+                 Create ClickUp Bug above never scroll out of view. -->
+            <div class="detail-scroll-area">
+              <div id="tcRunLive" style="display:none;">
+                <div class="kv" id="tcRunLiveKv"></div>
+              </div>
+              <div id="tcRunResult"></div>
             </div>
-            <div id="tcRunResult"></div>
           </div>
 
           <div class="detail-panel-view" id="d-history">
@@ -3382,8 +3417,23 @@
     }
     var match = tcSearchMatches[tcSearchIndex];
     var editor = document.getElementById('tcScriptEditor');
+    var searchInput = document.getElementById('tcScriptSearchInput');
+    // Root cause fix (2026-09-09): this used to call editor.focus()
+    // and leave focus there. Since runScriptSearch() calls this on
+    // EVERY keystroke (the 'input' listener below), that moved
+    // keyboard focus from the search box into the script editor
+    // after the very first character typed — so the next character
+    // the operator typed landed in the textarea instead, typing over
+    // (replacing) the just-selected match text and visibly "editing
+    // the script" from the search box. Highlighting a match still
+    // needs the editor briefly focused (an unfocused textarea's
+    // selection isn't rendered by the browser), so focus is moved
+    // there just long enough to select+scroll to the match, then
+    // immediately handed back to the search input in the same tick
+    // — before the next keystroke can ever reach the editor. This
+    // never touches editor.value, only the native text selection.
     editor.focus();
-    editor.setSelectionRange(match.start, match.end); // highlight = native text selection; .value is never touched
+    editor.setSelectionRange(match.start, match.end);
     // Approximate "scroll the match into view" — textareas don't
     // expose a native scroll-to-selection API, so estimate the
     // match's line from newline count and center it.
@@ -3392,6 +3442,7 @@
     var lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 18;
     var target = (lineIndex * lineHeight) - (editor.clientHeight / 2);
     editor.scrollTop = Math.max(0, target);
+    if(searchInput){ searchInput.focus({preventScroll:true}); }
     updateScriptSearchCount();
   }
 

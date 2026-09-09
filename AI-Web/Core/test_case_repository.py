@@ -542,6 +542,28 @@ class TestCaseRepository:
                                       self._segment(scope.get("document_type") or "DOC").upper(), self._source_code(self._combined_source_type(sources))))
         row = cursor.execute("SELECT next_value FROM test_case_id_sequences WHERE prefix=?", (prefix,)).fetchone()
         sequence = int((row or {}).get("next_value", 1) if isinstance(row, dict) else (row[0] if row else 1))
+        # ROOT CAUSE 4 (confirmed 2026-09-09 by reproducing an actual
+        # POST /api/automation/test-cases/import against the real
+        # downloaded sample template): test_case_id_sequences is a
+        # SEPARATELY tracked counter, not derived from test_cases
+        # itself -- so any tc_id that ever entered test_cases WITHOUT
+        # going through this method (a legacy/Desktop migration row,
+        # a restored/partial backup, a manual data fix) leaves the
+        # counter behind reality. The next legitimate call here then
+        # proposes a tc_id that's already taken, and INSERT raises a
+        # raw sqlite3 "UNIQUE constraint failed: test_cases.tc_id" --
+        # which review_save()'s caller surfaces verbatim as the
+        # Import 400 body, not a useful, row-specific reason. Since
+        # this method is the ONLY place a tc_id for a given prefix is
+        # minted, self-heal here: skip forward past any value that's
+        # already actually in use before handing one out, and persist
+        # the counter one past whatever was actually allocated -- so
+        # a drifted counter recovers silently on the very next call
+        # instead of failing the whole import/generate.
+        while cursor.execute(
+            "SELECT 1 FROM test_cases WHERE tc_id=? LIMIT 1", (f"{prefix}_{sequence:04d}",)
+        ).fetchone():
+            sequence += 1
         cursor.execute("INSERT INTO test_case_id_sequences(prefix,next_value) VALUES(?,?) ON CONFLICT(prefix) DO UPDATE SET next_value=excluded.next_value", (prefix, sequence + 1))
         return f"{prefix}_{sequence:04d}"
 

@@ -349,7 +349,31 @@ class TestExecutionManager:
 
         except Exception as ex:
 
-            summary["error"] = str(ex)
+            # Defense in depth alongside TestCaseRepository._allocate_tc_id()'s
+            # own self-healing fix (2026-09-09): that fix removes the
+            # normal cause of a raw "UNIQUE constraint failed:
+            # test_cases.tc_id" reaching here, but this endpoint must
+            # never hand the operator a bare driver-level string as
+            # the reason an import failed either way -- give them
+            # something they can actually act on (retry the import;
+            # if it keeps happening, it's a server-side data issue,
+            # not something wrong with their file/row).
+            detail = str(ex)
+
+            if "UNIQUE constraint failed" in detail:
+
+                summary["error"] = (
+                    "Import failed while generating central Test "
+                    "Case IDs for this Domain/Module/Knowledge/"
+                    "Version/Document Type — this is a server-side "
+                    "ID sequencing issue, not a problem with your "
+                    "file. Please try the import again; if it keeps "
+                    "failing, contact an administrator."
+                )
+
+            else:
+
+                summary["error"] = f"Could not save the imported rows: {detail}"
 
             return summary
 

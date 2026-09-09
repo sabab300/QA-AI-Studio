@@ -57,7 +57,9 @@ class NavigationPanel(QFrame):
 
             ("🧠  AI Assistant", 4),
 
-            ("⚙️  Settings", 5)
+            ("👥  User Management", 5),
+
+            ("⚙️  Settings", 6)
 
         ]
 
@@ -86,6 +88,7 @@ class NavigationPanel(QFrame):
                      .replace("🧪  ", "")
                      .replace("🤖  ", "")
                      .replace("🧠  ", "")
+                     .replace("👥  ", "")
                      .replace("⚙️  ", ""):
 
                 self.page_changed.emit(i, t)
