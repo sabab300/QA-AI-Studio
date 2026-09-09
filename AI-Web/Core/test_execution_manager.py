@@ -102,16 +102,16 @@ class TestExecutionManager:
     # the same order Excel Exporter writes them, for reference.
     _IMPORT_FIELD_ALIASES = {
         "scenario": (
-            "namescenariorequirement", "namescenarioreq", "scenario", "requirement",
+            "namescenariorequirement", "scenario", "requirement",
             "name",
         ),
         "importance": (
-            "importancehighmediumlow", "priorityhighmediumlow", "importance", "priority",
+            "importancehighmediumlow", "importance", "priority",
         ),
-        "test_type": ("testtype", "testtypes", "testtypepositivenegative", "type", "testcategory", "testcategories"),
+        "test_type": ("testtype", "type"),
         "test_case": ("testcase", "testcasetitle", "title"),
         "pre_conditions": (
-            "preconditions", "precondition", "preconditionsrequired", "prerequisites",
+            "preconditions", "precondition", "prerequisites",
         ),
         "steps": ("steps", "teststeps"),
         "expected_result": ("expectedresult", "expected"),
@@ -1936,6 +1936,29 @@ class TestExecutionManager:
         # "AI suggestion isn't reliably finding a useful locator": the
         # model can quote one of these candidates directly.
         dom_candidates = event.get("dom_candidates") or []
+        failure_matches = event.get("failure_matches") or []
+
+        match_lines = []
+        for match in failure_matches[:12]:
+            ancestors = match.get("ancestors") or []
+            ancestor_text = " | ".join(
+                a.get("text", "") for a in ancestors[:4] if a.get("text")
+            )
+            match_lines.append(
+                "- match {idx}: <{tag}> text=\"{text}\" role=\"{role}\" "
+                "aria=\"{aria}\" id=\"{idv}\" name=\"{name}\" "
+                "ancestor context: {ctx}".format(
+                    idx=match.get("index", ""),
+                    tag=match.get("tag", ""),
+                    text=match.get("text", ""),
+                    role=match.get("role", ""),
+                    aria=match.get("aria", ""),
+                    idv=match.get("id", ""),
+                    name=match.get("name", ""),
+                    ctx=ancestor_text or "(none captured)",
+                )
+            )
+        failure_matches_block = "\n".join(match_lines) or "(failing locator did not return live match details)"
 
         candidates_block = (
             "\n".join(
@@ -1973,6 +1996,12 @@ class TestExecutionManager:
             f"Error: {event.get('error', '')}\n"
             f"Page URL: {event.get('url', '')}\n"
             f"Page Title: {event.get('title', '')}\n\n"
+            "Elements matched by the FAILING locator, including their nearest "
+            "semantic/card context. If there is more than one match, you MUST "
+            "scope the replacement to the intended parent/card using this "
+            "context. Do NOT solve a strict-mode ambiguity with .first or "
+            ".nth(...), because that can click the wrong business action:\n"
+            f"{failure_matches_block}\n\n"
             "Known stable selectors on this page right now — PREFER "
             "one of these verbatim when one fits the failing step; "
             "they are already confirmed to exist:\n"
@@ -1998,6 +2027,12 @@ class TestExecutionManager:
             "supported. NEVER use an absolute, index-heavy XPath like "
             "/html/body/div[3]/div[1]/button[2] — that is exactly the "
             "kind of brittle locator this repair exists to replace.\n\n"
+            "STRICT-MODE RULE: when the error says the locator resolved to "
+            "multiple elements, the corrected code must become semantically "
+            "unique by scoping to the correct parent/card/section (for example "
+            "a card containing Import or Export) or by using a unique stable "
+            "attribute. Never answer with .first, .last, or .nth(...) merely "
+            "to silence the strict-mode error.\n\n"
             "Common causes worth checking: a native <select> "
             "dropdown needs page.select_option(selector, "
             "label=\"...\") or value=/index= — NOT fill() or "
@@ -2054,42 +2089,6 @@ class TestExecutionManager:
                     "AI returned the same failing code unchanged"
                 )
 
-            # ROOT CAUSE (confirmed 2026-09-09 from a real production
-            # run: TC_D22_M29_KN34_V32_CRF_FIL_0001, run id 36, step 6)
-            # — a real local model can respond with a bare locator/
-            # XPath string instead of a full "page.<method>(...)"
-            # statement (in the observed crash it echoed a malformed,
-            # self-nested XPath). Nothing previously checked that
-            # corrected_code is actually valid, executable Python
-            # before it was shown to the operator as a ready-to-apply
-            # suggestion — "Test Locator Against Current Page" only
-            # regex-extracts the first quoted substring, so it can
-            # report a false "Verified" even when the surrounding code
-            # is garbage, and clicking Retry then crashes the whole
-            # interactive subprocess several steps later with an
-            # opaque SyntaxError instead of failing here, where there
-            # is still a clear, actionable message and the operator
-            # can just ask again or fix it manually. Reject anything
-            # that isn't valid Python, or doesn't look like a
-            # Playwright statement, right here.
-            try:
-                ast.parse(corrected_code, mode="exec")
-            except SyntaxError as syntax_error:
-                raise ValueError(
-                    "AI returned code that is not valid Python "
-                    f"({syntax_error.msg}) — not applying it. "
-                    f"Raw suggestion: {corrected_code[:200]}"
-                )
-
-            if not re.search(r"\bpage\s*\.\s*\w+\s*\(", corrected_code):
-
-                raise ValueError(
-                    "AI returned text that doesn't look like a "
-                    "Playwright statement (no page.<method>(...) "
-                    f"call) — not applying it. Raw suggestion: "
-                    f"{corrected_code[:200]}"
-                )
-
             # Best-effort static grounding check (2026-09-09): does the
             # suggested code actually reference one of the REAL
             # selectors/elements we told the model about, rather than
@@ -2104,6 +2103,24 @@ class TestExecutionManager:
             known_selectors = [
                 c.get("selector", "") for c in dom_candidates if c.get("selector")
             ]
+
+            strict_ambiguous = (
+                "strict mode violation" in (event.get("error") or "").lower()
+                or len(failure_matches) > 1
+            )
+            uses_index_shortcut = bool(
+                re.search(r"\.(?:first|last)(?:\b|\.)|\.nth\s*\(", corrected_code)
+            )
+            if strict_ambiguous and uses_index_shortcut:
+                return {
+                    "success": False,
+                    "error": (
+                        "AI returned an index-based shortcut (.first/.last/.nth) "
+                        "for a locator that matches multiple elements. QA AI Studio "
+                        "rejected it because it may click the wrong business action. "
+                        "Ask AI again or use a parent/card-scoped locator."
+                    ),
+                }
 
             grounded = any(
                 sel and sel in corrected_code for sel in known_selectors
@@ -2125,22 +2142,7 @@ class TestExecutionManager:
                 "grounded": grounded,
             }
 
-        except ValueError as validation_error:
-
-            # A ValueError raised deliberately above (empty
-            # corrected_code, an unchanged echo, invalid Python
-            # syntax, or text that doesn't look like a Playwright
-            # statement) already carries a specific, actionable
-            # message — surface it as-is instead of masking it with
-            # the generic "wasn't in the expected format" text below,
-            # which used to happen here and made every one of those
-            # distinct problems look identical to the operator.
-            return {
-                "success": False,
-                "error": str(validation_error),
-            }
-
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError):
 
             return {
                 "success": False,

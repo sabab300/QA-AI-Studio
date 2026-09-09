@@ -1788,6 +1788,25 @@ class TestExecutionManager:
         """
 
         accessibility_lines = event.get("accessibility") or []
+        failure_matches = event.get("failure_matches") or []
+
+        match_lines = []
+        for match in failure_matches[:12]:
+            ancestors = match.get("ancestors") or []
+            ancestor_text = " | ".join(
+                a.get("text", "") for a in ancestors[:4] if a.get("text")
+            )
+            match_lines.append(
+                "- match {idx}: <{tag}> text=\"{text}\" role=\"{role}\" "
+                "aria=\"{aria}\" id=\"{idv}\" name=\"{name}\" "
+                "ancestor context: {ctx}".format(
+                    idx=match.get("index", ""), tag=match.get("tag", ""),
+                    text=match.get("text", ""), role=match.get("role", ""),
+                    aria=match.get("aria", ""), idv=match.get("id", ""),
+                    name=match.get("name", ""), ctx=ancestor_text or "(none captured)",
+                )
+            )
+        failure_matches_block = "\n".join(match_lines) or "(no live match context captured)"
 
         accessibility_block = (
             "\n".join(f"- {line}" for line in accessibility_lines[:150])
@@ -1815,6 +1834,11 @@ class TestExecutionManager:
             f"Error: {event.get('error', '')}\n"
             f"Page URL: {event.get('url', '')}\n"
             f"Page Title: {event.get('title', '')}\n\n"
+            "Elements matched by the failing locator and their nearest "
+            "parent/card context. If multiple matches exist, scope to the "
+            "intended business area; NEVER use .first/.last/.nth merely to "
+            "silence strict mode:\n"
+            f"{failure_matches_block}\n\n"
             f"Real elements currently on the page (role: name):\n"
             f"{accessibility_block}\n\n"
             "Common causes worth checking: a native <select> "
@@ -1860,6 +1884,26 @@ class TestExecutionManager:
             if not corrected_code:
 
                 raise ValueError("Empty corrected_code")
+
+            if corrected_code.strip() == (event.get("code") or "").strip():
+                raise ValueError("AI returned the same failing code unchanged")
+
+            strict_ambiguous = (
+                "strict mode violation" in (event.get("error") or "").lower()
+                or len(failure_matches) > 1
+            )
+            if strict_ambiguous and re.search(
+                r"\.(?:first|last)(?:\b|\.)|\.nth\s*\(", corrected_code
+            ):
+                return {
+                    "success": False,
+                    "error": (
+                        "AI returned an index-based shortcut (.first/.last/.nth) "
+                        "for multiple matching elements. It was rejected because "
+                        "it can click the wrong business action. Ask AI again or "
+                        "scope the locator to the correct parent/card/section."
+                    ),
+                }
 
             return {
                 "success": True,

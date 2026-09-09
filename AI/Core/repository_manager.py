@@ -6,6 +6,7 @@ Version: 4.0
 """
 
 import hashlib
+import re
 import shutil
 from pathlib import Path
 
@@ -25,6 +26,39 @@ class RepositoryManager:
             exist_ok=True
         )
 
+    _WINDOWS_RESERVED_NAMES = {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+
+    @classmethod
+    def _safe_segment(cls, value, label):
+        """Return a stable filesystem-safe segment without changing display metadata."""
+
+        original = str(value or "").strip()
+        if not original or original in {".", ".."}:
+            raise ValueError(f"Invalid {label}.")
+
+        # Windows rejects control characters and: < > : " / \ | ? *
+        sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', original)
+        sanitized = sanitized.rstrip(' .')
+
+        if not sanitized or sanitized in {".", ".."}:
+            raise ValueError(f"Invalid {label}.")
+
+        # Reserved device names are invalid even when an extension is present.
+        stem = sanitized.split('.', 1)[0].upper()
+        if stem in cls._WINDOWS_RESERVED_NAMES:
+            sanitized = f"_{sanitized}"
+
+        # Keep paths manageable while making long values deterministic.
+        if len(sanitized) > 120:
+            digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:10]
+            sanitized = f"{sanitized[:105].rstrip(' ._')}_{digest}"
+
+        return sanitized
+
     # --------------------------------------------------
     # Repository Path
     # --------------------------------------------------
@@ -42,6 +76,11 @@ class RepositoryManager:
         version
 
     ):
+
+        domain = self._safe_segment(domain, "domain")
+        module = self._safe_segment(module, "module")
+        knowledge_name = self._safe_segment(knowledge_name, "knowledge name")
+        version = self._safe_segment(version, "version")
 
         path = (
 

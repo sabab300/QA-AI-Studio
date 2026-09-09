@@ -202,8 +202,49 @@ def _qa_flatten_accessibility(node, out, max_nodes=150):
     return out
 
 
-def _qa_capture_context():
-    context = {"url": "", "title": "", "accessibility": []}
+def _qa_capture_failure_matches(raw_locator):
+    if not raw_locator:
+        return []
+    try:
+        loc = page.locator(raw_locator)
+        return loc.evaluate_all("""els => els.slice(0, 12).map((el, index) => {
+            const clean = (v) => (v || "").replace(/\s+/g, " " ).trim();
+            const ancestors = [];
+            let node = el.parentElement;
+            let depth = 0;
+            while (node && depth < 7) {
+                const txt = clean(node.innerText).slice(0, 180);
+                if (txt && txt.length <= 180) {
+                    ancestors.push({
+                        tag: (node.tagName || "").toLowerCase(),
+                        id: node.id || "",
+                        role: node.getAttribute && (node.getAttribute("role") || ""),
+                        aria: node.getAttribute && (node.getAttribute("aria-label") || ""),
+                        text: txt,
+                    });
+                }
+                node = node.parentElement;
+                depth += 1;
+            }
+            return {
+                index,
+                tag: (el.tagName || "").toLowerCase(),
+                text: clean(el.innerText || el.textContent || el.value).slice(0, 120),
+                role: el.getAttribute && (el.getAttribute("role") || ""),
+                aria: el.getAttribute && (el.getAttribute("aria-label") || ""),
+                id: el.id || "",
+                name: el.getAttribute && (el.getAttribute("name") || ""),
+                ancestors,
+            };
+        })""")
+    except Exception:
+        return []
+
+
+def _qa_capture_context(raw_locator=""):
+    context = {
+        "url": "", "title": "", "accessibility": [], "failure_matches": []
+    }
     try:
         context["url"] = page.url
     except Exception:
@@ -215,6 +256,10 @@ def _qa_capture_context():
     try:
         snapshot = page.accessibility.snapshot() or {}
         context["accessibility"] = _qa_flatten_accessibility(snapshot, [])
+    except Exception:
+        pass
+    try:
+        context["failure_matches"] = _qa_capture_failure_matches(raw_locator)
     except Exception:
         pass
     return context
@@ -252,7 +297,7 @@ def _qa_rebuild_code(code_text, old_locator, old_value, new_locator, new_value):
 
 def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
     locator, value = _qa_extract_locator_and_value(code_text)
-    context = _qa_capture_context()
+    context = _qa_capture_context(locator)
     _qa_send_event({
         "event": "step_failed",
         "step": step_number,
@@ -264,6 +309,7 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
         "url": context["url"],
         "title": context["title"],
         "accessibility": context["accessibility"],
+        "failure_matches": context["failure_matches"],
     })
     command = _qa_read_command()
     action = command.get("action")

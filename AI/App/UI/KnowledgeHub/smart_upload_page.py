@@ -92,6 +92,7 @@ from Core.discovery_repository import DiscoveryRepository
 from UI.KnowledgeHub.smart_upload_worker import SmartUploadWorker
 from PySide6.QtWidgets import QMessageBox
 from UI.KnowledgeHub.upload_worker import UploadWorker
+from UI.KnowledgeHub.upload_summary_dialog import UploadSummaryDialog
 from UI.KnowledgeHub.url_credentials_dialog import URLCredentialsDialog
 from UI.KnowledgeHub.url_discovery_worker import URLDiscoveryWorker
 from UI.KnowledgeHub.business_flow_start_dialog import BusinessFlowStartDialog
@@ -1300,11 +1301,34 @@ class SmartUploadPage(QWidget):
             "Knowledge uploaded successfully."
         )
 
-        QMessageBox.information(
-            self,
-            "QA AI Studio",
-            f"Upload completed.\n\nFiles processed: {len(self.files)}"
-        )
+        primary = result.get("primary_result") or ((result.get("results") or [{}])[0] if isinstance(result, dict) else {})
+        if isinstance(primary, dict) and "result" in primary:
+            primary = primary.get("result") or {}
+        domain = result.get("domain", self.domain.currentText()) if isinstance(result, dict) else self.domain.currentText()
+        module = result.get("module", self.module.currentText()) if isinstance(result, dict) else self.module.currentText()
+        knowledge = result.get("knowledge_name", self.knowledge_name.text()) if isinstance(result, dict) else self.knowledge_name.text()
+        version = result.get("version", self.version.text() or "1.0") if isinstance(result, dict) else (self.version.text() or "1.0")
+        summary = str(primary.get("summary") or "No AI summary available.")
+        tags = primary.get("tags") or []
+        confidence = primary.get("confidence")
+        confidence_text = "—" if confidence is None else f"{float(confidence) * 100:.0f}%"
+        html = f"""
+        <h3>AI Smart Upload Complete</h3>
+        <p><b>Files processed:</b> {len(self.files)}</p>
+        <hr>
+        <p><b>Domain:</b> {domain}<br>
+        <b>Module:</b> {module}<br>
+        <b>Knowledge Name:</b> {knowledge}<br>
+        <b>Version:</b> {version}<br>
+        <b>Document Type:</b> {primary.get('document_type', self.document_type.currentText())}</p>
+        <hr>
+        <p><b>Chunks:</b> {primary.get('total_chunks', 0)} &nbsp;&nbsp;
+        <b>Vectors:</b> {primary.get('vectors_saved', 0)} &nbsp;&nbsp;
+        <b>Confidence:</b> {confidence_text}</p>
+        <p><b>Tags:</b> {', '.join(map(str, tags)) if tags else '—'}</p>
+        <p><b>AI Analysis Summary</b><br>{summary}</p>
+        """
+        UploadSummaryDialog(html, self).exec()
 
         # Ready for the next batch.
         self.files = []

@@ -411,8 +411,62 @@ def _qa_capture_dom_candidates():
         return []
 
 
-def _qa_capture_context():
-    context = {"url": "", "title": "", "accessibility": [], "dom_candidates": []}
+def _qa_capture_failure_matches(raw_locator):
+    """Capture the real elements matched by the failing locator.
+
+    This is especially important for Playwright strict-mode failures: a
+    selector may exist but match multiple visible elements (for example
+    the two "Create" buttons in Import and Export cards).  The AI needs
+    the surrounding semantic/card text for EACH match so it can scope the
+    replacement to the intended parent instead of blindly suggesting
+    .first or .nth(...).
+    """
+    if not raw_locator:
+        return []
+    try:
+        loc = page.locator(raw_locator)
+        return loc.evaluate_all("""els => els.slice(0, 12).map((el, index) => {
+            const clean = (v) => (v || "").replace(/\s+/g, " " ).trim();
+            const ancestors = [];
+            let node = el.parentElement;
+            let depth = 0;
+            while (node && depth < 7) {
+                const txt = clean(node.innerText).slice(0, 180);
+                if (txt && txt.length <= 180) {
+                    ancestors.push({
+                        tag: (node.tagName || "").toLowerCase(),
+                        id: node.id || "",
+                        role: node.getAttribute && (node.getAttribute("role") || ""),
+                        aria: node.getAttribute && (node.getAttribute("aria-label") || ""),
+                        text: txt,
+                    });
+                }
+                node = node.parentElement;
+                depth += 1;
+            }
+            return {
+                index,
+                tag: (el.tagName || "").toLowerCase(),
+                text: clean(el.innerText || el.textContent || el.value).slice(0, 120),
+                role: el.getAttribute && (el.getAttribute("role") || ""),
+                aria: el.getAttribute && (el.getAttribute("aria-label") || ""),
+                id: el.id || "",
+                name: el.getAttribute && (el.getAttribute("name") || ""),
+                ancestors,
+            };
+        })""")
+    except Exception:
+        return []
+
+
+def _qa_capture_context(raw_locator=""):
+    context = {
+        "url": "",
+        "title": "",
+        "accessibility": [],
+        "dom_candidates": [],
+        "failure_matches": [],
+    }
     try:
         context["url"] = page.url
     except Exception:
@@ -428,6 +482,10 @@ def _qa_capture_context():
         pass
     try:
         context["dom_candidates"] = _qa_capture_dom_candidates()
+    except Exception:
+        pass
+    try:
+        context["failure_matches"] = _qa_capture_failure_matches(raw_locator)
     except Exception:
         pass
     return context
@@ -463,6 +521,58 @@ def _qa_rebuild_code(code_text, old_locator, old_value, new_locator, new_value):
     return result
 
 
+def _qa_locator_expression_from_code(code_text):
+    """Return the locator-producing expression from one Playwright step.
+
+    Examples:
+      page.get_by_role('button', name='Create').click()
+        -> page.get_by_role('button', name='Create')
+      page.locator('#x').fill('abc')
+        -> page.locator('#x')
+
+    This lets the live verifier validate modern Playwright locator chains
+    (get_by_role/get_by_text/filter/first/etc), not only raw CSS/XPath
+    strings.  It never performs the action itself.
+    """
+    code = (code_text or "").strip()
+    action_names = (
+        "click", "dblclick", "fill", "type", "press", "check",
+        "uncheck", "select_option", "set_input_files", "hover",
+        "focus", "tap", "drag_to", "dispatch_event",
+    )
+    for action in action_names:
+        marker = "." + action + "("
+        pos = code.rfind(marker)
+        if pos > 0:
+            return code[:pos].strip()
+    return code
+
+
+def _qa_verify_code(code_text):
+    result = {"found": False, "count": 0, "visible": False, "error": ""}
+    try:
+        expr = _qa_locator_expression_from_code(code_text)
+        if not expr:
+            result["error"] = "No locator expression found in the code."
+            return result
+        loc = eval(expr, globals())
+        if not hasattr(loc, "count"):
+            result["error"] = "The code does not resolve to a Playwright Locator."
+            return result
+        count = loc.count()
+        result["count"] = count
+        result["found"] = count > 0
+        if result["found"]:
+            try:
+                loc.first.wait_for(state="visible", timeout=1500)
+                result["visible"] = True
+            except Exception:
+                result["visible"] = False
+    except Exception as ex:
+        result["error"] = str(ex)
+    return result
+
+
 def _qa_verify_locator(raw_locator):
     # Live-page check only -- deliberately does NOT click/fill/exec
     # anything. This is what lets QA AI Studio show "Locator verified"
@@ -495,7 +605,7 @@ def _qa_verify_locator(raw_locator):
 
 def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
     locator, value = _qa_extract_locator_and_value(code_text)
-    context = _qa_capture_context()
+    context = _qa_capture_context(locator)
     _qa_send_event({
         "event": "step_failed",
         "step": step_number,
@@ -508,6 +618,7 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
         "title": context["title"],
         "accessibility": context["accessibility"],
         "dom_candidates": context["dom_candidates"],
+        "failure_matches": context["failure_matches"],
     })
     # Loop reading commands for this SAME pause -- "verify_locator" is
     # a non-terminal, repeatable check (it does not count as a repair
@@ -518,13 +629,20 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
     while True:
         command = _qa_read_command()
         action = command.get("action")
-        if action == "verify_locator":
-            check_locator = command.get("locator") or locator
-            verify_result = _qa_verify_locator(check_locator)
+        if action in ("verify_locator", "verify_code"):
+            if action == "verify_code":
+                check_code = command.get("code") or code_text
+                verify_result = _qa_verify_code(check_code)
+                checked_value = check_code
+            else:
+                check_locator = command.get("locator") or locator
+                verify_result = _qa_verify_locator(check_locator)
+                checked_value = check_locator
             _qa_send_event({
                 "event": "locator_verified",
                 "step": step_number,
-                "locator": check_locator,
+                "mode": "code" if action == "verify_code" else "locator",
+                "locator": checked_value,
                 "found": verify_result["found"],
                 "count": verify_result["count"],
                 "visible": verify_result["visible"],
@@ -568,25 +686,7 @@ def _qa_run_step(step_number, code_text):
                     "code": current_code,
                     "error": str(ex),
                 })
-                # ROOT CAUSE (confirmed 2026-09-09 from a real
-                # production run -- id 36 -- that ended with the
-                # unhelpful error_message "SyntaxError: invalid
-                # syntax"): this used to be a bare `raise`, which
-                # propagates the LAST attempt's exception uncaught out
-                # of the whole subprocess -- Python then dumps a full
-                # traceback to stderr (exit code 1, indistinguishable
-                # from any other crash) and playwright_runner.py's
-                # run_script_interactive() readline loop had no
-                # "step_gave_up" branch at all, so that event was
-                # silently dropped and the operator only ever saw the
-                # LAST attempt's raw error text, not "gave up after N
-                # repair attempts". A clean, distinct exit code here
-                # (matching run_cancelled_by_operator's sys.exit(2)
-                # pattern just below) lets run_script_interactive()
-                # recognize this specific outcome and report it
-                # properly instead of treating it as an unexplained
-                # crash.
-                sys.exit(3)
+                raise
             outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt)
             if outcome is None:
                 _qa_send_event({
@@ -1463,8 +1563,6 @@ class PlaywrightRunner:
 
         cancelled = False
 
-        gave_up = None
-
         stdout_lines = []
 
         process = subprocess.Popen(
@@ -1559,25 +1657,6 @@ class PlaywrightRunner:
 
                     cancelled = True
 
-                elif event_type == "step_gave_up":
-
-                    # ROOT CAUSE (confirmed 2026-09-09, real run id
-                    # 36): the interactive harness (see
-                    # INTERACTIVE_HARNESS_TEMPLATE's _qa_run_step()
-                    # above) already sent this event once
-                    # _QA_MAX_REPAIR_ROUNDS was exhausted on a single
-                    # step, but nothing here ever listened for it —
-                    # the branch simply didn't exist, so the event was
-                    # silently dropped and the operator's only signal
-                    # was whatever raw text ended up on stderr. Capture
-                    # it so the final result carries a clean, specific
-                    # reason instead of a bare stack-trace tail.
-                    gave_up = {
-                        "step": event.get("step"),
-                        "code": event.get("code"),
-                        "error": event.get("error"),
-                    }
-
         finally:
 
             try:
@@ -1600,11 +1679,11 @@ class PlaywrightRunner:
 
         self.logger.info(
             f"Interactive Playwright run finished in {duration:.1f}s "
-            f"— {'PASS' if success else ('CANCELLED' if cancelled else ('GAVE UP' if gave_up else 'FAIL'))} "
+            f"— {'PASS' if success else ('CANCELLED' if cancelled else 'FAIL')} "
             f"(exit code {return_code}, {len(repairs)} repair(s))"
         )
 
-        result = {
+        return {
             "interactive_supported": True,
             "success": success,
             "cancelled": cancelled,
@@ -1617,33 +1696,6 @@ class PlaywrightRunner:
             "timeout_ms": timeout_ms,
             "repairs": repairs,
         }
-
-        if gave_up:
-
-            # AutomationExecutionRepository.mark_finished() reads
-            # result["error"] FIRST and only falls back to the last
-            # non-empty line of stderr when it's absent -- populating
-            # it here is what actually fixes Execution Log/Run Details
-            # showing "SyntaxError: invalid syntax" (an opaque
-            # traceback tail) instead of a real explanation. Note this
-            # also makes mark_finished() classify the run as "Error"
-            # rather than "Failed" (its has_hard_error check is `there
-            # IS an "error" key and no stdout`) -- deliberate: giving
-            # up after exhausting repair attempts on one step is not
-            # the same thing as a script running cleanly to a failed
-            # assertion, so "Error" is the more honest status here,
-            # consistent with how this same method already treats
-            # "Playwright isn't installed" as Error rather than Fail.
-            result["gave_up"] = gave_up
-            result["error"] = (
-                f"Step {gave_up.get('step')} could not be repaired "
-                f"after {max_repair_rounds} attempt(s) — the run was "
-                f"stopped rather than left hanging. Last attempted "
-                f"code: {gave_up.get('code')!r}. Last error: "
-                f"{gave_up.get('error')}"
-            )
-
-        return result
 
     def cancel_current_run(self):
         """

@@ -629,7 +629,97 @@
   #tcScriptEditor{border:1px solid var(--border);border-radius:7px;background:#0B1220;color:#DCE7F5;line-height:1.5;caret-color:#fff;}
   #tcScriptSearchBar{border:1px solid var(--border);background:var(--surface-sunken);border-radius:7px;}
   #tcScriptSearchInput:focus{box-shadow:none!important;}
+  #d-script.active{display:flex!important;flex-direction:column;min-height:0;}
+  #tcScriptWorkspace{position:relative;flex:1;min-height:360px;margin-top:6px;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:#0B1220;}
+  #tcScriptHighlight{position:absolute;inset:0;overflow:hidden;padding:12px 14px;margin:0;border:0;font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;white-space:pre;word-wrap:normal;color:#DCE7F5;background:#0B1220;pointer-events:none;}
+  #tcScriptHighlight mark{background:#FFE66D;color:#111827;border-radius:2px;padding:0;}
+  #tcScriptHighlight mark.current{background:#FFB020;color:#111827;box-shadow:0 0 0 1px rgba(255,255,255,.35);}
+  #tcScriptEditor{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:12px 14px!important;margin:0!important;border:0!important;border-radius:0!important;background:transparent!important;color:transparent!important;caret-color:#fff!important;overflow:auto!important;resize:none!important;font-family:var(--mono,monospace)!important;font-size:12.5px!important;line-height:1.5!important;white-space:pre!important;}
+  #tcScriptEditor::selection{background:rgba(255,176,32,.42);color:transparent;}
+  #khUploadSummaryModal .modal-card,#khSmartSummaryModal .modal-card{width:min(1000px,92vw);max-width:1000px!important;height:min(80vh,760px);display:flex;flex-direction:column;overflow:hidden;}
+  #khUploadSummaryBody,#khSmartSummaryBody{overflow:auto;min-height:0;flex:1;padding-right:6px;}
+  .kh-tree{padding:10px;background:var(--canvas);}
+  .kh-tree>details{margin-bottom:10px;border:1px solid var(--border)!important;border-radius:9px;overflow:hidden;background:var(--surface);box-shadow:0 1px 2px rgba(15,23,42,.04);}
+  .kh-tree details details{margin-left:14px;border-left:2px solid var(--border)!important;border-top:0!important;}
+  .kh-tree-leaf{grid-template-columns:minmax(260px,1fr) 90px 105px minmax(300px,auto);padding:10px 14px;}
+  .kh-tree-leaf .row-actions{gap:8px;}
   @media(max-width:1100px){.sidebar{width:205px}.search{width:210px}.tc-detail-card{width:97vw!important;height:94vh!important;}}
+
+
+  /* ===== QA AI Studio UI hardening — 09-Sep-2026 ===== */
+  .tc-detail-card{width:96vw!important;max-width:1640px!important;height:94vh!important;max-height:94vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
+  .tc-detail-card .detail-head{padding:9px 16px!important;}
+  .tc-detail-card .detail-head h3{margin:2px 0 3px!important;font-size:14px!important;line-height:1.25!important;}
+  .tc-detail-card .detail-tabs{padding:0 16px!important;gap:18px!important;}
+  .tc-detail-card .dtab{padding:7px 0!important;}
+  .tc-detail-card .detail-body{padding:8px 16px 10px!important;overflow:hidden!important;min-height:0!important;}
+  #d-script.active{display:flex!important;flex-direction:column!important;gap:5px!important;min-height:0!important;overflow:hidden!important;}
+  #tcActiveSourceRow{padding:5px 9px!important;margin-bottom:2px!important;min-height:30px!important;}
+  #tcSourceButtons{margin:1px 0!important;min-height:31px!important;align-items:center!important;}
+  #d-script>.muted-small{margin-bottom:2px!important;line-height:1.25!important;}
+  #tcScriptSearchBar{min-width:320px!important;padding:4px 7px!important;min-height:31px!important;}
+  #tcScriptWorkspace{flex:1 1 auto!important;min-height:0!important;margin-top:2px!important;}
+  #d-script>.auth-error{min-height:0!important;margin:0!important;}
+  #d-script>.btn-row{flex:0 0 auto!important;align-items:center!important;gap:6px!important;padding-top:5px!important;margin:0!important;border-top:1px solid var(--border)!important;flex-wrap:nowrap!important;}
+  #d-script>#tcValidateResult{flex:0 0 auto!important;max-height:48px!important;overflow:auto!important;margin:0!important;}
+  #tcScriptEditor,#tcScriptHighlight{font-size:12px!important;line-height:1.42!important;padding:10px 12px!important;}
+
+  .auto-type-panel{gap:7px!important;padding-top:9px!important;}
+  .auto-type-panel .auto-scope{gap:6px!important;align-items:center!important;}
+  .auto-type-panel .auto-scope>.fbar-spacer{display:none!important;}
+  .auto-type-panel .auto-scope select,.auto-type-panel .auto-scope .source-picker-summary,.auto-type-panel .auto-scope>.btn{min-height:31px!important;height:31px!important;padding:4px 8px!important;font-size:11.5px!important;}
+  .auto-type-panel .at-scope-count{font-size:11px!important;align-self:center!important;}
+  .auto-type-panel>.card{min-height:190px!important;}
+  .auto-type-panel>.card .table-scroll{min-height:112px!important;max-height:230px!important;}
+  .auto-type-panel>.btn-row{min-height:31px!important;margin:0!important;}
+  .auto-type-panel>.btn-row .btn{min-height:31px!important;}
+  @media (min-width:1200px){.auto-type-panel .auto-scope{grid-template-columns:repeat(7,minmax(118px,1fr))!important;}}
+  @media (min-width:1500px){.auto-type-panel .auto-scope{grid-template-columns:repeat(8,minmax(120px,1fr))!important;}}
+  @media (max-width:1199px){.auto-type-panel .auto-scope{grid-template-columns:repeat(4,minmax(130px,1fr))!important;}}
+
+  .kh-tree{padding:10px 4px 20px!important;background:transparent!important;overflow:auto!important;}
+  .kh-domain-card{border:1.5px solid #dbe4ff;border-radius:14px;background:var(--surface);overflow:hidden;margin-bottom:14px;box-shadow:0 2px 8px rgba(79,70,229,.05);}
+  .kh-domain-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:linear-gradient(135deg,#f5f7ff 0%,#eef2ff 100%);border-bottom:1px solid #dbe4ff;cursor:pointer;}
+  .kh-domain-badge,.kh-module-badge,.kh-knowledge-badge,.kh-version-badge{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap;}
+  .kh-domain-badge{background:#4f46e5;color:#fff;border-radius:9px;padding:6px 11px;box-shadow:0 2px 5px rgba(79,70,229,.16);}
+  .kh-domain-count{font-size:11.5px;font-weight:650;color:#4338ca;}
+  .kh-domain-content{padding:12px 14px 14px;}
+  .kh-module-block+.kh-module-block{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);}
+  .kh-module-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;}
+  .kh-module-badge{background:#f0f9ff;color:#0284c7;border:1px solid #bae6fd;border-radius:8px;padding:5px 10px;}
+  .kh-knowledge-card{margin-left:18px;border:1.5px solid #a7f3d0;border-radius:12px;background:#fff;padding:12px;margin-bottom:10px;box-shadow:0 1px 5px rgba(13,148,136,.04);}
+  .kh-knowledge-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .kh-knowledge-badge{background:#ccfbf1;color:#0f766e;border-radius:8px;padding:5px 10px;}
+  .kh-version-badge{background:#fef3c7;color:#b45309;border:1px solid #fde68a;border-radius:7px;padding:4px 9px;cursor:pointer;font:inherit;}
+  .kh-version-badge:hover{background:#fde68a;}
+  .kh-file-table-wrap{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff;}
+  .kh-file-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;}
+  .kh-file-table th{background:#f8fafc;color:#64748b;text-transform:uppercase;letter-spacing:.04em;font-size:10.5px;font-weight:750;padding:8px 11px;border-bottom:1px solid var(--border);text-align:left;}
+  .kh-file-table td{padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:middle;background:#fff;}
+  .kh-file-table tr:last-child td{border-bottom:0;}
+  .kh-file-table tbody tr:hover td{background:#fbfdff;}
+  .kh-source-cell{display:flex;align-items:center;gap:8px;min-width:0;}
+  .kh-source-icon{width:16px;height:16px;flex:0 0 16px;}
+  .kh-source-title{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .kh-meta-pill{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;font-size:11px;font-weight:650;}
+  .kh-source-actions{display:flex;justify-content:flex-end;gap:6px;white-space:nowrap;}
+  .kh-source-actions .btn{min-height:29px!important;padding:4px 9px!important;}
+  .kh-source-actions .btn-danger-lite{color:#dc2626;border-color:#fca5a5;background:#fef2f2;}
+  .kh-source-actions .btn-danger-lite:hover{background:#fee2e2;}
+  .kh-extra-row td{padding:0 11px 9px!important;background:#fbfdff!important;}
+  .kh-extra-box{border:1px dashed var(--border-strong);border-radius:8px;padding:7px 9px;margin-top:2px;}
+  .kh-extra-box>summary{cursor:pointer;font-size:11.5px;font-weight:700;color:var(--ink-muted);}
+  .kh-extra-item{display:grid;grid-template-columns:minmax(240px,1fr) auto;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);}
+  .kh-extra-item:first-of-type{margin-top:6px;}
+  .kh-extra-actions{display:flex;gap:6px;}
+  .kh-collapsed>.kh-domain-content,.kh-collapsed>.kh-module-content{display:none;}
+  @media(max-width:900px){.kh-knowledge-card{margin-left:8px}.kh-file-table{min-width:760px}.kh-file-table-wrap{overflow:auto}.kh-domain-content{padding:10px}.kh-source-actions{justify-content:flex-start}}
+
+  #khUploadSummaryModal .modal-card,#khSmartSummaryModal .modal-card{width:min(1400px,94vw)!important;max-width:1400px!important;height:min(90vh,900px)!important;max-height:90vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;padding:18px 20px!important;}
+  #khUploadSummaryModal h3,#khSmartSummaryModal h3{flex:0 0 auto;margin-bottom:3px!important;}
+  #khUploadSummaryModal .modal-sub,#khSmartSummaryModal .modal-sub{flex:0 0 auto;margin-bottom:10px!important;}
+  #khUploadSummaryBody,#khSmartSummaryBody{flex:1 1 auto!important;min-height:0!important;overflow:auto!important;padding:4px 12px 8px 0!important;}
+  #khUploadSummaryModal .modal-actions,#khSmartSummaryModal .modal-actions{flex:0 0 auto!important;margin-top:8px!important;padding-top:10px!important;border-top:1px solid var(--border)!important;background:var(--surface)!important;}
 
 </style>
 </head>
@@ -837,13 +927,25 @@
 </div>
 
 <div class="modal-overlay" id="khUploadSummaryModal">
-  <div class="modal-card kh-modal-card" style="max-width:780px;">
+  <div class="modal-card kh-modal-card">
     <h3>Manual Upload Complete</h3>
     <div class="modal-sub">Review the real storage, processing, and analysis results returned for this upload.</div>
     <div id="khUploadSummaryBody"></div>
     <div class="modal-actions">
       <button type="button" class="btn" id="khUploadSummaryClose">Upload More / Close</button>
       <button type="button" class="btn btn-primary" id="khUploadSummaryView">View Knowledge</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="khSmartSummaryModal">
+  <div class="modal-card kh-modal-card">
+    <h3>AI Smart Upload Complete</h3>
+    <div class="modal-sub">Review the confirmed AI classification and real storage result before continuing.</div>
+    <div id="khSmartSummaryBody"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="khSmartSummaryClose">Upload More / Close</button>
+      <button type="button" class="btn btn-primary" id="khSmartSummaryView">View Knowledge</button>
     </div>
   </div>
 </div>
@@ -1451,7 +1553,7 @@
                  its natural size, and overflow:auto (a textarea's own
                  native scrolling) keeps long scripts scrollable
                  WITHOUT the surrounding modal ever needing to scroll. -->
-            <textarea id="tcScriptEditor" class="code-block" style="width:100%;flex:1;min-height:0;overflow:auto;font-family:var(--mono,monospace);white-space:pre;resize:none;" spellcheck="false"></textarea>
+            <div id="tcScriptWorkspace"><pre id="tcScriptHighlight" aria-hidden="true"></pre><textarea id="tcScriptEditor" class="code-block" spellcheck="false" aria-label="Automation script editor"></textarea></div>
 
             <!-- SQL-only assertion fields — hidden for Playwright/API -->
             <div id="tcSqlAssertionRow" style="display:none;gap:8px;margin-top:8px;">
@@ -1476,13 +1578,15 @@
             </div>
 
             <div class="auth-error" id="tcScriptError"></div>
-            <div class="btn-row">
+            <div class="btn-row" id="tcScriptActionBar">
               <button class="btn" id="tcGenerateBtn">Generate (AI)</button>
               <button class="btn" id="tcSuggestTypeBtn">Suggest Type (AI)</button>
+              <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
               <div class="fbar-spacer"></div>
               <button class="btn" id="tcValidateBtn">Validate</button>
               <button class="btn" id="tcActivateBtn">Set Active</button>
-              <button class="btn btn-primary" id="tcSaveScriptBtn">Save Script</button>
+              <button class="btn btn-primary" id="tcScriptExecuteBtn">Execute</button>
+              <button class="btn" id="tcScriptCloseBtn">Close</button>
             </div>
             <div id="tcValidateResult"></div>
           </div>
@@ -3281,6 +3385,18 @@
     stopAutoPoll();
   });
 
+  document.getElementById('tcScriptCloseBtn').addEventListener('click', function(){
+    document.getElementById('tcDetailModal').classList.remove('show');
+    stopAutoPoll();
+  });
+  document.getElementById('tcScriptExecuteBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var type=autoSelectedType || autoSelectedTc.automation_type || 'Playwright';
+    if(type==='API') document.getElementById('tcExecuteApiBtn').click();
+    else if(type==='SQL') document.getElementById('tcExecuteSqlBtn').click();
+    else document.getElementById('tcExecuteBtn').click();
+  });
+
   document.getElementById('tcClickUpBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
     createClickUpBug(autoSelectedTc.id, document.getElementById('tcClickUpBtn'));
@@ -3426,6 +3542,20 @@
   var tcSearchMatches = [];
   var tcSearchIndex = -1;
 
+  function renderScriptSearchHighlights(){
+    var editor=document.getElementById('tcScriptEditor'), layer=document.getElementById('tcScriptHighlight');
+    if(!editor||!layer)return;
+    var text=editor.value||'', html='', cursor=0;
+    tcSearchMatches.forEach(function(match,index){
+      html+=escapeHtml(text.slice(cursor,match.start));
+      html+='<mark class="'+(index===tcSearchIndex?'current':'')+'">'+escapeHtml(text.slice(match.start,match.end))+'</mark>';
+      cursor=match.end;
+    });
+    html+=escapeHtml(text.slice(cursor));
+    layer.innerHTML=html+'\n';
+    layer.scrollTop=editor.scrollTop;layer.scrollLeft=editor.scrollLeft;
+  }
+
   function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
   function computeScriptSearchMatches(term){
@@ -3445,6 +3575,7 @@
     var countEl = document.getElementById('tcScriptSearchCount');
     if(!tcSearchMatches.length){ countEl.textContent = '0 / 0'; return; }
     countEl.textContent = (tcSearchIndex + 1) + ' / ' + tcSearchMatches.length;
+    renderScriptSearchHighlights();
   }
 
   function gotoScriptSearchMatch(step){
@@ -3486,6 +3617,7 @@
     var lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 18;
     var target = (lineIndex * lineHeight) - (editor.clientHeight / 2);
     editor.scrollTop = Math.max(0, target);
+    renderScriptSearchHighlights();
     if(searchInput){
       requestAnimationFrame(function(){ searchInput.focus({preventScroll:true}); });
     }
@@ -3499,6 +3631,7 @@
     if(!tcSearchMatches.length){
       tcSearchIndex = -1;
       updateScriptSearchCount();
+      renderScriptSearchHighlights();
       return;
     }
     // Keep roughly the same position when re-typing rather than
@@ -3518,9 +3651,12 @@
     tcSearchIndex = -1;
     document.getElementById('tcScriptSearchInput').value = '';
     updateScriptSearchCount();
+    renderScriptSearchHighlights();
   }
 
   document.getElementById('tcScriptSearchInput').addEventListener('input', runScriptSearch);
+  document.getElementById('tcScriptEditor').addEventListener('scroll', renderScriptSearchHighlights);
+  document.getElementById('tcScriptEditor').addEventListener('input', function(){ tcSearchMatches=computeScriptSearchMatches(document.getElementById('tcScriptSearchInput').value); if(tcSearchMatches.length && tcSearchIndex>=tcSearchMatches.length)tcSearchIndex=tcSearchMatches.length-1; updateScriptSearchCount(); renderScriptSearchHighlights(); });
   document.getElementById('tcScriptSearchNext').addEventListener('click', function(){ gotoScriptSearchMatch(1); });
   document.getElementById('tcScriptSearchPrev').addEventListener('click', function(){ gotoScriptSearchMatch(-1); });
   document.getElementById('tcScriptSearchInput').addEventListener('keydown', function(e){
@@ -4015,19 +4151,29 @@
   // This Fix. This is the concrete answer to "do not blindly accept
   // an AI locator without checking it against the current page."
   document.getElementById('repairVerifyBtn').addEventListener('click', function(){
-    var candidate = document.getElementById('repairAdvancedCheckbox').checked
-      ? extractLocatorFromCode(document.getElementById('repairCodeEdit').value)
-      : document.getElementById('repairLocator').value;
+    var advanced = document.getElementById('repairAdvancedCheckbox').checked;
+    var candidate = advanced
+      ? document.getElementById('repairCodeEdit').value.trim()
+      : document.getElementById('repairLocator').value.trim();
     var statusEl = document.getElementById('repairVerifyStatus');
     if(!candidate){
       statusEl.style.color = 'var(--danger)';
-      statusEl.textContent = 'No locator to test — enter one first.';
+      statusEl.textContent = advanced
+        ? 'No Playwright step code to test — enter the corrected statement first.'
+        : 'No locator to test — enter one first.';
       return;
     }
     this.disabled = true;
     statusEl.style.color = '';
-    statusEl.textContent = 'Testing locator against the current page…';
-    interactiveSend({ type: 'decision', decision: { action: 'verify_locator', locator: candidate } });
+    statusEl.textContent = advanced
+      ? 'Testing the corrected Playwright locator chain against the current page…'
+      : 'Testing locator against the current page…';
+    interactiveSend({
+      type: 'decision',
+      decision: advanced
+        ? { action: 'verify_code', code: candidate }
+        : { action: 'verify_locator', locator: candidate }
+    });
   });
 
   document.getElementById('repairCancelBtn').addEventListener('click', function(){
@@ -4161,7 +4307,7 @@
           'AI suggestion found (strategy: ' + (msg.result.strategy || 'n/a') +
           ', confidence: ' + (msg.result.confidence || 'n/a') + '). ' +
           groundedNote.charAt(0).toUpperCase() + groundedNote.slice(1) +
-          ' click Apply AI Suggestion, then Test Locator Against Current Page before retrying.';
+          ' click Apply AI Suggestion. QA AI Studio will test the full Playwright locator chain against the current page before you retry.';
         var sug = document.getElementById('repairAiSuggestion');
         sug.textContent = lastAiSuggestionCode;
         sug.style.display = '';
@@ -4174,9 +4320,12 @@
         vbtn.disabled = false;
         var vstatus = document.getElementById('repairVerifyStatus');
         var ev = msg.event || {};
-        if(ev.found && ev.visible){
+        if(ev.found && ev.visible && ev.count === 1){
           vstatus.style.color = 'var(--success, #1a7f37)';
-          vstatus.textContent = '✓ Locator verified — found and visible on the current page (' + ev.count + ' match' + (ev.count === 1 ? '' : 'es') + ').';
+          vstatus.textContent = '✓ Locator verified — exactly 1 visible match on the current page. Safe to retry this step.';
+        } else if(ev.found && ev.visible && ev.count > 1){
+          vstatus.style.color = '#b45309';
+          vstatus.textContent = '⚠ Locator is still ambiguous — ' + ev.count + ' visible matches. Do not retry yet; scope it to the correct parent/card/section or use a unique attribute.';
         } else if(ev.found){
           vstatus.style.color = '#b8860b';
           vstatus.textContent = '⚠ Locator found (' + ev.count + ' match' + (ev.count === 1 ? '' : 'es') + ') but not currently visible — retrying may still fail.';
@@ -4238,7 +4387,7 @@
             loadTypeTestCases('Playwright');
           }).catch(function(){});
         }
-        if(result.success && result.repairs && result.repairs.length){
+        if(result.repairs && result.repairs.length){
           offerToSaveRepairs(tc.tc_number || '', result.repairs, function(save){
             if(save){
               interactiveSend({ type: 'save_repairs', repairs: result.repairs });
@@ -4977,59 +5126,17 @@
   }
 
   function renderKnowledgeItems(items){
-    var domainFilter = document.getElementById('khDomainFilter').value;
-    var moduleFilter = document.getElementById('khModuleFilter').value;
-    var query = document.getElementById('khSearch').value.trim().toLowerCase();
-    var filtered = items.filter(function(item){
-      var tags = (item.tags || []).join(' ');
-      var haystack = [item.domain,item.module,item.knowledge_name,item.version,item.document_type,item.file_name,item.summary,tags].join(' ').toLowerCase();
-      return (!domainFilter || item.domain === domainFilter) && (!moduleFilter || item.module === moduleFilter) && (!query || haystack.indexOf(query) !== -1);
-    });
-    document.getElementById('khCount').textContent = filtered.length + ' source' + (filtered.length === 1 ? '' : 's');
-    var tree = document.getElementById('khTree');
-    if(!filtered.length){ tree.innerHTML = '<div class="kh-empty"><strong>No knowledge found</strong><br><span>Adjust the filters or add a new source.</span></div>'; return; }
-    var canEdit = hasPermission('knowledge', 'edit');
-    var canDelete = hasPermission('knowledge', 'delete');
-    var grouped = {};
-    filtered.forEach(function(item){
-      var domain = item.domain || 'Unspecified', module = item.module || 'Unspecified', name = item.knowledge_name || 'Unspecified', version = item.version || 'Unspecified', type = item.document_type || 'Unspecified';
-      grouped[domain] = grouped[domain] || {};
-      grouped[domain][module] = grouped[domain][module] || {};
-      grouped[domain][module][name] = grouped[domain][module][name] || {};
-      grouped[domain][module][name][version] = grouped[domain][module][name][version] || {};
-      grouped[domain][module][name][version][type] = grouped[domain][module][name][version][type] || [];
-      grouped[domain][module][name][version][type].push(item);
-    });
-    function node(label, children, open, level){ return '<details data-level="' + escapeHtml(level || 'structured') + '"' + (open ? ' open' : '') + '><summary>' + escapeHtml(label) + '</summary>' + children + '</details>'; }
-    var html = '';
-    Object.keys(grouped).sort().forEach(function(domain){
-      var moduleHtml = '';
-      Object.keys(grouped[domain]).sort().forEach(function(module){
-        var nameHtml = '';
-        Object.keys(grouped[domain][module]).sort().forEach(function(name){
-          var versionHtml = '';
-          Object.keys(grouped[domain][module][name]).sort().forEach(function(version){
-            var typeHtml = '';
-            Object.keys(grouped[domain][module][name][version]).sort().forEach(function(type){
-              var leaves = grouped[domain][module][name][version][type].map(function(item){
-                var sourceName = item.source_type === 'API_COLLECTION' ? 'Imported API Collection' : (item.file_name || 'Unnamed source');
-                var leaf='<div class="kh-tree-leaf"><div class="kh-source-name" title="' + escapeHtml(sourceName) + '"><strong>' + escapeHtml(sourceName) + '</strong><div class="kh-tree-meta">Source Type: ' + escapeHtml(canonicalSourceType(item.source_type)) + ' · Updated ' + escapeHtml(fmtDate(item.modified_date)) + '</div></div><div>' + confidencePill(item.confidence) + '</div><div class="kh-tree-meta">' + escapeHtml(item.status || '—') + '</div><div class="row-actions"><button type="button" class="btn" title="View details" data-action="kh-view" data-kh-id="' + item.id + '">Details</button>' + (canEdit ? '<button type="button" class="btn" title="Edit knowledge" data-action="kh-edit" data-kh-id="' + item.id + '">Edit</button>' : '') + '<button type="button" class="btn" title="View versions" data-action="kh-versions" data-kh-id="' + item.id + '">Versions</button>' + (canDelete ? '<button type="button" class="btn" style="color:var(--danger);" title="Delete knowledge" data-action="kh-delete" data-kh-id="' + item.id + '">Delete</button>' : '') + '</div></div>';
-                (item.api_collections||[]).forEach(function(collection){leaf+=node('API Collection · '+collection.name,(collection.endpoints||[]).map(function(endpoint){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml((endpoint.method||'GET').toUpperCase())+' · '+escapeHtml(endpoint.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(endpoint.folder_path||'Root')+' · '+escapeHtml(endpoint.url||'Unresolved URL')+'</div></div><div></div><div class="kh-tree-meta">Endpoint</div><div class="row-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+endpoint.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+endpoint.id+'">Run Now</button></div></div>';}).join(''),!!query,'structured');});
-                (item.captured_flows||[]).forEach(function(flow){var steps=(flow.steps||[]).map(function(step){var elements=(step.elements||[]).map(function(element){return '<div class="kh-tree-leaf"><div><strong>'+escapeHtml(element.name||element.element_type||'Control')+'</strong><div class="kh-tree-meta" title="'+escapeHtml(element.locator||'')+'">'+escapeHtml(element.locator_strategy||'locator')+' · '+escapeHtml(element.locator||'—')+'</div></div><div></div><div class="kh-tree-meta">Control</div><div></div></div>';}).join('');return node((step.step_order||'')+' · '+(step.step_name||step.page_name||'Step'),elements,!!query);}).join('');leaf+=node('Captured Flow · '+(flow.business_process_name||'Process')+' / '+(flow.variant_name||'Variant'),steps,!!query);});
-                return leaf;
-              }).join('');
-              typeHtml += node('Document Type: ' + type + ' · ' + grouped[domain][module][name][version][type].length + ' source(s)', leaves, !!query, 'document');
-            });
-            versionHtml += node('Version ' + version, typeHtml, !!query, 'version');
-          });
-          nameHtml += node(name, versionHtml, !!query, 'knowledge');
-        });
-        moduleHtml += node(module, nameHtml, !!query, 'module');
-      });
-      html += node(domain, moduleHtml, true, 'domain');
-    });
-    tree.innerHTML = html;
-    wireKhRowActions(tree);
+    var domainFilter=document.getElementById('khDomainFilter').value,moduleFilter=document.getElementById('khModuleFilter').value,query=document.getElementById('khSearch').value.trim().toLowerCase();
+    var filtered=items.filter(function(item){var tags=(item.tags||[]).join(' '),haystack=[item.domain,item.module,item.knowledge_name,item.version,item.document_type,item.source_type,item.file_name,item.source_location,item.summary,tags].join(' ').toLowerCase();return(!domainFilter||item.domain===domainFilter)&&(!moduleFilter||item.module===moduleFilter)&&(!query||haystack.indexOf(query)!==-1);});
+    document.getElementById('khCount').textContent=filtered.length+' source'+(filtered.length===1?'':'s');
+    var tree=document.getElementById('khTree');if(!filtered.length){tree.innerHTML='<div class="kh-empty"><strong>No knowledge found</strong><br><span>Adjust the filters or add a new source.</span></div>';return;}
+    var canEdit=hasPermission('knowledge','edit'),canDelete=hasPermission('knowledge','delete'),grouped={};
+    filtered.forEach(function(item){var d=item.domain||'Unspecified',m=item.module||'Unspecified',n=item.knowledge_name||'Unspecified',v=item.version||'Unspecified';grouped[d]=grouped[d]||{};grouped[d][m]=grouped[d][m]||{};grouped[d][m][n]=grouped[d][m][n]||{};grouped[d][m][n][v]=grouped[d][m][n][v]||[];grouped[d][m][n][v].push(item);});
+    function sourceName(item){return item.file_name||item.source_location||(item.source_type==='API_COLLECTION'?'Imported API Collection':'Unnamed source');}
+    function iconFor(item){var name=String(item.file_name||item.source_location||'').toLowerCase(),st=String(item.source_type||'').toUpperCase();if(/\.(xlsx|xls|csv)$/.test(name))return'<svg class="kh-source-icon" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg>';if(st.indexOf('API')>=0)return'<svg class="kh-source-icon" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2"><path d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></svg>';if(st.indexOf('URL')>=0)return'<svg class="kh-source-icon" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>';return'<svg class="kh-source-icon" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>';}
+    function extrasHtml(item){var parts=[];(item.api_collections||[]).forEach(function(c){var rows=(c.endpoints||[]).map(function(e){return'<div class="kh-extra-item"><div><strong>'+escapeHtml((e.method||'GET').toUpperCase())+' · '+escapeHtml(e.name||'Unnamed request')+'</strong><div class="kh-tree-meta">'+escapeHtml(e.folder_path||'Root')+' · '+escapeHtml(e.url||'Unresolved URL')+'</div></div><div class="kh-extra-actions"><button type="button" class="btn" data-action="kh-endpoint" data-endpoint-id="'+e.id+'">View / Edit</button><button type="button" class="btn" data-action="kh-endpoint-run" data-endpoint-id="'+e.id+'">Run Now</button></div></div>';}).join('');parts.push('<details class="kh-extra-box"><summary>API Collection · '+escapeHtml(c.name||'Collection')+'</summary>'+rows+'</details>');});(item.captured_flows||[]).forEach(function(f){var steps=(f.steps||[]).map(function(step){var controls=(step.elements||[]).map(function(el){return escapeHtml(el.name||el.element_type||'Control')+' <span class="kh-tree-meta">'+escapeHtml(el.locator_strategy||'locator')+' · '+escapeHtml(el.locator||'—')+'</span>';}).join('<br>');return'<div class="kh-extra-item"><div><strong>'+escapeHtml(String(step.step_order||''))+' · '+escapeHtml(step.step_name||step.page_name||'Step')+'</strong><div class="kh-tree-meta">'+controls+'</div></div><div></div></div>';}).join('');parts.push('<details class="kh-extra-box"><summary>Captured Flow · '+escapeHtml(f.business_process_name||'Process')+' / '+escapeHtml(f.variant_name||'Variant')+'</summary>'+steps+'</details>');});return parts.join('');}
+    var html='';Object.keys(grouped).sort().forEach(function(domain){var modules=grouped[domain],moduleNames=Object.keys(modules).sort(),moduleHtml='';moduleNames.forEach(function(module){var knowledgeHtml='';Object.keys(modules[module]).sort().forEach(function(name){Object.keys(modules[module][name]).sort().forEach(function(version){var sources=modules[module][name][version],versionItem=sources[0],rows=sources.map(function(item){var extras=extrasHtml(item),title=sourceName(item),actions='<div class="kh-source-actions"><button type="button" class="btn" data-action="kh-view" data-kh-id="'+item.id+'">Detail</button>'+(canEdit?'<button type="button" class="btn" data-action="kh-edit" data-kh-id="'+item.id+'">Edit</button>':'')+(canDelete?'<button type="button" class="btn btn-danger-lite" data-action="kh-delete" data-kh-id="'+item.id+'">Delete</button>':'')+'</div>';var row='<tr><td><div class="kh-source-cell">'+iconFor(item)+'<span class="kh-source-title" title="'+escapeHtml(title)+'">'+escapeHtml(title)+'</span></div></td><td><span class="kh-meta-pill">'+escapeHtml(item.document_type||'—')+'</span></td><td><span class="kh-meta-pill">'+escapeHtml(canonicalSourceType(item.source_type))+'</span></td><td>'+actions+'</td></tr>';if(extras)row+='<tr class="kh-extra-row"><td colspan="4">'+extras+'</td></tr>';return row;}).join('');knowledgeHtml+='<section class="kh-knowledge-card"><div class="kh-knowledge-head"><span class="kh-knowledge-badge">Knowledge: '+escapeHtml(name)+'</span><button type="button" class="kh-version-badge" data-action="kh-versions" data-kh-id="'+versionItem.id+'" title="View versions">Version '+escapeHtml(version)+'</button></div><div class="kh-file-table-wrap"><table class="kh-file-table"><colgroup><col style="width:42%"><col style="width:16%"><col style="width:16%"><col style="width:26%"></colgroup><thead><tr><th>Source File Name</th><th>Document Type</th><th>Source Type</th><th style="text-align:right">Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';});});moduleHtml+='<section class="kh-module-block"><div class="kh-module-header" data-kh-toggle="module"><span class="kh-module-badge">Module: '+escapeHtml(module)+'</span></div><div class="kh-module-content">'+knowledgeHtml+'</div></section>';});html+='<section class="kh-domain-card"><div class="kh-domain-header" data-kh-toggle="domain"><span class="kh-domain-badge">Domain: '+escapeHtml(domain)+'</span><span class="kh-domain-count">'+moduleNames.length+' Module'+(moduleNames.length===1?'':'s')+'</span></div><div class="kh-domain-content">'+moduleHtml+'</div></section>';});
+    tree.innerHTML=html;tree.querySelectorAll('[data-kh-toggle="domain"]').forEach(function(head){head.addEventListener('click',function(event){if(event.target.closest('button'))return;head.parentElement.classList.toggle('kh-collapsed');});});tree.querySelectorAll('[data-kh-toggle="module"]').forEach(function(head){head.addEventListener('click',function(){head.parentElement.classList.toggle('kh-collapsed');});});wireKhRowActions(tree);
   }
 
   function wireKhRowActions(body){
@@ -5175,8 +5282,8 @@
   document.getElementById('khModuleFilter').addEventListener('change', applyKhFilters);
   document.getElementById('khSearch').addEventListener('input', applyKhFilters);
   document.getElementById('khRefreshBtn').addEventListener('click', function(){ loadKnowledgeHub().then(function(){ toast('Knowledge refreshed.'); }); });
-  document.getElementById('khExpandAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=true; }); });
-  document.getElementById('khCollapseAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree details').forEach(function(item){ item.open=false; }); });
+  document.getElementById('khExpandAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree .kh-collapsed').forEach(function(item){ item.classList.remove('kh-collapsed'); }); document.querySelectorAll('#khTree details').forEach(function(item){ item.open=true; }); });
+  document.getElementById('khCollapseAllBtn').addEventListener('click', function(){ document.querySelectorAll('#khTree .kh-domain-card, #khTree .kh-module-block').forEach(function(item){ item.classList.add('kh-collapsed'); }); document.querySelectorAll('#khTree details').forEach(function(item){ item.open=false; }); });
   document.querySelectorAll('[data-page-content="knowledge"] .tabstrip .tab[data-tab]').forEach(function(tab){tab.addEventListener('click',function(){var target=tab.getAttribute('data-tab');if(target==='kh-browse')enterManageKnowledge();else if(target==='kh-upload')enterManualUpload();else if(target==='kh-smart')enterSmartUpload();});});
   function switchToKhTab(tabName){
     var strip = document.querySelector('[data-page-content="knowledge"] .tabstrip');
@@ -5500,6 +5607,9 @@
     }).catch(function(err){ toast(err.message, true); });
   });
 
+
+  document.getElementById('khSmartSummaryClose').addEventListener('click',function(){document.getElementById('khSmartSummaryModal').classList.remove('show');});
+  document.getElementById('khSmartSummaryView').addEventListener('click',function(){document.getElementById('khSmartSummaryModal').classList.remove('show');document.querySelector('[data-tab="kh-manage"]').click();});
   // ---- AI Smart Upload Handlers ----
   var khSmartSources = [], khSmartSourceSequence = 0;
   function setKhSmartReviewVisible(visible){document.getElementById('khSmartSuggested').hidden=!visible;document.getElementById('khSmartResults').hidden=!visible;}
@@ -5574,7 +5684,7 @@
     if(!smartFiles.length){errBox.textContent='Analyze at least one source before confirming upload.';errBox.classList.add('show');return;}
     smartButton.disabled=true;smartButton.textContent='Uploading…';var smartSequence=Promise.resolve(),smartSuccessful=0,smartFailed=0;
     smartFiles.forEach(function(candidate){smartSequence=smartSequence.then(function(){var source=khSmartSources.filter(function(row){return row.key===uploadSourceKey(candidate);})[0],reviewed=khSmartAnalyses[uploadSourceKey(candidate)]||{},form=new FormData();if(source){source.status='Uploading';source.message='Upload in progress';renderKhSmartSources();}form.append('file',candidate);form.append('domain',domain);form.append('module',module);form.append('knowledge_name',name);form.append('version',version);form.append('document_type',docType);form.append('source_type','SMART_UPLOAD');form.append('reviewed_summary',summary);form.append('reviewed_tags',JSON.stringify(tags));form.append('reviewed_confidence',String(reviewed.confidence||0));var requestHeaders={};if(authState.token)requestHeaders.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/upload',{method:'POST',headers:requestHeaders,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'Upload failed.');return data;});}).then(function(){smartSuccessful++;delete khSmartAnalyses[uploadSourceKey(candidate)];if(source){source.status='Uploaded';source.message='Stored and indexed';}}).catch(function(error){smartFailed++;if(source){source.status='Failed';source.message=error.message;}}).finally(renderKhSmartSources);});});
-    smartSequence.then(function(){document.getElementById('khSmartUploadResult').innerHTML='<div class="kh-section"><strong>Smart Upload completed</strong><div class="muted-small">Successful: '+smartSuccessful+' · Failed: '+smartFailed+'</div></div>';khSmartSources=khSmartSources.filter(function(source){return source.status!=='Uploaded';});renderKhSmartSources();if(!Object.keys(khSmartAnalyses).length)resetKhSmartReview();return loadKnowledgeHub();}).then(function(){toast(smartSuccessful+' source(s) saved.',smartFailed>0);}).finally(function(){smartButton.disabled=false;smartButton.textContent='Confirm Upload';});
+    smartSequence.then(function(){document.getElementById('khSmartUploadResult').innerHTML='<div class="kh-section"><strong>Smart Upload completed</strong><div class="muted-small">Successful: '+smartSuccessful+' · Failed: '+smartFailed+'</div></div>';var summaryBody=document.getElementById('khSmartSummaryBody');summaryBody.innerHTML='<div class="kh-modal-section" style="border-top:0;margin-top:0;padding-top:0;"><h4>Upload Result</h4><dl class="kh-detail-grid"><dt>Overall Status</dt><dd>'+(smartFailed?(smartSuccessful?'Partially completed':'Failed'):'Completed')+'</dd><dt>Successful</dt><dd>'+smartSuccessful+'</dd><dt>Failed</dt><dd>'+smartFailed+'</dd></dl></div><div class="kh-modal-section"><h4>Confirmed Knowledge Metadata</h4><dl class="kh-detail-grid"><dt>Domain</dt><dd>'+escapeHtml(domain)+'</dd><dt>Module</dt><dd>'+escapeHtml(module)+'</dd><dt>Knowledge Name</dt><dd>'+escapeHtml(name)+'</dd><dt>Version</dt><dd>'+escapeHtml(version)+'</dd><dt>Document Type</dt><dd>'+escapeHtml(docType)+'</dd><dt>Summary</dt><dd>'+escapeHtml(summary||'—')+'</dd><dt>Tags</dt><dd>'+escapeHtml(tags.join(', ')||'—')+'</dd></dl></div>';document.getElementById('khSmartSummaryView').style.display=smartSuccessful?'':'none';document.getElementById('khSmartSummaryModal').classList.add('show');khSmartSources=khSmartSources.filter(function(source){return source.status!=='Uploaded';});renderKhSmartSources();if(!Object.keys(khSmartAnalyses).length)resetKhSmartReview();return loadKnowledgeHub();}).then(function(){toast(smartSuccessful+' source(s) saved.',smartFailed>0);}).finally(function(){smartButton.disabled=false;smartButton.textContent='Confirm Upload';});
     return;
   });
 

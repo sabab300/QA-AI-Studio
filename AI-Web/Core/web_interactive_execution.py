@@ -314,7 +314,7 @@ class WebInteractiveExecutionSession:
         # wrongly report "No failure is currently awaiting a fix."
         # while the operator is still mid-verification on the exact
         # same paused step.
-        if (decision or {}).get("action") != "verify_locator":
+        if (decision or {}).get("action") not in ("verify_locator", "verify_code"):
 
             self._pending_failure_event = None
 

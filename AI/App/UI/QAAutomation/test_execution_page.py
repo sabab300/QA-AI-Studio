@@ -1613,12 +1613,20 @@ class LocatorRepairDialog(QDialog):
 
     def _on_apply_ai_suggestion(self):
 
-        self.decision = {
-            "action": "retry_code",
-            "code": self._last_ai_code,
-        }
-
-        self.accept()
+        # Never execute an AI suggestion blindly. Load it into the
+        # Advanced editor so the operator can inspect/adjust the exact
+        # Playwright statement, then explicitly press Retry With This Fix.
+        self.advanced_checkbox.setChecked(True)
+        self.code_edit.setPlainText(self._last_ai_code)
+        self.code_edit.setVisible(True)
+        self.locator_field.setEnabled(False)
+        self.value_field.setEnabled(False)
+        self.ai_status_label.setText(
+            "AI suggestion loaded into Advanced edit. Review the scoped "
+            "locator/code, then press Retry With This Fix to continue the "
+            "same paused run."
+        )
+        self.retry_btn.setFocus()
 
     def _cleanup_ai_thread(self):
 
