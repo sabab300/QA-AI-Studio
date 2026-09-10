@@ -941,6 +941,20 @@ class TestCaseRepository:
         )
 
 
+    @staticmethod
+    def _canonical_script_text(value):
+        """Compare editor/persisted script text without false lifecycle changes.
+
+        Browsers normalise textarea line endings to ``\n`` while scripts
+        produced on Windows are commonly persisted with ``\r\n``.  A
+        trailing final newline is also editor-formatting, not an executable
+        change.  Treat those representation-only differences as equal so a
+        no-op Save cannot demote an already Active script back to Draft.
+        """
+        text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+        return text.rstrip("\n")
+
+
     def update_automation(
 
         self,
@@ -952,19 +966,47 @@ class TestCaseRepository:
         automation_script=None
 
     ):
+        """Persist an AI/manual automation script.
+
+        A real content/tool change makes the script Draft, because it
+        needs a fresh Validate -> Set Active cycle.  A no-op Save of
+        the exact already-persisted script MUST NOT demote an Active
+        script back to Draft; that was the root cause of Execute
+        Selected reporting "saved script is a Draft" immediately
+        after a successful Set Active.
+
+        Returns True when executable script configuration changed.
+        """
 
         conn = self.db.get_connection()
-
         cursor = conn.cursor()
-
         now = datetime.now().isoformat()
+
+        cursor.execute(
+            "SELECT automation_type, automation_script, status FROM test_cases WHERE id=?",
+            (test_case_id,),
+        )
+        current = cursor.fetchone()
+        if current is None:
+            conn.close()
+            return False
+
+        current_type, current_script, current_status = current
+        script_changed = (
+            automation_script is not None
+            and self._canonical_script_text(current_script)
+            != self._canonical_script_text(automation_script)
+        )
+        type_changed = (current_type or "None") != (automation_type or "None")
+        changed = script_changed or type_changed
+        next_status = "Draft" if changed else (current_status or "Draft")
 
         cursor.execute(
             """
             UPDATE test_cases
             SET automation_type=?,
                 automation_script=COALESCE(?, automation_script),
-                status='Draft',
+                status=?,
                 execution_type='Automatable',
                 execution_tool=?,
                 modified_date=?
@@ -973,6 +1015,7 @@ class TestCaseRepository:
             (
                 automation_type,
                 automation_script,
+                next_status,
                 self.execution_tool_for_automation_type(automation_type),
                 now,
                 test_case_id,
@@ -980,47 +1023,55 @@ class TestCaseRepository:
         )
 
         conn.commit()
-
         conn.close()
+        return changed
 
     def update_recorded_script(self, test_case_id, recorded_script):
-        """
-        Stores a script captured by hand via Playwright's own
-        codegen recorder ("Record Manually"), kept in its own column
-        so it never overwrites the AI-generated automation_script —
-        active_script_source decides which one actually runs on
-        Execute. Also marks this test case Automated/Playwright,
-        same as an AI-generated script would, since either way it
-        now has something Execute can run.
+        """Persist the Manual/Recorded script.
+
+        A changed script becomes Draft.  Re-saving byte-for-byte the
+        same script is a no-op for lifecycle state and therefore does
+        not undo a prior Set Active.  Returns True when script content
+        changed.
         """
 
         conn = self.db.get_connection()
-
         cursor = conn.cursor()
-
         now = datetime.now().isoformat()
+
+        cursor.execute(
+            "SELECT recorded_script, status FROM test_cases WHERE id=?",
+            (test_case_id,),
+        )
+        current = cursor.fetchone()
+        if current is None:
+            conn.close()
+            return False
+
+        current_script, current_status = current
+        changed = (
+            self._canonical_script_text(current_script)
+            != self._canonical_script_text(recorded_script)
+        )
+        next_status = "Draft" if changed else (current_status or "Draft")
 
         cursor.execute(
             """
             UPDATE test_cases
             SET recorded_script=?,
                 automation_type='Playwright',
-                status='Draft',
+                status=?,
                 execution_type='Automatable',
                 execution_tool='Playwright',
                 modified_date=?
             WHERE id=?
             """,
-            (
-                recorded_script,
-                now,
-                test_case_id,
-            )
+            (recorded_script, next_status, now, test_case_id)
         )
 
         conn.commit()
-
         conn.close()
+        return changed
 
 
     def set_active_script_source(self, test_case_id, source):

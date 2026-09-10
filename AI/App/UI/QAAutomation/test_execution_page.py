@@ -1138,15 +1138,17 @@ class ViewScriptDialog(QDialog):
 
         layout.addWidget(self.editor)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox()
 
+        self.validate_btn = buttons.addButton(
+            "Validate", QDialogButtonBox.ActionRole
+        )
         self.save_btn = buttons.addButton(
-            "Save", QDialogButtonBox.AcceptRole
+            "Save Script", QDialogButtonBox.ActionRole
         )
 
-        buttons.rejected.connect(self.reject)
-
-        buttons.accepted.connect(self.save)
+        self.validate_btn.clicked.connect(self.validate_current_script)
+        self.save_btn.clicked.connect(self.save)
 
         layout.addWidget(buttons)
 
@@ -1240,6 +1242,42 @@ class ViewScriptDialog(QDialog):
 
             QMessageBox.critical(self, "Could Not Set Active", str(ex))
 
+    def validate_current_script(self):
+
+        script_text = self.editor.toPlainText()
+
+        if not script_text.strip():
+
+            QMessageBox.warning(
+                self,
+                "Validation Failed",
+                "The selected script is empty.",
+            )
+
+            return
+
+        if self.automation_type == "Playwright":
+
+            error = self.manager.check_script_syntax(script_text)
+
+            if error:
+
+                QMessageBox.critical(
+                    self,
+                    "Validation Failed",
+                    f"Script validation failed:\n\n{error}",
+                )
+
+                return
+
+        QMessageBox.information(
+            self,
+            "Validation Passed",
+            "The selected script passed validation.\n\n"
+            "Use 'Set as Active for Execution' when you want this "
+            "saved source to be the one that Execute runs.",
+        )
+
     def save(self):
 
         new_script = self.editor.toPlainText()
@@ -1287,7 +1325,12 @@ class ViewScriptDialog(QDialog):
 
                 self.test_case["automation_script"] = new_script
 
-            self.accept()
+            QMessageBox.information(
+                self,
+                "Script Saved",
+                "The selected script was saved successfully.",
+            )
+            self._load_current_source()
 
         except Exception as ex:
 
@@ -1718,6 +1761,7 @@ class TestExecutionPage(QWidget):
         # offer to save them into the stored script once the run
         # completes successfully.
         self.pending_repairs = []
+        self.repair_persistence_errors = []
 
         self.recording_thread = None
 
@@ -3800,6 +3844,7 @@ class TestExecutionPage(QWidget):
         tc_number = self.tc_number_for_id(test_case_id)
 
         self.pending_repairs = []
+        self.repair_persistence_errors = []
 
         self.execution_thread = QThread()
 
@@ -3930,11 +3975,32 @@ class TestExecutionPage(QWidget):
 
         self.pending_repairs.append(repair)
 
-        self.log.append(
-            f"Step {repair.get('step')} fixed:\n"
-            f"  was: {repair.get('original')}\n"
-            f"  now: {repair.get('corrected')}"
-        )
+        # The corrected statement has just executed successfully in
+        # the CURRENT visible browser session. Persist it immediately
+        # before replay moves on, so a later failed/cancelled step can
+        # never make the operator repeat an already-proven locator fix.
+        # preserve_execution_state=True keeps an already-Active script
+        # executable; ordinary editor changes still follow their normal
+        # lifecycle. The running subprocess is independent of this DB
+        # write and continues directly with the next statement.
+        try:
+            self.execution_worker.manager.apply_script_repairs(
+                self.execution_worker.test_case_id,
+                [repair],
+                preserve_execution_state=True,
+            )
+            self.log.append(
+                f"Step {repair.get('step')} fixed and saved; replay "
+                f"continues from the next step:\n"
+                f"  was: {repair.get('original')}\n"
+                f"  now: {repair.get('corrected')}"
+            )
+        except Exception as ex:
+            self.repair_persistence_errors.append(str(ex))
+            self.log.append(
+                f"Step {repair.get('step')} fixed for this live run, "
+                f"but the stored script could not be updated yet: {ex}"
+            )
 
     def on_execution_finished(self, test_case_id, result):
 
@@ -4019,11 +4085,22 @@ class TestExecutionPage(QWidget):
                     f"{tc_number} error output:\n{stderr_text}"
                 )
 
-            if result.get("success") and self.pending_repairs:
+            if self.pending_repairs:
 
-                self.offer_to_save_repairs(
-                    test_case_id, tc_number, self.pending_repairs
-                )
+                if self.repair_persistence_errors:
+                    # Immediate persistence normally makes a second
+                    # Save prompt unnecessary. Keep the existing prompt
+                    # only as a recovery path if one of those writes
+                    # actually failed.
+                    self.offer_to_save_repairs(
+                        test_case_id, tc_number, self.pending_repairs
+                    )
+                else:
+                    self.log.append(
+                        f"{tc_number}: {len(self.pending_repairs)} "
+                        f"repaired step(s) are already stored in the "
+                        f"active script; no second Save is required."
+                    )
 
         else:
 

@@ -1115,7 +1115,7 @@ class TestExecutionManager:
         Saves a manually-edited script, without calling the AI.
         """
 
-        self.repository.update_automation(
+        return self.repository.update_automation(
             test_case_id,
             automation_type,
             script_text,
@@ -1247,7 +1247,7 @@ class TestExecutionManager:
         one) — without re-launching the recorder.
         """
 
-        self.repository.update_recorded_script(
+        return self.repository.update_recorded_script(
             test_case_id, script_text
         )
 
@@ -1693,7 +1693,9 @@ class TestExecutionManager:
 
         return result
 
-    def apply_script_repairs(self, test_case_id, repairs):
+    def apply_script_repairs(
+        self, test_case_id, repairs, preserve_execution_state=False
+    ):
         """
         Called after an interactive run the operator confirms they
         want to keep — takes the CLEAN stored script (never the
@@ -1753,6 +1755,8 @@ class TestExecutionManager:
 
             script = script.replace(original, corrected, 1)
 
+        previous_status = test_case.get("status")
+
         if use_recorded_slot:
 
             self.update_recorded_script(test_case_id, script)
@@ -1760,6 +1764,16 @@ class TestExecutionManager:
         else:
 
             self.update_script(test_case_id, "Playwright", script)
+
+        # A successful interactive repair has already been exercised
+        # against the live page in the CURRENT browser session.  When
+        # the caller asks to preserve execution state, keep an already
+        # Active/Automated test case executable instead of forcing an
+        # unnecessary Save -> Validate -> Set Active loop after every
+        # repaired locator.  Ordinary editor saves still invalidate to
+        # Draft through the repository methods above.
+        if preserve_execution_state and previous_status == "Automated":
+            self.repository.update_status(test_case_id, "Automated")
 
         return script
 

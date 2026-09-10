@@ -1349,7 +1349,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-history-btn" style="margin-left:auto;">History</button><button class="btn btn-sm at-log-refresh" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1410,7 +1410,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">API runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">API runs for this scope</span><button class="btn btn-sm at-history-btn" style="margin-left:auto;">History</button><button class="btn btn-sm at-log-refresh" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1475,7 +1475,7 @@
           </div>
 
           <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">SQL runs for this scope</span><button class="btn btn-sm at-log-refresh" style="margin-left:auto;" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
+            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">SQL runs for this scope</span><button class="btn btn-sm at-history-btn" style="margin-left:auto;">History</button><button class="btn btn-sm at-log-refresh" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
             <div class="table-scroll" style="max-height:340px;">
               <table>
                 <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
@@ -1585,8 +1585,6 @@
               <div class="fbar-spacer"></div>
               <button class="btn" id="tcValidateBtn">Validate</button>
               <button class="btn" id="tcActivateBtn">Set Active</button>
-              <button class="btn btn-primary" id="tcScriptExecuteBtn">Execute</button>
-              <button class="btn" id="tcScriptCloseBtn">Close</button>
             </div>
             <div id="tcValidateResult"></div>
           </div>
@@ -1864,6 +1862,36 @@
         <h3>Run Details</h3>
         <div class="card-body" id="runDetailBody" style="padding:0;"></div>
         <div class="modal-actions"><button class="btn" id="runDetailCloseBtn">Close</button></div>
+      </div>
+    </div>
+
+    <!-- Script Save / Validate confirmation -->
+    <div class="modal-overlay" id="tcActionResultModal">
+      <div class="modal-card" style="max-width:720px;position:relative;">
+        <button class="modal-x" id="tcActionResultCloseX" aria-label="Close">&times;</button>
+        <h3 id="tcActionResultTitle">Script Result</h3>
+        <div class="card-body" id="tcActionResultBody" style="padding:0;max-height:58vh;overflow:auto;"></div>
+        <div class="modal-actions"><button class="btn btn-primary" id="tcActionResultCloseBtn">OK</button></div>
+      </div>
+    </div>
+
+    <!-- Persisted automation run history. The live Execution Log above only
+         shows Queued/Running rows; terminal runs live here. -->
+    <div class="modal-overlay" id="automationHistoryModal">
+      <div class="modal-card" style="max-width:1180px;position:relative;">
+        <button class="modal-x" id="automationHistoryCloseX" aria-label="Close">&times;</button>
+        <h3 id="automationHistoryTitle">Execution History</h3>
+        <div class="filterbar" style="margin:10px 0;">
+          <div class="field"><label>From</label><input type="date" id="automationHistoryFrom"></div>
+          <div class="field"><label>To</label><input type="date" id="automationHistoryTo"></div>
+          <div class="field" style="min-width:240px;"><label>Test Case ID / TC #</label><input id="automationHistoryTc" placeholder="e.g. TC_D25... or 844639"></div>
+          <button class="btn" id="automationHistoryApply">Apply</button>
+          <button class="btn" id="automationHistoryClear">Clear Filters</button>
+        </div>
+        <div class="table-scroll" style="max-height:56vh;">
+          <table><thead><tr><th>Started</th><th>TC ID</th><th>Status</th><th>Result</th><th>Duration</th><th>Message</th><th></th></tr></thead><tbody id="automationHistoryBody"></tbody></table>
+        </div>
+        <div class="modal-actions"><button class="btn" id="automationHistoryCloseBtn">Close</button></div>
       </div>
     </div>
 
@@ -3242,7 +3270,8 @@
     ['domain','module','knowledge_name','version','document_type','test_case_document'].forEach(function(k){params.set(k,scope[k]);});
     scope.source_knowledge_ids.forEach(function(id){params.append('source_knowledge_ids',id);});
     return apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
-      renderTypeLog(type, data.runs || []);
+      var activeRuns = (data.runs || []).filter(function(r){ return r.status === 'Queued' || r.status === 'Running'; });
+      renderTypeLog(type, activeRuns);
     }).catch(function(err){ toast(err.message, true); });
   }
 
@@ -3273,6 +3302,52 @@
       });
     });
   }
+
+  var automationHistoryType = 'Playwright';
+  var automationHistoryRuns = [];
+  function openAutomationHistory(type){
+    automationHistoryType = type;
+    document.getElementById('automationHistoryTitle').textContent = type + ' Execution History';
+    document.getElementById('automationHistoryModal').classList.add('show');
+    loadAutomationHistory();
+  }
+  function loadAutomationHistory(){
+    var scope=activeTypeScope(automationHistoryType);
+    var params=new URLSearchParams({automation_type:automationHistoryType,limit:'500'});
+    ['domain','module','knowledge_name','version','document_type','test_case_document'].forEach(function(k){if(scope[k])params.set(k,scope[k]);});
+    (scope.source_knowledge_ids||[]).forEach(function(id){params.append('source_knowledge_ids',id);});
+    apiFetch('/api/automation/runs?' + params.toString()).then(function(data){
+      automationHistoryRuns=(data.runs||[]).filter(function(r){return r.status!=='Queued'&&r.status!=='Running';});
+      renderAutomationHistory();
+    }).catch(function(err){toast(err.message,true);});
+  }
+  function renderAutomationHistory(){
+    var from=document.getElementById('automationHistoryFrom').value;
+    var to=document.getElementById('automationHistoryTo').value;
+    var q=(document.getElementById('automationHistoryTc').value||'').trim().toLowerCase();
+    var rows=automationHistoryRuns.filter(function(r){
+      var raw=r.started_at||r.created_date||''; var day=raw.slice(0,10);
+      if(from && day < from) return false; if(to && day > to) return false;
+      if(q && !String(r.tc_number||'').toLowerCase().includes(q) && !String(r.test_case_id||'').includes(q)) return false;
+      return true;
+    });
+    var body=document.getElementById('automationHistoryBody');
+    if(!rows.length){body.innerHTML='<tr><td colspan="7" class="muted-small">No completed history matches these filters.</td></tr>';return;}
+    body.innerHTML=rows.map(function(r){
+      var msg=r.error_message||(r.stderr?r.stderr.split('\n').slice(-1)[0]:'')||'';
+      return '<tr><td>'+formatDateTime(r.started_at||r.created_date)+'</td><td class="mono">'+escapeHtml(r.tc_number||String(r.test_case_id||''))+'</td><td>'+runStatusPillHtml(r.status)+'</td><td>'+resultPillHtml(r.outcome==='Pass'?'Pass':(r.outcome==='Fail'?'Fail':null))+'</td><td>'+autoDurationLabel(r.duration_seconds)+'</td><td class="muted-small">'+escapeHtml(msg.slice(0,120))+'</td><td><button class="btn btn-sm automation-history-view" data-run-id="'+r.run_uuid+'">View</button></td></tr>';
+    }).join('');
+    body.querySelectorAll('.automation-history-view').forEach(function(btn){btn.onclick=function(){apiFetch('/api/automation/runs/'+btn.getAttribute('data-run-id')).then(openRunDetailModal).catch(function(err){toast(err.message,true);});};});
+  }
+  function closeAutomationHistory(){document.getElementById('automationHistoryModal').classList.remove('show');}
+  document.getElementById('automationHistoryApply').addEventListener('click',renderAutomationHistory);
+  document.getElementById('automationHistoryClear').addEventListener('click',function(){document.getElementById('automationHistoryFrom').value='';document.getElementById('automationHistoryTo').value='';document.getElementById('automationHistoryTc').value='';renderAutomationHistory();});
+  document.getElementById('automationHistoryCloseBtn').addEventListener('click',closeAutomationHistory);
+  document.getElementById('automationHistoryCloseX').addEventListener('click',closeAutomationHistory);
+  document.querySelectorAll('.at-history-btn').forEach(function(btn){btn.addEventListener('click',function(){
+    var panel=btn.closest('.auto-type-panel');
+    openAutomationHistory(panel ? (panel.getAttribute('data-automation-type') || 'Playwright') : 'Playwright');
+  });});
 
   function openRunDetailModal(run){
     renderRunResult(document.getElementById('runDetailBody'), run);
@@ -3385,18 +3460,6 @@
     stopAutoPoll();
   });
 
-  document.getElementById('tcScriptCloseBtn').addEventListener('click', function(){
-    document.getElementById('tcDetailModal').classList.remove('show');
-    stopAutoPoll();
-  });
-  document.getElementById('tcScriptExecuteBtn').addEventListener('click', function(){
-    if(!autoSelectedTc) return;
-    var type=autoSelectedType || autoSelectedTc.automation_type || 'Playwright';
-    if(type==='API') document.getElementById('tcExecuteApiBtn').click();
-    else if(type==='SQL') document.getElementById('tcExecuteSqlBtn').click();
-    else document.getElementById('tcExecuteBtn').click();
-  });
-
   document.getElementById('tcClickUpBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
     createClickUpBug(autoSelectedTc.id, document.getElementById('tcClickUpBtn'));
@@ -3421,6 +3484,23 @@
       '</div>';
   }
 
+  function showTcActionResult(title, ok, summary, checks){
+    document.getElementById('tcActionResultTitle').textContent = title;
+    var rows = (checks || []).map(function(c){
+      return '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">' +
+        '<strong style="color:' + (c.ok ? 'var(--success)' : 'var(--danger)') + ';">' + (c.ok ? '✓' : '✗') + '</strong>' +
+        '<div><strong>' + escapeHtml((c.check || '').replace(/_/g,' ')) + '</strong>' +
+        (c.detail ? '<div class="muted-small">' + escapeHtml(c.detail) + '</div>' : '') + '</div></div>';
+    }).join('');
+    document.getElementById('tcActionResultBody').innerHTML =
+      '<div class="notice ' + (ok ? '' : 'notice-warn') + '" style="margin-bottom:10px;"><strong>' +
+      escapeHtml(summary || (ok ? 'Completed.' : 'Failed.')) + '</strong></div>' + rows;
+    document.getElementById('tcActionResultModal').classList.add('show');
+  }
+  function closeTcActionResult(){ document.getElementById('tcActionResultModal').classList.remove('show'); }
+  document.getElementById('tcActionResultCloseBtn').addEventListener('click', closeTcActionResult);
+  document.getElementById('tcActionResultCloseX').addEventListener('click', closeTcActionResult);
+
   // ---- Script actions (branch by automation type — Playwright/API vs SQL) ----
   document.getElementById('tcSaveScriptBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
@@ -3434,9 +3514,11 @@
       };
       apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/sql-script', { method: 'PUT', body: JSON.stringify(payload) }).then(function(tc){
         autoSelectedTc = tc;
-        toast('SQL script saved.');
+        showTcActionResult('Save Script', true, 'SQL script saved successfully.', [
+          {check:'saved', ok:true, detail:'The SQL automation asset was persisted.'}
+        ]);
         loadTypeTestCases('SQL');
-      }).catch(function(err){ document.getElementById('tcScriptError').textContent = err.message; });
+      }).catch(function(err){ document.getElementById('tcScriptError').textContent = err.message; showTcActionResult('Save Script', false, 'Save failed.', [{check:'saved',ok:false,detail:err.message}]); });
       return;
     }
     var text = document.getElementById('tcScriptEditor').value;
@@ -3448,19 +3530,32 @@
     var path = '/api/automation/test-cases/' + autoSelectedTc.id + (source === 'MANUAL' ? '/recorded-script' : '/script');
     apiFetch(path, { method: 'PUT', body: JSON.stringify({ script_text: text }) }).then(function(data){
       autoSelectedTc = data.test_case;
-      // Item 5 — editing invalidates a prior Validate result for this
-      // source; only a fresh Validate call (below) re-establishes it.
-      autoLastValidated[source] = null;
+      // Only a REAL content change invalidates the source.  A no-op
+      // Save of the exact already-persisted script must not demote an
+      // Active script or erase this session's successful Validate —
+      // that was the root cause of Execute Selected immediately saying
+      // "saved script is a Draft" after Set Active.
+      if(data.changed){
+        autoLastValidated[source] = null;
+        autoRepairInvalidated[source] = false;
+      }
+      var saveChecks = [
+        {check:'saved', ok:true, detail:data.changed ? 'Script changes were persisted.' : 'No content change detected; existing Active state was preserved.'},
+        {check:'lifecycle_state', ok:!(data.test_case && data.test_case.status === 'Draft' && !data.changed), detail:'Current status: ' + ((data.test_case && data.test_case.status) || 'Unknown')}
+      ];
       if(data.syntax_warning){
         document.getElementById('tcScriptError').textContent = 'Saved, but with a syntax warning: ' + data.syntax_warning;
+        saveChecks.push({check:'syntax',ok:false,detail:data.syntax_warning});
       } else {
-        toast('Script saved. Validate it, then Set Active before it can execute.');
+        saveChecks.push({check:'syntax',ok:true,detail:'No syntax warning returned while saving.'});
       }
+      showTcActionResult('Save Script', !data.syntax_warning, data.syntax_warning ? 'Saved with a validation warning.' : 'Script saved successfully.', saveChecks);
       renderScriptEditor();
       refreshExecuteReadiness();
       loadTypeTestCases(autoSelectedType);
     }).catch(function(err){
       document.getElementById('tcScriptError').textContent = err.message;
+      showTcActionResult('Save Script', false, 'Save failed.', [{check:'saved',ok:false,detail:err.message}]);
     });
   });
 
@@ -3940,9 +4035,10 @@
         // afterwards can be detected and re-validation required.
         autoLastValidated[source] = document.getElementById('tcScriptEditor').value;
         autoRepairInvalidated[source] = false; // this Validate supersedes any earlier repair-staleness flag
-        toast('Validated.');
+        showTcActionResult('Validate Script', true, 'Validation passed.', data.checks || []);
       } else {
         autoLastValidated[source] = null;
+        showTcActionResult('Validate Script', false, 'Validation failed.', data.checks || []);
       }
       // The Execute tab's readiness panel reflects the ACTIVE source,
       // which may differ from what was just validated — keep it in
@@ -3950,6 +4046,7 @@
       refreshExecuteReadiness();
     }).catch(function(err){
       resultEl.innerHTML = '<div class="notice notice-warn">' + escapeHtml(err.message) + '</div>';
+      showTcActionResult('Validate Script', false, 'Validation request failed.', [{check:'validation',ok:false,detail:err.message}]);
     });
   });
 
@@ -3973,10 +4070,14 @@
       : apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/active-script', {method:'PATCH', body:JSON.stringify({source:autoViewedSource})});
     request.then(function(tc){
       autoSelectedTc = tc;
-      toast('Active for Execution set to ' + (autoSelectedType === 'SQL' ? 'SQL Query' : friendlyActiveSourceLabel(autoViewedSource, tc)) + '.');
+      var activeLabel = autoSelectedType === 'SQL' ? 'SQL Query' : friendlyActiveSourceLabel(autoViewedSource, tc);
+      showTcActionResult('Set Active', true, 'Script is Active for Execution.', [
+        {check:'active_source',ok:true,detail:activeLabel},
+        {check:'lifecycle_state',ok:tc.status === 'Automated',detail:'Current status: ' + (tc.status || 'Unknown')}
+      ]);
       selectTestCase(tc, autoSelectedType);
       loadTypeTestCases(autoSelectedType);
-    }).catch(function(err){ toast(err.message, true); });
+    }).catch(function(err){ showTcActionResult('Set Active', false, 'Could not activate script.', [{check:'active_source',ok:false,detail:err.message}]); });
   });
 
   // ---- Execute (Playwright — real background job) ----
@@ -4285,7 +4386,25 @@
       } else if(msg.type === 'step_failed'){
         openRepairModal(msg.event);
       } else if(msg.type === 'step_repaired'){
-        toast('Step ' + msg.repair.step + ' fixed — the run is continuing.');
+        if(msg.persisted){
+          toast('Step ' + msg.repair.step + ' fixed and saved into the active script — replay is continuing from the next step.');
+          // The live-proven repair is already persisted server-side.
+          // Keep the current execution running; refresh the selected
+          // script quietly so reopening/viewing it shows the exact fix.
+          apiFetch('/api/automation/test-cases/' + tc.id).then(function(freshTc){
+            if(autoSelectedTc && autoSelectedTc.id === freshTc.id){
+              autoSelectedTc = freshTc;
+              var repairedSource = (freshTc.active_script_source || 'AUTO').toUpperCase();
+              autoLastValidated[repairedSource] = repairedSource === 'MANUAL'
+                ? (freshTc.recorded_script || '')
+                : (freshTc.automation_script || '');
+              autoRepairInvalidated[repairedSource] = false;
+            }
+            loadTypeTestCases('Playwright');
+          }).catch(function(){});
+        } else {
+          toast('Step ' + msg.repair.step + ' fixed for this live run, but the script could not be saved yet: ' + (msg.persistence_error || 'unknown persistence error'), true);
+        }
       } else if(msg.type === 'ai_suggestion'){
         document.getElementById('repairAskAiBtn').disabled = false;
         if(!msg.result || !msg.result.success){
@@ -4387,26 +4506,38 @@
             loadTypeTestCases('Playwright');
           }).catch(function(){});
         }
-        if(result.repairs && result.repairs.length){
+        if(result.repairs && result.repairs.length && !result.repairs_persisted){
+          // Compatibility/fallback only: normally every successful
+          // repaired step is persisted immediately by the server while
+          // the SAME browser run continues.  Offer the old end-of-run
+          // save only if that immediate persistence failed.
           offerToSaveRepairs(tc.tc_number || '', result.repairs, function(save){
             if(save){
               interactiveSend({ type: 'save_repairs', repairs: result.repairs });
-              toast((tc.tc_number || '') + ': script updated with ' + result.repairs.length +
-                ' locator/value fix(es). Validate and Set Active before your NEXT Execute so it runs clean ' +
-                'without pausing for repair again.');
-              // done() is deliberately NOT called here — it happens once
-              // the "repairs_saved" handler above actually confirms the
-              // write and refreshes the editor/grid, so a queued Execute
-              // Selected batch never advances to the next test case
-              // while this one's persistence is still in flight.
             } else {
               interactiveSend({ type: 'discard_repairs' });
-              toast((tc.tc_number || '') + ': fix(es) NOT saved — this run’s corrections were used once and discarded.');
               done();
             }
           });
         } else {
-          done();
+          if(result.repairs_persisted){
+            toast((tc.tc_number || '') + ': ' + result.repairs.length + ' repaired step(s) were saved automatically while replay continued.');
+            apiFetch('/api/automation/test-cases/' + tc.id).then(function(freshTc){
+              if(autoSelectedTc && autoSelectedTc.id === freshTc.id){
+                autoSelectedTc = freshTc;
+                var repairedSource = (freshTc.active_script_source || 'AUTO').toUpperCase();
+                autoLastValidated[repairedSource] = repairedSource === 'MANUAL'
+                  ? (freshTc.recorded_script || '')
+                  : (freshTc.automation_script || '');
+                autoRepairInvalidated[repairedSource] = false;
+                renderScriptEditor();
+                refreshExecuteReadiness();
+              }
+              loadTypeTestCases('Playwright');
+            }).catch(function(){}).then(function(){ done(); });
+          } else {
+            done();
+          }
         }
       }
     });
