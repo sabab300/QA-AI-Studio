@@ -25,7 +25,9 @@ it at a real/production PSW environment rather than a test/UAT one.
 
 import ast
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -313,18 +315,86 @@ _qa_sys_e.excepthook = _qa_excepthook_e
 # interpret as fields.
 INTERACTIVE_HARNESS_TEMPLATE = r'''# --- QA AI Studio: interactive step runner (auto-inserted at run time, not saved) ---
 import json
+import os
 import re
 import sys
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 _QA_MAX_REPAIR_ROUNDS = __MAX_REPAIR_ROUNDS__
+_QA_SELECTION_TIMEOUT_MS = __SELECTION_TIMEOUT_MS__
+_QA_TOTAL_STEPS = __TOTAL_STEPS__
 
 _QA_REPAIRS = []
+_QA_SELECTIONS = {}
+_QA_LAST_DYNAMIC_CONTROL = None
+
+
+def _qa_safe_action(code_text):
+    """Mask likely secrets before emitting an action to browser UI/logs."""
+    sensitive = re.search(r"(?i)(password|passwd|token|authorization|secret|api[_-]?key)", code_text or "")
+    if not sensitive:
+        return code_text
+    return re.sub(
+        r"(\.fill\(\s*)(['\"]).*?\2",
+        r"\1'******'",
+        code_text,
+        count=1,
+    )
+
+
+def _qa_step_details(code_text, metadata=None):
+    locator = _qa_extract_locator_and_value(code_text)[0]
+    xpath = ""
+    id_match = re.fullmatch(r"#([A-Za-z_][A-Za-z0-9_-]*)", locator or "")
+    if id_match:
+        xpath = '//*[@id="' + id_match.group(1) + '"]'
+    elif locator and locator.startswith("//"):
+        xpath = locator
+    details = {"action": _qa_safe_action(code_text), "locator": locator, "xpath": xpath}
+    details.update(metadata or {})
+    details["action"] = _qa_safe_action(code_text)
+    # Report the locator that actually executed. Keep primary_locator in the
+    # structured metadata so History can still distinguish a recovered step.
+    details["locator"] = locator or details.get("primary_locator")
+    return details
 
 
 def _qa_send_event(event):
     print("QA_EVENT::" + json.dumps(event), flush=True)
+
+
+def _qa_active_page():
+    """Return the newest live page from the executing browser context."""
+    candidates = []
+    current = globals().get("page")
+    current_context = globals().get("context")
+    if current_context is not None:
+        try:
+            candidates.extend(reversed(current_context.pages))
+        except Exception:
+            pass
+    current_browser = globals().get("browser")
+    if current_browser is not None:
+        try:
+            for browser_context in reversed(current_browser.contexts):
+                candidates.extend(reversed(browser_context.pages))
+        except Exception:
+            pass
+    if current is not None:
+        candidates.append(current)
+    seen = set()
+    for candidate in candidates:
+        if id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        try:
+            if not candidate.is_closed():
+                return candidate
+        except Exception:
+            continue
+    raise RuntimeError("No active Playwright page is available for locator repair.")
 
 
 def _qa_read_command():
@@ -372,16 +442,17 @@ def _qa_capture_dom_candidates():
     # single) purely to avoid a nested triple-single-quote prematurely
     # closing that outer string; it has no effect on the JS itself.
     try:
-        return page.evaluate("""() => {
+        return _qa_active_page().evaluate(r"""() => {
             const out = [];
             const seen = new Set();
             const attrPriority = ["data-testid", "data-test", "data-cy", "data-qa", "id", "name"];
-            const nodes = document.querySelectorAll(
-                "input, button, select, textarea, a, [role], " +
-                "[data-testid], [data-test], [data-cy], [data-qa]"
-            );
-            for (const el of nodes) {
-                if (out.length >= 80) break;
+            const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT);
+            let visited = 0;
+            while (out.length < 50 && visited < 10000) {
+                const el = walker.nextNode();
+                if (!el) break;
+                visited += 1;
+                if (!el.matches("input,button,select,textarea,a,[role],[data-testid],[data-test],[data-cy],[data-qa]")) continue;
                 let selector = null, attrUsed = null;
                 for (const attr of attrPriority) {
                     const val = el.getAttribute(attr);
@@ -424,8 +495,8 @@ def _qa_capture_failure_matches(raw_locator):
     if not raw_locator:
         return []
     try:
-        loc = page.locator(raw_locator)
-        return loc.evaluate_all("""els => els.slice(0, 12).map((el, index) => {
+        loc = _qa_active_page().locator(raw_locator)
+        return loc.evaluate_all(r"""els => els.slice(0, 12).map((el, index) => {
             const clean = (v) => (v || "").replace(/\s+/g, " " ).trim();
             const ancestors = [];
             let node = el.parentElement;
@@ -468,18 +539,18 @@ def _qa_capture_context(raw_locator=""):
         "failure_matches": [],
     }
     try:
-        context["url"] = page.url
+        context["url"] = _qa_active_page().url
     except Exception:
         pass
     try:
-        context["title"] = page.title()
+        context["title"] = _qa_active_page().title()
     except Exception:
         pass
-    try:
-        snapshot = page.accessibility.snapshot() or {}
-        context["accessibility"] = _qa_flatten_accessibility(snapshot, [])
-    except Exception:
-        pass
+    # Never serialize the complete accessibility tree here. Large SPAs can
+    # allocate hundreds of MB in Chromium while producing that snapshot and
+    # the run is already paused waiting for the operator. The bounded DOM
+    # candidates below carry enough diagnostic context without a whole-page
+    # capture.
     try:
         context["dom_candidates"] = _qa_capture_dom_candidates()
     except Exception:
@@ -549,13 +620,14 @@ def _qa_locator_expression_from_code(code_text):
 
 
 def _qa_verify_code(code_text):
-    result = {"found": False, "count": 0, "visible": False, "error": ""}
+    result = {"found": False, "count": 0, "visible": False, "actionable": False, "error": ""}
     try:
         expr = _qa_locator_expression_from_code(code_text)
         if not expr:
             result["error"] = "No locator expression found in the code."
             return result
-        loc = eval(expr, globals())
+        active_page = _qa_active_page()
+        loc = eval(expr, {**globals(), "page": active_page})
         if not hasattr(loc, "count"):
             result["error"] = "The code does not resolve to a Playwright Locator."
             return result
@@ -566,6 +638,18 @@ def _qa_verify_code(code_text):
             try:
                 loc.first.wait_for(state="visible", timeout=1500)
                 result["visible"] = True
+                result["actionable"] = bool(loc.first.evaluate(r"""el => {
+                    let actionable = el.closest('button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[tabindex]:not([tabindex="-1"])');
+                    let cursorNode = el;
+                    while (!actionable && cursorNode && cursorNode !== document.body) {
+                        if (getComputedStyle(cursorNode).cursor === 'pointer') actionable = cursorNode;
+                        cursorNode = cursorNode.parentElement;
+                    }
+                    if (!actionable) return false;
+                    const style = getComputedStyle(actionable);
+                    return !actionable.disabled && actionable.getAttribute('aria-disabled') !== 'true'
+                        && style.pointerEvents !== 'none';
+                }"""))
             except Exception:
                 result["visible"] = False
     except Exception as ex:
@@ -588,7 +672,7 @@ def _qa_verify_locator(raw_locator):
         result["error"] = "No locator provided."
         return result
     try:
-        loc = page.locator(raw_locator)
+        loc = _qa_active_page().locator(raw_locator)
         count = loc.count()
         result["count"] = count
         result["found"] = count > 0
@@ -603,13 +687,456 @@ def _qa_verify_locator(raw_locator):
     return result
 
 
-def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
+def _qa_replace_locator_expression(code_text, locator_expression):
+    current = _qa_locator_expression_from_code(code_text)
+    if not current or not locator_expression:
+        return code_text
+    return code_text.replace(current, locator_expression, 1)
+
+
+def _qa_select_element(code_text, step_number):
+    """Wait for one operator click and return bounded, live-verified locators."""
+    cancel_file = Path(os.environ.get("QA_SELECTION_CANCEL_FILE", ""))
+    if cancel_file.name:
+        try:
+            cancel_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    active_page = _qa_active_page()
+    binding_key = "_QA_CANCEL_BINDING_READY_" + str(id(active_page.context))
+    if not globals().get(binding_key):
+        active_page.context.expose_function(
+            "_qaSelectionCancelled",
+            lambda: bool(cancel_file.name and cancel_file.exists()),
+        )
+        globals()[binding_key] = True
+    try:
+        capture = active_page.evaluate(r"""(selectionTimeout) => new Promise((resolve) => {
+            const MAX_CANDIDATES = 50;
+            const MAX_ANCESTORS = 8;
+            const clean = (value, limit = 160) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+            const py = (value) => JSON.stringify(String(value || ""));
+            const cssValue = (value) => String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            const dynamic = (value) => {
+                const text = String(value || "");
+                return !text || text.length > 100 ||
+                    /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(text) ||
+                    /^[0-9a-f]{20,}$/i.test(text) ||
+                    /(?:^|[-_])[0-9a-f]{10,}(?:$|[-_])/i.test(text) ||
+                    /(?:^|[-_])(?=[a-z0-9]{16,}(?:$|[-_]))(?=[a-z0-9]*[a-z])(?=(?:[^0-9]*[0-9]){4})[a-z0-9]+(?:$|[-_])/i.test(text) ||
+                    /(?:^|[-_])[0-9]{6,}(?:$|[-_])/.test(text) ||
+                    /(?:ember|react|vue|ng|mui|chakra)[-_]?[0-9a-f]{5,}/i.test(text) ||
+                    /__[A-Za-z0-9_-]{5,}$/.test(text);
+            };
+            const implicitRole = (el) => {
+                const tag = el.tagName.toLowerCase();
+                if (tag === "button") return "button";
+                if (tag === "a" && el.hasAttribute("href")) return "link";
+                if (tag === "select") return "combobox";
+                if (tag === "textarea") return "textbox";
+                if (tag === "input") {
+                    const type = (el.type || "text").toLowerCase();
+                    if (["button", "submit", "reset"].includes(type)) return "button";
+                    if (type === "checkbox") return "checkbox";
+                    if (type === "radio") return "radio";
+                    return "textbox";
+                }
+                return "";
+            };
+            const actionableFor = (leaf) => {
+                const semantic = leaf.closest("button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[tabindex]:not([tabindex='-1'])");
+                if (semantic) return semantic;
+                let node = leaf;
+                let depth = 0;
+                while (node && node !== document.body && depth < MAX_ANCESTORS) {
+                    if (getComputedStyle(node).cursor === "pointer") return node;
+                    node = node.parentElement;
+                    depth += 1;
+                }
+                return leaf;
+            };
+            const contextFor = (el) => {
+                let node = el.parentElement;
+                let depth = 0;
+                while (node && depth < MAX_ANCESTORS) {
+                    const isContainer = /^(article|section|form|fieldset|li)$/i.test(node.tagName)
+                        || /(?:^|\s)(?:k-card|card|panel|tile|menu-item|list-item)(?:\s|$)/i.test(node.className || "")
+                        || ["region","group","dialog","menuitem","listitem"].includes(node.getAttribute("role") || "");
+                    if (isContainer) {
+                        const identities = [];
+                        const addIdentity = value => {
+                            value = clean(value, 100);
+                            if (value && value !== clean(el.innerText, 100) && !identities.includes(value)) identities.push(value);
+                        };
+                        addIdentity(node.getAttribute("aria-label"));
+                        addIdentity(node.getAttribute("title"));
+                        node.querySelectorAll("h1,h2,h3,h4,legend,[role=heading],.k-card-title,[class*=title],[class*=heading]").forEach(item => addIdentity(item.innerText || item.getAttribute("aria-label")));
+                        node.querySelectorAll("label,p,span,strong").forEach(item => {
+                            if (!el.contains(item) && !item.contains(el)) addIdentity(item.innerText);
+                        });
+                        const unique = identities.find(value => {
+                            const literal = xpathLiteral(value);
+                            return document.evaluate("//*[normalize-space(.)=" + literal + "]", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null).snapshotLength === 1;
+                        }) || identities[0];
+                        if (unique) return {element: node, label: unique, tag: node.tagName.toLowerCase(), identities: identities.slice(0, 12)};
+                    }
+                    node = node.parentElement;
+                    depth += 1;
+                }
+                return {element: null, label: "", tag: "", identities: []};
+            };
+            const xpathLiteral = (value) => {
+                const text = String(value || "");
+                if (!text.includes('"')) return '"' + text + '"';
+                if (!text.includes("'")) return "'" + text + "'";
+                return "concat(" + text.split('"').map((part, index, all) =>
+                    '"' + part + '"' + (index < all.length - 1 ? ", '\"', " : "")
+                ).join("") + ")";
+            };
+            let settled = false;
+            let timeoutId = null;
+            let cancelPollId = null;
+            const previousCursor = document.documentElement.style.cursor;
+            let outlined = null;
+            let previousOutline = "";
+            let previousBackground = "";
+            const clearOutline = () => {
+                if (outlined) {
+                    outlined.style.outline = previousOutline;
+                    outlined.style.backgroundColor = previousBackground;
+                }
+                outlined = null;
+            };
+            const cleanup = () => {
+                document.removeEventListener("click", onClick, true);
+                document.removeEventListener("mousemove", onMove, true);
+                document.removeEventListener("keydown", onKey, true);
+                clearOutline();
+                document.documentElement.style.cursor = previousCursor;
+                if (timeoutId !== null) clearTimeout(timeoutId);
+                if (cancelPollId !== null) clearInterval(cancelPollId);
+            };
+            const finish = (payload) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(payload);
+            };
+            const onClick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                const leaf = event.target && event.target.nodeType === 1 ? event.target : null;
+                if (!leaf) return finish({error: "The clicked DOM target is unavailable."});
+                const el = actionableFor(leaf);
+                const opener = el.matches("[aria-haspopup=listbox],[aria-haspopup=menu],[role=combobox],.k-select,.k-dropdown,.k-dropdownlist,[class*=autocomplete]")
+                    || /(?:dropdown|combobox|autocomplete|calendar)/i.test(el.className || "");
+                const optionsVisible = [...document.querySelectorAll("[role=option],.k-list-item,.k-calendar")].some(item => {
+                    const style = getComputedStyle(item);
+                    return style.display !== "none" && style.visibility !== "hidden" && item.getClientRects().length > 0;
+                });
+                if (opener && !optionsVisible) {
+                    document.removeEventListener("click", onClick, true);
+                    clearOutline();
+                    setTimeout(() => {
+                        try { el.click(); } finally { document.addEventListener("click", onClick, true); }
+                    }, 0);
+                    return;
+                }
+                const section = contextFor(el);
+                const candidates = [];
+                const seen = new Set();
+                const add = (score, type, expression, locator, label) => {
+                    if (!expression || seen.has(expression) || candidates.length >= MAX_CANDIDATES) return;
+                    seen.add(expression);
+                    candidates.push({score, type, expression, locator: locator || expression, label: clean(label || locator || expression)});
+                };
+                for (const attr of ["data-testid", "data-test-id", "data-test", "data-cy", "data-qa", "data-automation-id"]) {
+                    const value = el.getAttribute(attr);
+                    if (value && !dynamic(value)) {
+                        const selector = "[" + attr + '=\"' + cssValue(value) + '\"]';
+                        add(100, attr, "page.locator(" + py(selector) + ")", selector, attr + ": " + value);
+                    }
+                }
+                if (el.id && !dynamic(el.id)) {
+                    const selector = "#" + CSS.escape(el.id);
+                    add(95, "id", "page.locator(" + py(selector) + ")", selector, el.id);
+                }
+                const role = el.getAttribute("role") || implicitRole(el);
+                const accessibleName = clean(el.getAttribute("aria-label") || el.innerText || el.value, 100);
+                if (role && accessibleName) add(85, "role", "page.get_by_role(" + py(role) + ", name=" + py(accessibleName) + ", exact=True)", "role=" + role, role + ": " + accessibleName);
+                const label = clean((el.labels && el.labels[0] && el.labels[0].innerText) || (el.closest("label") && el.closest("label").innerText), 100);
+                if (label) add(90, "label", "page.get_by_label(" + py(label) + ", exact=True)", "label=" + label, "Label: " + label);
+                for (const attr of ["name", "placeholder", "title"]) {
+                    const value = el.getAttribute(attr);
+                    if (!value || dynamic(value)) continue;
+                    if (attr === "placeholder") add(90, attr, "page.get_by_placeholder(" + py(value) + ", exact=True)", "placeholder=" + value, value);
+                    else if (attr === "title") add(90, attr, "page.get_by_title(" + py(value) + ", exact=True)", "title=" + value, value);
+                    else {
+                        const selector = '[name=\"' + cssValue(value) + '\"]';
+                        add(90, attr, "page.locator(" + py(selector) + ")", selector, value);
+                    }
+                }
+                const meaningfulText = clean(el.innerText || el.textContent, 100);
+                if (meaningfulText && meaningfulText.length >= 2) add(65, "text", "page.get_by_text(" + py(meaningfulText) + ", exact=True)", "text=" + meaningfulText, meaningfulText);
+
+                if (section.element && section.label && role && accessibleName) {
+                    const scopedRole = "page.get_by_text(" + py(section.label) + ", exact=True).locator(\"xpath=ancestor::*[self::section or self::fieldset or self::div][1]\").get_by_role(" + py(role) + ", name=" + py(accessibleName) + ", exact=True)";
+                    add(80, "context-role", scopedRole, "section=" + section.label + " >> role=" + role + "[name=" + accessibleName + "]", section.label + " / " + accessibleName);
+                }
+
+                const path = [];
+                let node = el;
+                let depth = 0;
+                let anchor = "";
+                while (node && node.nodeType === 1 && depth < MAX_ANCESTORS) {
+                    const tag = node.tagName.toLowerCase();
+                    if (node.id && !dynamic(node.id)) {
+                        anchor = "#" + CSS.escape(node.id);
+                        if (node !== el) path.unshift(anchor);
+                        break;
+                    }
+                    const testId = node.getAttribute("data-testid");
+                    if (testId && !dynamic(testId)) {
+                        anchor = '[data-testid=\"' + cssValue(testId) + '\"]';
+                        if (node !== el) path.unshift(anchor);
+                        break;
+                    }
+                    let segment = tag;
+                    const classes = [...node.classList].filter(value => !dynamic(value) && /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(value)).slice(0, 2);
+                    if (classes.length) segment += "." + classes.map(value => CSS.escape(value)).join(".");
+                    path.unshift(segment);
+                    node = node.parentElement;
+                    depth += 1;
+                }
+                const css = path.join(" > ");
+                if (css && !/:nth-|\[[^\]]*(?:style|class\*=)/i.test(css)) add(60, "relative-css", "page.locator(" + py(css) + ")", css, css);
+
+                let xpath = "//" + el.tagName.toLowerCase();
+                const xpathAttr = ["data-testid", "data-test-id", "data-test", "data-cy", "data-qa", "data-automation-id", "name", "title"].find(attr => {
+                    const value = el.getAttribute(attr);
+                    return value && !dynamic(value);
+                });
+                if (xpathAttr) xpath += "[@" + xpathAttr + "=" + xpathLiteral(el.getAttribute(xpathAttr)) + "]";
+                else if (meaningfulText) xpath += "[normalize-space(.)=" + xpathLiteral(meaningfulText) + "]";
+                if (section.label && meaningfulText) {
+                    const contextualXpath = "//*[self::article or self::section or self::form or self::fieldset or self::li or contains(concat(' ',normalize-space(@class),' '),' k-card ') or contains(@class,'card') or contains(@class,'panel') or contains(@class,'tile')][.//*[normalize-space(.)=" + xpathLiteral(section.label) + "]]//" + el.tagName.toLowerCase() + "[normalize-space(.)=" + xpathLiteral(meaningfulText) + "]";
+                    add(75, "context-xpath", "page.locator(" + py("xpath=" + contextualXpath) + ")", "xpath=" + contextualXpath, section.label + " / " + meaningfulText);
+                    xpath = contextualXpath;
+                }
+                add(70, "relative-xpath", "page.locator(" + py("xpath=" + xpath) + ")", "xpath=" + xpath, xpath);
+                const exactParts = [];
+                let exactNode = el;
+                let exactDepth = 0;
+                while (exactNode && exactNode !== document.body && exactDepth < MAX_ANCESTORS) {
+                    let part = exactNode.tagName.toLowerCase();
+                    const parent = exactNode.parentElement;
+                    if (parent) {
+                        const siblings = [...parent.children].filter(sibling => sibling.tagName === exactNode.tagName);
+                        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(exactNode) + 1) + ")";
+                    }
+                    exactParts.unshift(part);
+                    if (parent && parent.id && !dynamic(parent.id)) {
+                        exactParts.unshift("#" + CSS.escape(parent.id));
+                        break;
+                    }
+                    exactNode = parent;
+                    exactDepth += 1;
+                }
+                const exactCss = exactParts.join(" > ");
+                if (exactCss) add(50, "exact-relative-css", "page.locator(" + py(exactCss) + ")", exactCss, "Exact clicked element fallback");
+                finish({
+                    tag: leaf.tagName.toLowerCase(),
+                    actionable_tag: el.tagName.toLowerCase(),
+                    role: role,
+                    text: clean(el.innerText || el.textContent || el.value),
+                    accessible_name: accessibleName,
+                    label: label,
+                    name: el.getAttribute("name") || "",
+                    id: el.id || "",
+                    placeholder: el.getAttribute("placeholder") || "",
+                    title: el.getAttribute("title") || "",
+                    data_testid: el.getAttribute("data-testid") || "",
+                    stable_attributes: Object.fromEntries(
+                        ["data-testid","data-test-id","data-test","data-cy","data-qa","data-automation-id","name","placeholder","title"]
+                            .map(attr => [attr, el.getAttribute(attr)])
+                            .filter(pair => pair[1] && !dynamic(pair[1]))
+                    ),
+                    section: section.label,
+                    ancestor_context: section.label,
+                    ancestor_summaries: section.identities,
+                    classes: [...leaf.classList].slice(0, 12),
+                    candidates: candidates.slice(0, MAX_CANDIDATES),
+                    xpath: "xpath=" + xpath,
+                });
+            };
+            const onMove = (event) => {
+                const next = event.target && event.target.nodeType === 1 ? event.target : null;
+                if (!next || next === outlined) return;
+                clearOutline();
+                outlined = next;
+                previousOutline = next.style.outline;
+                previousBackground = next.style.backgroundColor;
+                next.style.outline = "3px solid #f2c200";
+                next.style.backgroundColor = "rgba(255, 235, 59, 0.28)";
+            };
+            const onKey = (event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                finish({cancelled: true, error: "Element selection cancelled with Escape."});
+            };
+            document.documentElement.style.cursor = "crosshair";
+            document.addEventListener("click", onClick, true);
+            document.addEventListener("mousemove", onMove, true);
+            document.addEventListener("keydown", onKey, true);
+            cancelPollId = setInterval(async () => {
+                try {
+                    if (await window._qaSelectionCancelled()) finish({cancelled: true, error: "Element selection cancelled."});
+                } catch (_) {}
+            }, 150);
+            timeoutId = setTimeout(() => finish({timed_out: true, error: "Element selection timed out while waiting for a browser click."}), selectionTimeout);
+        })""", _QA_SELECTION_TIMEOUT_MS)
+    except Exception as ex:
+        return {"error": str(ex), "candidates": []}
+
+    candidates = (capture or {}).get("candidates") or []
+    capture["step_number"] = step_number
+    verified = []
+    selected = None
+    for candidate in sorted(candidates[:50], key=lambda item: item.get("score", 0), reverse=True):
+        check = _qa_verify_code(candidate.get("expression") or "")
+        candidate["verification"] = check
+        if check.get("count") != 1:
+            candidate["rejected_reason"] = "not found" if not check.get("count") else f"ambiguous: {check.get('count')} matches"
+        elif not check.get("visible"):
+            candidate["rejected_reason"] = "not visible"
+        elif not check.get("actionable"):
+            candidate["rejected_reason"] = "not actionable"
+        verified.append(candidate)
+        if (
+            selected is None
+            and check.get("found")
+            and check.get("visible")
+            and check.get("actionable")
+            and check.get("count") == 1
+        ):
+            selected = candidate
+    capture["candidates"] = verified
+    capture["selected_candidate"] = selected
+    if selected:
+        capture["corrected_code"] = _qa_replace_locator_expression(
+            code_text, selected["expression"]
+        )
+    return capture
+
+
+def _qa_persisted_candidate_codes(code_text, metadata):
+    candidates = []
+    raw_fallbacks = (metadata or {}).get("fallback_locators") or ""
+    for locator in re.split(r"\s*(?:\|\||;)\s*", raw_fallbacks):
+        locator = locator.strip()
+        if locator and locator != "-":
+            role_match = re.fullmatch(r"role=([^|]+)\|name=(.+)", locator)
+            if locator.startswith("page."):
+                expression = locator
+            elif role_match:
+                expression = "page.get_by_role(" + repr(role_match.group(1)) + ", name=" + repr(role_match.group(2)) + ")"
+            elif locator.startswith("label="):
+                expression = "page.get_by_label(" + repr(locator[6:]) + ")"
+            elif locator.startswith("placeholder="):
+                expression = "page.get_by_placeholder(" + repr(locator[12:]) + ")"
+            elif locator.startswith("title="):
+                expression = "page.get_by_title(" + repr(locator[6:]) + ")"
+            elif locator.startswith("text="):
+                expression = "page.get_by_text(" + repr(locator[5:]) + ", exact=True)"
+            elif locator.startswith("data-testid="):
+                expression = "page.get_by_test_id(" + repr(locator[12:]) + ")"
+            elif locator.startswith("name="):
+                expression = "page.locator(" + repr('[name="' + locator[5:] + '"]') + ")"
+            else:
+                expression = "page.locator(" + repr(locator) + ")"
+            candidates.append(_qa_replace_locator_expression(
+                code_text, expression
+            ))
+    xpath = ((metadata or {}).get("xpath") or "").strip()
+    if xpath and xpath != "-":
+        candidates.append(_qa_replace_locator_expression(
+            code_text, "page.locator(" + repr(xpath) + ")"
+        ))
+    return [candidate for candidate in candidates if candidate != code_text]
+
+
+def _qa_locator_code(display_value):
+    value = (display_value or "").strip()
+    if not value or value == "-":
+        return ""
+    if value.startswith("page."):
+        return value
+    role_match = re.fullmatch(r"role=([^|]+)\|name=(.+)", value)
+    if role_match:
+        return "page.get_by_role(" + repr(role_match.group(1)) + ", name=" + repr(role_match.group(2)) + ", exact=True)"
+    if value.startswith("data-testid="):
+        return "page.get_by_test_id(" + repr(value[12:]) + ")"
+    if value.startswith("label="):
+        return "page.get_by_label(" + repr(value[6:]) + ")"
+    if value.startswith("placeholder="):
+        return "page.get_by_placeholder(" + repr(value[12:]) + ")"
+    if value.startswith("text="):
+        return "page.get_by_text(" + repr(value[5:]) + ", exact=True)"
+    return "page.locator(" + repr(value) + ")"
+
+
+def _qa_smart_wait(metadata=None):
+    details = metadata or {}
+    field_type = str(details.get("field_type") or "").lower()
+    action_type = str(details.get("action_type") or "").lower()
+    active_page = _qa_active_page()
+    try:
+        active_page.wait_for_load_state("domcontentloaded", timeout=2000)
+    except Exception:
+        pass
+    try:
+        active_page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    except Exception:
+        pass
+    selector = ""
+    if field_type in {"dropdown", "option", "autocomplete"}:
+        selector = "[role=option]:visible,.k-list-item:visible,.k-item:visible,[role=listbox]:visible"
+    elif field_type in {"date", "calendar"}:
+        selector = "[role=gridcell]:visible,.k-calendar:visible,.k-calendar-container:visible"
+    elif field_type == "modal" or action_type in {"open_modal", "dialog"}:
+        selector = "[role=dialog]:visible,.k-dialog:visible,.modal.show:visible"
+    if selector:
+        try:
+            active_page.locator(selector).first.wait_for(state="visible", timeout=2000)
+        except Exception:
+            pass
+
+
+def _qa_try_parent_reopen(metadata):
+    parent_code = _qa_locator_code((metadata or {}).get("parent_locator"))
+    if not parent_code:
+        return False
+    try:
+        parent = eval(parent_code, {**globals(), "page": _qa_active_page()})
+        if parent.count() != 1 or not parent.is_visible():
+            return False
+        parent.click()
+        _qa_smart_wait({"field_type": "dropdown"})
+        return True
+    except Exception:
+        return False
+
+
+def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadata=None):
     locator, value = _qa_extract_locator_and_value(code_text)
     context = _qa_capture_context(locator)
     _qa_send_event({
         "event": "step_failed",
         "step": step_number,
+        "total_steps": _QA_TOTAL_STEPS,
         "code": code_text,
+        "details": _qa_step_details(code_text, metadata),
         "locator": locator,
         "value": value,
         "error": error_text,
@@ -629,6 +1156,50 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
     while True:
         command = _qa_read_command()
         action = command.get("action")
+        if action == "select_element":
+            _qa_send_event({"event": "selection_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
+            while True:
+                _qa_send_event({"event": "selection_waiting", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "timeout_seconds": int(_QA_SELECTION_TIMEOUT_MS / 1000)})
+                selection = _qa_select_element(code_text, step_number)
+                if selection.get("cancelled"):
+                    _qa_send_event({"event": "selection_cancelled", "step": step_number, "error": selection.get("error")})
+                    break
+                if selection.get("error"):
+                    _qa_send_event({"event": "selection_failed", "step": step_number, "error": selection.get("error"), "timed_out": bool(selection.get("timed_out"))})
+                    break
+                selected_candidate = selection.get("selected_candidate") or {}
+                selected_event = {
+                "event": "element_selected",
+                "step": step_number,
+                "total_steps": _QA_TOTAL_STEPS,
+                "field_name": selection.get("accessible_name") or selection.get("text") or "",
+                "field_type": selection.get("role") or selection.get("actionable_tag") or "",
+                "section": selection.get("section") or "",
+                "clicked": {
+                    "tag": selection.get("tag"), "text": selection.get("text"),
+                    "classes": selection.get("classes") or [],
+                },
+                "actionable": {
+                    "tag": selection.get("actionable_tag"), "role": selection.get("role"),
+                    "name": selection.get("accessible_name"), "id": selection.get("id"),
+                    "attributes": selection.get("stable_attributes") or {},
+                },
+                "ancestor_summaries": selection.get("ancestor_summaries") or [],
+                "candidates": selection.get("candidates") or [],
+                "selected_candidate": selected_candidate or None,
+                "locator": selected_candidate.get("expression") or selected_candidate.get("locator"),
+                "xpath": selection.get("xpath"),
+                "corrected_code": selection.get("corrected_code"),
+                "verification": selected_candidate.get("verification") or {},
+                "error": selection.get("error"),
+                }
+                _qa_send_event(selected_event)
+                corrected_code = selection.get("corrected_code")
+                if corrected_code:
+                    _QA_SELECTIONS[step_number] = selection
+                    return corrected_code
+                _qa_send_event({"event": "selection_waiting", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "timeout_seconds": int(_QA_SELECTION_TIMEOUT_MS / 1000), "message": "No safe locator was verified; selection remains active."})
+            continue
         if action in ("verify_locator", "verify_code"):
             if action == "verify_code":
                 check_code = command.get("code") or code_text
@@ -658,26 +1229,76 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt):
         return None
 
 
-def _qa_run_step(step_number, code_text):
+def _qa_run_step(step_number, code_text, metadata=None):
+    global _QA_LAST_DYNAMIC_CONTROL
     current_code = code_text
     attempt = 0
     while True:
+        _qa_send_event({"event": "step_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
         try:
             exec(current_code, globals())
+            _qa_smart_wait(metadata)
+            if str((metadata or {}).get("field_type") or "").lower() in {"dropdown", "calendar", "autocomplete", "accordion"}:
+                _QA_LAST_DYNAMIC_CONTROL = current_code
             if current_code != code_text:
+                selection = _QA_SELECTIONS.pop(step_number, {})
                 _QA_REPAIRS.append({
                     "step": step_number,
                     "original": code_text,
                     "corrected": current_code,
+                    "selection": selection,
                 })
                 _qa_send_event({
                     "event": "step_repaired",
                     "step": step_number,
                     "original_code": code_text,
                     "corrected_code": current_code,
+                    "selection": selection,
                 })
+            _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
             return
         except Exception as ex:
+            if attempt == 0:
+                _qa_send_event({"event": "auto_repair_attempted", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
+                if _qa_try_parent_reopen(metadata):
+                    try:
+                        exec(current_code, globals())
+                        _qa_smart_wait(metadata)
+                        _qa_send_event({"event": "parent_reopen_succeeded", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
+                        _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
+                        return
+                    except Exception:
+                        pass
+                for fallback_code in _qa_persisted_candidate_codes(current_code, metadata):
+                    try:
+                        exec(fallback_code, globals())
+                        current_code = fallback_code
+                        _qa_send_event({
+                            "event": "fallback_succeeded", "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS,
+                            "details": _qa_step_details(current_code, metadata),
+                        })
+                        _QA_REPAIRS.append({
+                            "step": step_number,
+                            "original": code_text,
+                            "corrected": current_code,
+                        })
+                        _qa_send_event({
+                            "event": "step_repaired",
+                            "step": step_number,
+                            "original_code": code_text,
+                            "corrected_code": current_code,
+                        })
+                        _qa_send_event({
+                            "event": "step_passed",
+                            "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS,
+                            "attempt": attempt + 1,
+                            "details": _qa_step_details(current_code, metadata),
+                        })
+                        return
+                    except Exception:
+                        continue
             attempt += 1
             if attempt > _QA_MAX_REPAIR_ROUNDS:
                 _qa_send_event({
@@ -687,13 +1308,14 @@ def _qa_run_step(step_number, code_text):
                     "error": str(ex),
                 })
                 raise
-            outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt)
+            outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt, metadata)
             if outcome is None:
                 _qa_send_event({
                     "event": "run_cancelled_by_operator",
                     "step": step_number,
                 })
                 sys.exit(2)
+            _qa_send_event({"event": "step_retrying", "step": step_number, "attempt": attempt + 1})
             current_code = outcome
 # --- end QA AI Studio interactive step runner ---
 
@@ -838,6 +1460,8 @@ class PlaywrightRunner:
         slow_mo_ms = self._parse_non_negative_int(
             environment.get("slow_mo_ms"), DEFAULT_SLOW_MO_MS
         )
+        if slow_mo_ms not in {100, 300, 700, 1200}:
+            slow_mo_ms = DEFAULT_SLOW_MO_MS
 
         timeout_ms = self._parse_non_negative_int(
             environment.get("default_timeout_ms"),
@@ -1158,39 +1782,85 @@ class PlaywrightRunner:
         normal, non-interactive run_script().
         """
 
-        match = re.search(
-            r"def run\(playwright\):\n(.*?)\n    browser\.close\(\)",
-            script_text,
-            re.DOTALL,
+        try:
+            tree = ast.parse(script_text)
+        except SyntaxError:
+            return None
+        run_func = next(
+            (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run"),
+            None,
         )
-
-        if not match:
-
+        if run_func is None:
             return None
 
-        lines = []
-
-        for raw_line in match.group(1).split("\n"):
-
+        source_lines = script_text.splitlines()
+        metadata_by_action_line = {}
+        pending = None
+        for line_number, raw_line in enumerate(source_lines, start=1):
             line = raw_line.strip()
-
-            if not line:
-
+            marker = re.match(r"#\s*QA_STEP:\s*(\d+)(?:\s*\|\s*(.*))?", line, re.IGNORECASE)
+            if marker:
+                pending = {"step": int(marker.group(1)), "description": (marker.group(2) or "").strip()}
                 continue
-
-            if line.startswith("browser = ") or line.startswith(
-                "page = browser.new_page"
-            ):
-
-                # Browser/page setup, not a "step" — a failure here
-                # is an environment problem (browser won't launch),
-                # not a locator problem, so it isn't a candidate for
-                # the locator-repair dialog.
+            metadata_match = re.match(
+                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|PARENT_LOCATOR|PRIMARY_LOCATOR|FALLBACK_LOCATORS|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
+                line, re.IGNORECASE,
+            )
+            if metadata_match and pending is not None:
+                key = metadata_match.group(1).lower()
+                pending["is_sensitive" if key == "sensitive" else key] = metadata_match.group(2).strip()
                 continue
+            if pending is not None and line and not line.startswith("#"):
+                metadata_by_action_line[line_number] = pending
+                pending = None
 
-            lines.append(line)
+        parts = []
+        has_structured_steps = bool(metadata_by_action_line)
+        for statement in run_func.body:
+            metadata = metadata_by_action_line.get(statement.lineno)
+            if has_structured_steps and metadata is None:
+                continue
+            source = ast.get_source_segment(script_text, statement) or ""
+            if not self._is_executable_recorded_statement(statement, source):
+                continue
+            metadata = metadata or {
+                "step": len(parts) + 1,
+                "description": "Execute action",
+            }
+            parts.append({
+                "step": metadata["step"],
+                "metadata": metadata,
+                "code": source.strip(),
+            })
+        return parts or None
 
-        return lines or None
+    @staticmethod
+    def _is_executable_recorded_statement(statement, source):
+        if any(token in source for token in (
+            ".launch(", ".new_context(", ".new_page(",
+            "context.close(", "browser.close(",
+        )):
+            return False
+        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+            return False
+        call = statement.value
+        function = call.func
+        if isinstance(function, ast.Name):
+            return function.id in {"expect", "assert"}
+        if not isinstance(function, ast.Attribute):
+            return False
+        # A bare page.locator(...) / page.get_by_*(...) constructs a locator
+        # but performs no browser/test action.
+        if isinstance(function.value, ast.Name) and function.value.id == "page":
+            if function.attr == "locator" or function.attr.startswith("get_by_"):
+                return False
+        return function.attr in {
+            "goto", "click", "fill", "press", "check", "uncheck",
+            "select_option", "set_input_files", "hover", "dblclick",
+            "type", "clear", "focus", "tap", "drag_to", "expect",
+            "to_be_visible", "to_have_text", "to_have_value",
+            "to_be_checked", "to_contain_text", "to_have_url",
+        }
 
     def _build_interactive_script(
         self, script_text, slow_mo_ms, timeout_ms, max_repair_rounds
@@ -1204,11 +1874,11 @@ class PlaywrightRunner:
 
         harness = INTERACTIVE_HARNESS_TEMPLATE.replace(
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
-        )
+        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace("__TOTAL_STEPS__", str(len(lines)))
 
         steps_code = "\n".join(
-            f"    _qa_run_step({index}, {line!r})"
-            for index, line in enumerate(lines)
+            f"        _qa_run_step({item['step']}, {item['code']!r}, {item['metadata']!r})"
+            for item in lines
         )
 
         return (
@@ -1218,8 +1888,10 @@ class PlaywrightRunner:
             "    page = browser.new_page()\n"
             f"    page.set_default_timeout({timeout_ms})\n"
             f"    page.set_default_navigation_timeout({timeout_ms})\n"
+            "    try:\n"
             f"{steps_code}\n"
-            "    browser.close()\n\n"
+            "    finally:\n"
+            "        browser.close()\n\n"
             "_qa_send_event({\"event\": \"run_finished\", "
             "\"repairs\": _QA_REPAIRS})\n"
             "print('TEST PASSED')\n"
@@ -1301,7 +1973,9 @@ class PlaywrightRunner:
 
             source = ast.get_source_segment(script_text, stmt)
 
-            if source:
+            if source and not re.fullmatch(
+                r"\s*page\.(?:locator|get_by_[a-z_]+)\(.*\)\s*", source,
+            ):
 
                 statements.append(source)
 
@@ -1392,7 +2066,7 @@ class PlaywrightRunner:
 
         harness = INTERACTIVE_HARNESS_TEMPLATE.replace(
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
-        )
+        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000))))
 
         shim = SPEED_SHIM_TEMPLATE.format(
             slow_mo=slow_mo_ms, timeout=timeout_ms
@@ -1403,8 +2077,9 @@ class PlaywrightRunner:
         )
 
         body_lines = []
+        cleanup_lines = []
 
-        step_index = 0
+        step_index = 1
 
         for stmt_source in statements:
 
@@ -1418,19 +2093,23 @@ class PlaywrightRunner:
                 )
             )
 
-            if is_setup_or_teardown:
+            if is_setup_or_teardown and ".close(" in stripped:
+
+                cleanup_lines.append(stripped)
+
+            elif is_setup_or_teardown:
 
                 body_lines.append("    " + stripped)
 
             else:
 
                 body_lines.append(
-                    f"    _qa_run_step({step_index}, {stmt_source!r})"
+                    f"        _qa_run_step({step_index}, {stmt_source!r})"
                 )
 
                 step_index += 1
 
-        if step_index == 0:
+        if step_index == 1:
 
             # Nothing that looked like an actual recorded action —
             # either an all-setup script, or codegen output we
@@ -1439,7 +2118,22 @@ class PlaywrightRunner:
             # repairable in it.
             return None
 
-        steps_code = "\n".join(body_lines)
+        harness = harness.replace("__TOTAL_STEPS__", str(step_index - 1))
+
+        setup_lines = [line for line in body_lines if line.startswith("    ") and not line.startswith("        ")]
+        action_lines = [line for line in body_lines if line.startswith("        ")]
+        guarded_cleanup = []
+        for close_statement in cleanup_lines:
+            guarded_cleanup.extend([
+                "        try:",
+                "            " + close_statement,
+                "        except Exception:",
+                "            pass",
+            ])
+        steps_code = "\n".join(
+            setup_lines + ["    try:"] + action_lines + ["    finally:"]
+            + (guarded_cleanup or ["        pass"])
+        )
 
         # Carry the recorded script's OWN top-level imports along —
         # see _extract_script_imports()'s docstring for why this is
@@ -1471,6 +2165,8 @@ class PlaywrightRunner:
         on_step_failed=None,
         on_repaired=None,
         on_locator_verified=None,
+        on_element_selected=None,
+        on_runtime_event=None,
         max_repair_rounds=3,
     ):
         """
@@ -1551,6 +2247,7 @@ class PlaywrightRunner:
         )
 
         script_path.write_text(interactive_script, encoding="utf-8")
+        self._current_script_path = script_path
 
         self.logger.info(
             f"Running Playwright script interactively: {script_path} "
@@ -1565,6 +2262,12 @@ class PlaywrightRunner:
 
         stdout_lines = []
 
+        self._cancel_requested = False
+        popen_kwargs = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
         process = subprocess.Popen(
             [sys.executable, str(script_path)],
             stdin=subprocess.PIPE,
@@ -1572,6 +2275,8 @@ class PlaywrightRunner:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env={**os.environ, "QA_SELECTION_CANCEL_FILE": str(script_path) + ".selection.cancel"},
+            **popen_kwargs,
         )
 
         self._current_process = process
@@ -1603,6 +2308,15 @@ class PlaywrightRunner:
                     continue
 
                 event_type = event.get("event")
+
+                if event_type in {
+                    "step_started", "step_passed", "step_retrying",
+                    "fallback_succeeded",
+                    "selection_started", "selection_waiting",
+                    "selection_cancelled", "selection_failed",
+                    "auto_repair_attempted", "parent_reopen_succeeded",
+                } and on_runtime_event:
+                    on_runtime_event(event)
 
                 if event_type == "step_failed":
 
@@ -1639,12 +2353,47 @@ class PlaywrightRunner:
 
                     process.stdin.flush()
 
+                elif event_type == "element_selected":
+
+                    self.logger.info(
+                        "[repair] click target tag=%s text=%s actionable=%s section=%r keys=%s",
+                        (event.get("clicked") or {}).get("tag"),
+                        (event.get("clicked") or {}).get("text"),
+                        event.get("actionable"), event.get("section"),
+                        sorted(event.keys()),
+                    )
+                    for candidate in (event.get("candidates") or [])[:50]:
+                        verification = candidate.get("verification") or {}
+                        self.logger.info(
+                            "[repair] candidate type=%s score=%s locator=%s count=%s visible=%s actionable=%s rejected=%s",
+                            candidate.get("type"), candidate.get("score"),
+                            candidate.get("expression") or candidate.get("locator"),
+                            verification.get("count"), verification.get("visible"),
+                            verification.get("actionable"), candidate.get("rejected_reason"),
+                        )
+                    self.logger.info(
+                        "[repair] subprocess event emitted=element_selected step=%s selected=%s corrected_code=%s xpath=%s",
+                        event.get("step"), event.get("locator"),
+                        event.get("corrected_code"), event.get("xpath"),
+                    )
+
+                    if on_element_selected:
+
+                        on_element_selected(event)
+
                 elif event_type == "step_repaired":
 
                     repair = {
                         "step": event.get("step"),
                         "original": event.get("original_code"),
                         "corrected": event.get("corrected_code"),
+                        "selection": {
+                            "selected_candidate": event.get("selected_candidate") or {},
+                            "candidates": event.get("candidates") or [],
+                            "xpath": event.get("xpath"),
+                            "section": event.get("section"),
+                            "accessible_name": event.get("field_name"),
+                        },
                     }
 
                     repairs.append(repair)
@@ -1668,8 +2417,14 @@ class PlaywrightRunner:
                 pass
 
             self._current_process = None
+            try:
+                Path(str(script_path) + ".selection.cancel").unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._current_script_path = None
 
         return_code = process.wait()
+        cancelled = cancelled or (self._cancel_requested and return_code != 0)
 
         stderr_text = process.stderr.read() if process.stderr else ""
 
@@ -1714,9 +2469,23 @@ class PlaywrightRunner:
             self._cancel_requested = True
 
             try:
-
-                process.terminate()
-
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=8, check=False,
+                    )
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
             except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
 
-                pass
+    def cancel_current_selection(self):
+        process = self._current_process
+        if process and process.poll() is None:
+            control_path = Path(str(getattr(self, "_current_script_path", "")) + ".selection.cancel")
+            if control_path.name != ".selection.cancel":
+                control_path.touch()

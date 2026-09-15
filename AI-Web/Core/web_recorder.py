@@ -158,6 +158,7 @@ site — the headless=False change above does not touch it.
 """
 
 import asyncio
+import ast
 import json
 import sys
 import threading
@@ -165,6 +166,7 @@ import time
 
 from Core.logger import Logger
 from Core.test_case_repository import TestCaseRepository
+from Core.playwright_step_metadata import metadata_comment
 from Core.test_environment_config import TestEnvironmentConfig
 
 logger = Logger.get_logger()
@@ -242,11 +244,16 @@ RECORDER_JS = r"""
     if (!value) return false;
     if (UUID_RE.test(value)) return true;
     if (LONG_HEX_RE.test(value)) return true;
+    if (/__[A-Za-z0-9_-]{5,}$/.test(value)) return true;
     if (value.length >= 16 && /^[a-zA-Z0-9]+$/.test(value)) {
       var digits = (value.match(/[0-9]/g) || []).length;
       if (digits >= 3) return true;
     }
     return false;
+  }
+
+  function isGenericFrameworkClass(value) {
+    return /^(?:k-icon|k-svg-icon|k-select|k-input|k-widget|k-button-icon|icon|wrapper|container|row|col|form-control|input-group)$/i.test(value || '');
   }
 
   function attr(el, name) {
@@ -313,7 +320,7 @@ RECORDER_JS = r"""
     while (node && node.nodeType === 1 && depth < 6) {
       var part = node.tagName.toLowerCase();
       var stableClasses = Array.prototype.filter.call(
-        node.classList || [], function (c) { return !looksDynamic(c); }
+        node.classList || [], function (c) { return !looksDynamic(c) && !isGenericFrameworkClass(c); }
       ).slice(0, 2);
       if (stableClasses.length) part += '.' + stableClasses.join('.');
       var parent = node.parentElement;
@@ -357,9 +364,8 @@ RECORDER_JS = r"""
 
   function xpathFor(el) {
     var tag = el.tagName.toLowerCase();
-    var text = (el.innerText || el.value || '').trim();
-    if (text && text.length > 0 && text.length <= 60) {
-      return '//' + tag + '[normalize-space()=' + xpathLiteral(text) + ']';
+    if (el.id && !looksDynamic(el.id)) {
+      return '//*[@id=' + xpathLiteral(el.id) + ']';
     }
     var name = attr(el, 'name');
     if (name && !looksDynamic(name)) {
@@ -373,13 +379,50 @@ RECORDER_JS = r"""
     if (ariaLabel) {
       return '//' + tag + '[@aria-label=' + xpathLiteral(ariaLabel) + ']';
     }
+    var text = (el.innerText || '').trim();
+    if (text && text.length > 0 && text.length <= 60) {
+      return '//' + tag + '[normalize-space()=' + xpathLiteral(text) + ']';
+    }
     var stableClasses = Array.prototype.filter.call(
-      el.classList || [], function (c) { return !looksDynamic(c); }
+      el.classList || [], function (c) { return !looksDynamic(c) && !isGenericFrameworkClass(c); }
     );
     if (stableClasses.length) {
       return '//' + tag + '[contains(@class,' + xpathLiteral(stableClasses[0]) + ')]';
     }
     return null;
+  }
+
+  function sectionFor(el) {
+    var node = el.parentElement;
+    var depth = 0;
+    while (node && depth < 8) {
+      var isContainer = /^(ARTICLE|SECTION|FORM|FIELDSET|LI)$/.test(node.tagName)
+        || /(?:^|\s)(?:k-card|card|panel|tile|menu-item|list-item)(?:\s|$)/i.test(node.className || '')
+        || ['region','group','dialog','menuitem','listitem'].indexOf(attr(node, 'role') || '') !== -1;
+      if (isContainer) {
+        var identities = [];
+        function addIdentity(value) {
+          value = (value || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+          if (value && value !== accessibleName(el) && identities.indexOf(value) === -1) identities.push(value);
+        }
+        addIdentity(attr(node, 'aria-label')); addIdentity(attr(node, 'title'));
+        node.querySelectorAll('h1,h2,h3,h4,legend,[role="heading"],.k-card-title,[class*="title"],[class*="heading"],label,p,span,strong').forEach(function(item) {
+          if (!el.contains(item) && !item.contains(el)) addIdentity(item.innerText);
+        });
+        if (identities.length) return {element: node, name: identities[0], identities: identities.slice(0, 12)};
+      }
+      node = node.parentElement;
+      depth++;
+    }
+    return {element: null, name: '', identities: []};
+  }
+
+  function contextualXpathFor(el) {
+    var section = sectionFor(el), text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!section.name || !text || text.length > 100) return null;
+    return '//*[self::article or self::section or self::form or self::fieldset or self::li or contains(concat(" ",normalize-space(@class)," ")," k-card ") or contains(@class,"card") or contains(@class,"panel") or contains(@class,"tile")]'
+      + '[.//*[normalize-space()=' + xpathLiteral(section.name) + ']]//'
+      + el.tagName.toLowerCase() + '[normalize-space(.)=' + xpathLiteral(text) + ']';
   }
 
   // Item 29: known-stable locators pulled from Knowledge Hub's URL
@@ -413,37 +456,156 @@ RECORDER_JS = r"""
   // name/label/text > robust css > relative xpath fallback (only
   // when css would otherwise need 2+ positional nth-of-type
   // segments with no stable class to anchor them).
+  function locatorMatchCount(locator) {
+    try {
+      var nodes = [];
+      if (locator.strategy === 'testid') nodes = document.querySelectorAll('[data-testid="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'id') nodes = document.querySelectorAll('#' + CSS.escape(locator.value));
+      else if (locator.strategy === 'name') nodes = document.querySelectorAll('[name="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'placeholder') nodes = document.querySelectorAll('[placeholder="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'title') nodes = document.querySelectorAll('[title="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'css' || locator.strategy === 'knowledge_hub') nodes = document.querySelectorAll(locator.value);
+      else if (locator.strategy === 'xpath') return document.evaluate(locator.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null).snapshotLength;
+      else if (locator.strategy === 'label') nodes = Array.prototype.filter.call(document.querySelectorAll('input,select,textarea'), function(node) { return labelFor(node) === locator.value; });
+      else if (locator.strategy === 'role') nodes = Array.prototype.filter.call(document.querySelectorAll('button,a,input,select,textarea,[role]'), function(node) { return (attr(node, 'role') || implicitRole(node)) === locator.role && accessibleName(node) === locator.name; });
+      else if (locator.strategy === 'text') nodes = Array.prototype.filter.call(document.querySelectorAll('button,a,span,li,td,label'), function(node) { return (node.innerText || '').trim() === locator.value; });
+      return nodes.length;
+    } catch (e) { return 0; }
+  }
+
   function computeLocator(el) {
     var known = knownLocatorFor(el);
-    if (known) return known;
+    if (known && locatorMatchCount(known) === 1) return known;
     for (var i = 0; i < 4; i++) {
       var v = attr(el, ['data-testid', 'data-test', 'data-qa', 'data-cy'][i]);
-      if (v) return { strategy: 'testid', value: v };
-    }
-    if (el.id && !looksDynamic(el.id)) {
-      return { strategy: 'id', value: el.id };
+      if (v) {
+        var testLocator = { strategy: 'testid', value: v };
+        if (locatorMatchCount(testLocator) === 1) return testLocator;
+      }
     }
     var role = attr(el, 'role') || implicitRole(el);
     var name = accessibleName(el);
     if (role && name) {
-      return { strategy: 'role', role: role, name: name };
-    }
-    if (el.name && !looksDynamic(el.name)) {
-      return { strategy: 'name', value: el.name };
+      var roleLocator = { strategy: 'role', role: role, name: name };
+      if (locatorMatchCount(roleLocator) === 1) return roleLocator;
     }
     var label = labelFor(el);
-    if (label) return { strategy: 'label', value: label };
+    if (label) {
+      var labelLocator = { strategy: 'label', value: label };
+      if (locatorMatchCount(labelLocator) === 1) return labelLocator;
+    }
+    if (el.name && !looksDynamic(el.name)) {
+      var nameLocator = { strategy: 'name', value: el.name };
+      if (locatorMatchCount(nameLocator) === 1) return nameLocator;
+    }
+    var placeholder = attr(el, 'placeholder');
+    if (placeholder) {
+      var placeholderLocator = { strategy: 'placeholder', value: placeholder };
+      if (locatorMatchCount(placeholderLocator) === 1) return placeholderLocator;
+    }
+    var title = attr(el, 'title');
+    if (title) {
+      var titleLocator = { strategy: 'title', value: title };
+      if (locatorMatchCount(titleLocator) === 1) return titleLocator;
+    }
+    if (el.id && !looksDynamic(el.id)) {
+      var idLocator = { strategy: 'id', value: el.id };
+      if (locatorMatchCount(idLocator) === 1) return idLocator;
+    }
     var text = (el.innerText || '').trim();
     if (text && text.length > 0 && text.length <= 60 &&
         ['BUTTON', 'A', 'SPAN', 'LI', 'TD', 'LABEL'].indexOf(el.tagName) !== -1) {
-      return { strategy: 'text', value: text };
+      var textLocator = { strategy: 'text', value: text };
+      if (locatorMatchCount(textLocator) === 1) return textLocator;
+    }
+    var contextualXpath = contextualXpathFor(el);
+    if (contextualXpath) {
+      var contextual = {strategy:'xpath', value:contextualXpath};
+      if (locatorMatchCount(contextual) === 1) return contextual;
     }
     var cssInfo = cssPathInfo(el);
-    if (cssInfo.fragileCount >= 2) {
+    if (cssInfo.fragileCount > 0 || /:nth-(?:child|of-type)/.test(cssInfo.path)) {
       var xp = xpathFor(el);
-      if (xp) return { strategy: 'xpath', value: xp };
+      if (xp && locatorMatchCount({strategy:'xpath', value:xp}) === 1) return { strategy: 'xpath', value: xp };
     }
-    return { strategy: 'css', value: cssInfo.path };
+    var cssLocator = { strategy: 'css', value: cssInfo.path };
+    if (cssInfo.path && locatorMatchCount(cssLocator) === 1) return cssLocator;
+    var fallbackXpath = xpathFor(el);
+    if (fallbackXpath && locatorMatchCount({strategy:'xpath', value:fallbackXpath}) === 1) {
+      return {strategy:'xpath', value:fallbackXpath};
+    }
+    // A recorder event without a unique locator is diagnostic only. Never
+    // serialize an ambiguous generic selector such as .k-icon or //span.
+    return null;
+  }
+
+  function fieldMetadata(el, kind) {
+    var control = el;
+    if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'A'].includes(control.tagName)) {
+      control = el.closest('button,a,label,[role="button"],[role="combobox"]') || el;
+    }
+    var inputType = (attr(control, 'type') || '').toLowerCase();
+    var role = attr(control, 'role') || implicitRole(control) || '';
+    var name = accessibleName(control) || attr(control, 'name') || '';
+    if (!name) {
+      var container = control.closest('.k-form-field,.form-group,.field,[class*="field"]');
+      var containerLabel = container && container.querySelector('label,.k-label,[class*="label"]');
+      name = containerLabel ? (containerLabel.innerText || '').trim() : '';
+    }
+    if (!name || /^(span|div|k-icon)$/i.test(name)) {
+      name = attr(control, 'name') || attr(control, 'placeholder') || attr(control, 'title') || 'Element';
+    }
+    var type = 'text';
+    if (inputType === 'password') type = 'password';
+    else if (inputType === 'date' || /date|calendar/i.test((control.className || '') + ' ' + name)) type = 'date';
+    else if (inputType === 'file') type = 'file';
+    else if (role === 'option' || /(?:k-list-item|k-item|option)/i.test(control.className || '')) type = 'option';
+    else if (role === 'gridcell' || /(?:calendar|date-cell|k-calendar)/i.test(control.className || '')) type = 'date';
+    else if (control.tagName === 'SELECT' || role === 'combobox' || control.getAttribute('aria-haspopup') === 'listbox' || /dropdown|combobox|autocomplete|k-select/i.test(control.className || '')) type = /autocomplete/i.test(control.className || '') ? 'autocomplete' : 'dropdown';
+    else if (/accordion|expansion-panel/i.test(control.className || '')) type = 'accordion';
+    else if (role === 'dialog' || /modal|dialog/i.test(control.className || '')) type = 'modal';
+    else if (control.tagName === 'BUTTON' || role === 'button' || kind === 'click') type = 'button';
+    return { field_name: name.slice(0, 120), field_type: type, tag: control.tagName.toLowerCase(), section: sectionFor(control).name };
+  }
+
+  function locatorMetadata(el) {
+    var primary = computeLocator(el);
+    var fallbacks = [];
+    var seen = {};
+    function add(locator) {
+      if (!locator) return;
+      var key = JSON.stringify(locator);
+      if (key === JSON.stringify(primary) || seen[key] || fallbacks.length >= 4 || locatorMatchCount(locator) !== 1) return;
+      seen[key] = true;
+      fallbacks.push(locator);
+    }
+    var role = attr(el, 'role') || implicitRole(el), name = accessibleName(el), label = labelFor(el);
+    if (role && name) add({strategy:'role', role:role, name:name});
+    if (label) add({strategy:'label', value:label});
+    if (el.name && !looksDynamic(el.name)) add({strategy:'name', value:el.name});
+    var placeholder = attr(el, 'placeholder'), title = attr(el, 'title');
+    if (placeholder) add({strategy:'placeholder', value:placeholder});
+    if (title) add({strategy:'title', value:title});
+    if (el.id && !looksDynamic(el.id)) add({strategy:'id', value:el.id});
+    var cssInfo = cssPathInfo(el);
+    var contextualXpath = contextualXpathFor(el);
+    if (contextualXpath) add({strategy:'xpath', value:contextualXpath});
+    if (cssInfo.path && cssInfo.fragileCount === 0 && !/:nth-(?:child|of-type)/.test(cssInfo.path) && cssInfo.path.length <= 180) add({strategy:'css', value:cssInfo.path});
+    return {locator: primary, fallback_locators: fallbacks, xpath: xpathFor(el)};
+  }
+
+  function capturedAction(el, kind, extra) {
+    var target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"],[onclick],[tabindex]:not([tabindex="-1"])');
+    if (!target) {
+      var node = el, depth = 0;
+      while (!target && node && node !== document.body && depth < 8) {
+        if (getComputedStyle(node).cursor === 'pointer') target = node;
+        node = node.parentElement; depth++;
+      }
+    }
+    target = target || el;
+    var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
+    return result;
   }
 
   var TEXT_ENTRY_TYPES = ['text', 'email', 'password', 'search', 'tel', 'url', 'number', 'date'];
@@ -460,16 +622,25 @@ RECORDER_JS = r"""
   }
 
   function report(action) {
+    if (!action || !action.locator) {
+      console.warn('QA AI Studio Recorder skipped an action without a unique locator.');
+      return;
+    }
     if (window.__qa_record_action) {
       window.__qa_record_action(JSON.stringify(action));
     }
   }
 
+  var LAST_DYNAMIC_CONTROL = null;
+
   document.addEventListener('click', function (e) {
     var el = e.target;
     if (!el || el.nodeType !== 1) return;
     if (isTextEntry(el)) return;
-    report({ kind: 'click', locator: computeLocator(el), tag: el.tagName });
+    var action = capturedAction(el, 'click');
+    if (['option','date'].indexOf(action.field_type) !== -1 && LAST_DYNAMIC_CONTROL) action.parent_locator = LAST_DYNAMIC_CONTROL;
+    report(action);
+    if (['dropdown','calendar','autocomplete','accordion'].indexOf(action.field_type) !== -1) LAST_DYNAMIC_CONTROL = action.locator;
   }, true);
 
   document.addEventListener('change', function (e) {
@@ -477,17 +648,16 @@ RECORDER_JS = r"""
     if (!el || el.nodeType !== 1) return;
     if (el.tagName === 'SELECT') {
       var selected = el.options[el.selectedIndex];
-      report({
-        kind: 'select_option', locator: computeLocator(el),
+      report(capturedAction(el, 'select_option', {
         value: el.value, label: selected ? selected.text : el.value,
-      });
+      }));
       return;
     }
     if (el.tagName === 'INPUT' && ['checkbox', 'radio'].indexOf((el.getAttribute('type') || '').toLowerCase()) !== -1) {
       return; // already captured as a click
     }
     if (isTextEntry(el)) {
-      report({ kind: 'fill', locator: computeLocator(el), value: el.value });
+      report(capturedAction(el, 'fill', {value: el.value}));
     }
   }, true);
 })();
@@ -855,13 +1025,19 @@ class WebRecordingSession:
     def build_script(self):
 
         lines = []
+        step_number = 1
 
         for action in self.actions:
 
             kind = action.get("kind")
 
             if kind == "goto":
-                lines.append(f"    page.goto({action['url']!r})")
+                statement = f"page.goto({action['url']!r})"
+                lines.extend(self._structured_step_lines(
+                    step_number, action, statement,
+                    field_type="navigation", field_name="Application URL",
+                ))
+                step_number += 1
                 continue
 
             locator_src = self._locator_source(action.get("locator") or {})
@@ -870,13 +1046,15 @@ class WebRecordingSession:
                 continue
 
             if kind == "click":
-                lines.append(f"    {locator_src}.click()")
+                statement = f"{locator_src}.click()"
             elif kind == "fill":
-                lines.append(f"    {locator_src}.fill({action.get('value', '')!r})")
+                statement = f"{locator_src}.fill({action.get('value', '')!r})"
             elif kind == "select_option":
-                lines.append(
-                    f"    {locator_src}.select_option({action.get('value', '')!r})"
-                )
+                statement = f"{locator_src}.select_option({action.get('value', '')!r})"
+            else:
+                continue
+            lines.extend(self._structured_step_lines(step_number, action, statement))
+            step_number += 1
 
         if not lines:
             lines.append(
@@ -898,6 +1076,65 @@ class WebRecordingSession:
             "    run(playwright)\n"
         )
 
+    @classmethod
+    def _structured_step_lines(
+        cls, number, action, statement, field_type=None, field_name=None,
+    ):
+        kind = action.get("kind") or "execute"
+        field_type = field_type or action.get("field_type") or (
+            "dropdown" if kind == "select_option" else "button" if kind == "click" else "text"
+        )
+        field_name = field_name or action.get("field_name") or "Element"
+        sensitive = field_type == "password" or bool(
+            any(token in field_name.lower() for token in ("password", "passwd", "secret", "token"))
+        )
+        primary = (
+            str(action.get("url") or "") if kind == "goto"
+            else cls._locator_display(action.get("locator") or {})
+        ) or "-"
+        fallbacks = [
+            cls._locator_display(locator) for locator in action.get("fallback_locators") or []
+        ]
+        fallbacks = [locator for locator in fallbacks if locator and locator != primary]
+        xpath = action.get("xpath") or "-"
+        description = (
+            "Open application" if kind == "goto" else
+            f"Enter {field_name}" if kind == "fill" else
+            f"Select {field_name}" if kind == "select_option" else
+            f"Click {field_name}"
+        )
+        metadata = [
+            metadata_comment("QA_STEP", f"{number:03d}"),
+            metadata_comment("DESCRIPTION", description),
+            metadata_comment("FIELD_TYPE", field_type),
+            metadata_comment("FIELD_NAME", field_name),
+            metadata_comment("SECTION", action.get("section")),
+            metadata_comment("ACTION_TYPE", kind),
+            metadata_comment("PARENT_LOCATOR", cls._locator_display(action.get("parent_locator") or {})),
+            metadata_comment("PRIMARY_LOCATOR", primary),
+            metadata_comment("FALLBACK_LOCATORS", "; ".join(fallbacks)),
+            metadata_comment("XPATH", xpath),
+            metadata_comment("SENSITIVE", "true" if sensitive else "false"),
+            metadata_comment("SOURCE", "recorded"),
+            statement,
+        ]
+        return ["    " + line for line in metadata]
+
+    @staticmethod
+    def _locator_display(locator):
+        strategy = locator.get("strategy")
+        if strategy == "role":
+            return f"role={locator.get('role', '')}|name={locator.get('name', '')}"
+        if strategy == "testid":
+            return f"data-testid={locator.get('value', '')}"
+        if strategy in {"label", "name", "placeholder", "title", "text"}:
+            return f"{strategy}={locator.get('value', '')}"
+        if strategy == "id":
+            return "#" + str(locator.get("value") or "")
+        if strategy == "xpath":
+            return "xpath=" + str(locator.get("value") or "")
+        return str(locator.get("value") or "")
+
     @staticmethod
     def _locator_source(locator):
 
@@ -914,6 +1151,10 @@ class WebRecordingSession:
             return f"page.locator({name_selector!r})"
         if strategy == "label":
             return f"page.get_by_label({locator['value']!r})"
+        if strategy == "placeholder":
+            return f"page.get_by_placeholder({locator['value']!r})"
+        if strategy == "title":
+            return f"page.get_by_title({locator['value']!r})"
         if strategy == "text":
             return f"page.get_by_text({locator['value']!r}, exact=True)"
         if strategy == "css":
@@ -942,6 +1183,13 @@ class WebRecordingSession:
 
             if save:
                 script = self.build_script()
+                try:
+                    ast.parse(script)
+                except SyntaxError as ex:
+                    raise RecordingError(
+                        "Recorder generated invalid Python and did not save it: "
+                        f"line {ex.lineno or '?'}: {ex.msg}. Captured actions remain in this recorder session."
+                    ) from ex
                 TestCaseRepository().update_recorded_script(
                     self.test_case_id, script
                 )

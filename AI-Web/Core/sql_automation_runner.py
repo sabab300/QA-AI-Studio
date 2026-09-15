@@ -106,6 +106,119 @@ class SqlAutomationRunner:
         detail = f" ({actual!r} compared with {expected!r})" if actual is not None else ""
         return {"outcome": "Pass" if passed else "Fail", "message": f"{kind}: {'passed' if passed else 'failed'}{detail}"}
 
+    # --------------------------------------------------
+    # QA-AI-STUDIO-API-SQL-AUTOMATION-LIFECYCLE-ROOT-FIX: real,
+    # read-only schema introspection against the configured SQL Test
+    # Environment. Without this, SQL AI-generation is architecturally
+    # blind -- SQLGenerator only ever gets a real schema if a caller
+    # already has one to hand it, which nothing in this codebase ever
+    # did, so it always fell back to its own "no schema available,
+    # do NOT invent executable SQL" branch and produced an empty/
+    # placeholder result. This is metadata-only (table/column names),
+    # never a data read, and reuses the exact same read-only
+    # connection _connect() already opens for real query execution.
+    # --------------------------------------------------
+
+    def describe_schema(self, profile, max_tables=30, max_columns=40):
+
+        connection = None
+
+        try:
+
+            connection = self._connect(profile)
+
+            db_type = str(profile.get("sql_db_type") or "sqlite").lower()
+
+            cursor = connection.cursor()
+
+            tables = []
+
+            if db_type == "sqlite":
+
+                cursor.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+                    "ORDER BY name"
+                )
+
+                table_names = [row[0] for row in cursor.fetchall()][:max_tables]
+
+                for table_name in table_names:
+
+                    cursor.execute(f"PRAGMA table_info('{table_name}')")
+
+                    columns = [row[1] for row in cursor.fetchall()][:max_columns]
+
+                    tables.append((table_name, columns))
+
+            elif db_type in ("postgresql", "mysql"):
+
+                schema_filter = (
+                    "table_schema = 'public'" if db_type == "postgresql"
+                    else f"table_schema = '{profile.get('sql_database') or ''}'"
+                )
+
+                cursor.execute(
+                    "SELECT table_name, column_name "
+                    "FROM information_schema.columns "
+                    f"WHERE {schema_filter} "
+                    "ORDER BY table_name, ordinal_position"
+                )
+
+                by_table = {}
+
+                for table_name, column_name in cursor.fetchall():
+
+                    by_table.setdefault(table_name, [])
+
+                    if len(by_table[table_name]) < max_columns:
+
+                        by_table[table_name].append(column_name)
+
+                for table_name in list(by_table.keys())[:max_tables]:
+
+                    tables.append((table_name, by_table[table_name]))
+
+            elif db_type == "sqlserver":
+
+                cursor.execute(
+                    "SELECT TABLE_NAME, COLUMN_NAME FROM "
+                    "INFORMATION_SCHEMA.COLUMNS "
+                    "ORDER BY TABLE_NAME, ORDINAL_POSITION"
+                )
+
+                by_table = {}
+
+                for table_name, column_name in cursor.fetchall():
+
+                    by_table.setdefault(table_name, [])
+
+                    if len(by_table[table_name]) < max_columns:
+
+                        by_table[table_name].append(column_name)
+
+                for table_name in list(by_table.keys())[:max_tables]:
+
+                    tables.append((table_name, by_table[table_name]))
+
+            if not tables:
+
+                return None
+
+            lines = []
+
+            for table_name, columns in tables:
+
+                lines.append(f"Table: {table_name} ({', '.join(columns)})")
+
+            return "\n".join(lines)
+
+        finally:
+
+            if connection is not None:
+
+                connection.close()
+
     def _connect(self, profile):
         db_type = str(profile.get("sql_db_type") or "sqlite").lower()
         timeout = self._positive_int(profile.get("sql_timeout_seconds"), 30, maximum=300)

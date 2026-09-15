@@ -56,7 +56,7 @@ from Core.logger import Logger
 # executing a run row that predates it).
 TRANSIENT_STATUSES = ("Queued", "Running")
 
-TERMINAL_STATUSES = ("Passed", "Failed", "Error", "Cancelled")
+TERMINAL_STATUSES = ("Passed", "Failed", "Error", "Cancelled", "Stopped")
 
 
 class AutomationExecutionRepository:
@@ -101,6 +101,8 @@ class AutomationExecutionRepository:
                 duration_seconds REAL,
 
                 error_message TEXT,
+                final_message TEXT,
+                runtime_activity_json TEXT,
                 stdout TEXT,
                 stderr TEXT,
 
@@ -121,6 +123,16 @@ class AutomationExecutionRepository:
             )
             """
         )
+
+        columns = {
+            row[1] for row in cursor.execute(
+                "PRAGMA table_info(automation_runs)"
+            ).fetchall()
+        }
+        if "final_message" not in columns:
+            cursor.execute("ALTER TABLE automation_runs ADD COLUMN final_message TEXT")
+        if "runtime_activity_json" not in columns:
+            cursor.execute("ALTER TABLE automation_runs ADD COLUMN runtime_activity_json TEXT")
 
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_automation_runs_tc "
@@ -299,7 +311,13 @@ class AutomationExecutionRepository:
 
         has_hard_error = "error" in result and not result.get("stdout")
 
-        if cancelled:
+        if result.get("stopped"):
+
+            status = "Stopped"
+
+            outcome = "Stopped by User"
+
+        elif cancelled:
 
             status = "Cancelled"
 
@@ -337,6 +355,18 @@ class AutomationExecutionRepository:
         # it's surfacing text the runner already produced, just like
         # error_message does for the hard-error case.
         error_message = result.get("error")
+        final_message = result.get("final_message")
+        if not final_message:
+            if status == "Passed":
+                final_message = "Replay completed successfully."
+            elif status == "Stopped":
+                final_message = "Stopped by user."
+            elif status == "Cancelled":
+                final_message = "Cancelled during replay."
+            elif status == "Error":
+                final_message = error_message or "Replay ended with an error."
+            else:
+                final_message = error_message or "Replay failed."
 
         if error_message is None and status == "Failed":
 
@@ -359,6 +389,8 @@ class AutomationExecutionRepository:
                 return_code=?,
                 duration_seconds=?,
                 error_message=?,
+                final_message=?,
+                runtime_activity_json=?,
                 stdout=?,
                 stderr=?,
                 script_path=?,
@@ -375,6 +407,8 @@ class AutomationExecutionRepository:
                 result.get("return_code"),
                 result.get("duration"),
                 error_message,
+                final_message,
+                json.dumps(result.get("runtime_activity") or [], ensure_ascii=False),
                 self._truncate_log(result.get("stdout")),
                 self._truncate_log(result.get("stderr")),
                 result.get("script_path"),
@@ -419,6 +453,11 @@ class AutomationExecutionRepository:
 
         conn.close()
 
+        if row:
+            try:
+                row["runtime_activity"] = json.loads(row.get("runtime_activity_json") or "[]")
+            except (TypeError, ValueError):
+                row["runtime_activity"] = []
         return row
 
     def list_runs(
@@ -508,7 +547,7 @@ class AutomationExecutionRepository:
                    knowledge_name, automation_type, status, outcome,
                    success, return_code, duration_seconds, script_path,
                    screenshot_path, executed_by_username, re_run_of,
-                   error_message,
+                   error_message, final_message,
                    started_at, finished_at, created_date
             FROM automation_runs
             {where_clause}

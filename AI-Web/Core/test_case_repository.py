@@ -155,6 +155,40 @@ class TestCaseRepository:
             "ALTER TABLE test_cases ADD COLUMN source_type TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN legacy_origin TEXT",
             "ALTER TABLE test_cases ADD COLUMN reviewed_workbook_path TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN auto_script_validated_hash TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN manual_script_validated_hash TEXT DEFAULT ''",
+            # API Automation endpoint binding — persists which real,
+            # imported API Collection endpoint (api_endpoints.id) this
+            # Test Case is bound to for execution, so "never silently
+            # guess" (QA-AI-STUDIO-REMAINING-MODULES-END-TO-END
+            # requirement A) only has to be resolved once per Test
+            # Case rather than re-prompted on every single Execute.
+            # NULL means "not yet bound". See set_bound_api_endpoint()
+            # / automation_web_repository.py's execute_api().
+            "ALTER TABLE test_cases ADD COLUMN bound_api_endpoint_id INTEGER",
+            # Explicit "expected HTTP status" assertion for API
+            # Automation — lets a deliberate negative test (e.g.
+            # expect 400) Pass, and an unexpected 200 Fail, instead of
+            # always judging Pass/Fail off the bound endpoint's own
+            # recorded (happy-path) example_response_status. NULL
+            # means "no explicit assertion — fall back to the
+            # endpoint's own example status". See
+            # set_api_expected_status_code() / ApiAutomationRunner.send().
+            "ALTER TABLE test_cases ADD COLUMN api_expected_status_code INTEGER",
+            # Structured, per-Test-Case API request definition (section
+            # F, QA-AI-STUDIO-API-AUTOMATION-END-TO-END-DEVICE-
+            # FINALIZATION) -- query/path param overrides, header
+            # overrides, an auth override, a body override, the fuller
+            # assertion list (beyond the single api_expected_status_code
+            # above), and response-value extraction rules -- stored as
+            # one JSON blob. '' means "not yet configured", which falls
+            # back to the bound endpoint's own imported values exactly
+            # as before this column existed. See set_api_request_config()
+            # / Core/automation_web_repository.py's get/set_api_request_
+            # config() (masked-on-read for auth secrets) and
+            # Core/api_automation_runner.py's build_request()/
+            # evaluate_assertions()/extract_variables().
+            "ALTER TABLE test_cases ADD COLUMN api_request_config_json TEXT DEFAULT ''",
         ):
 
             try:
@@ -252,6 +286,7 @@ class TestCaseRepository:
         test_case_document_name=None,
         document_type=None,
         source_type=None,
+        force_direct_insert=False,
 
     ):
 
@@ -265,7 +300,23 @@ class TestCaseRepository:
             "source_type": source_type or "", "source_knowledge_ids": source_knowledge_ids or [],
             "test_case_document_name": test_case_document_name or "",
         }
-        if source_knowledge_ids:
+        # QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+        # item 6/7: review_save() requires a real knowledge_versions
+        # row for the selected source(s) and writes a reviewed-file
+        # artifact -- correct for the human QA Engineering Draft ->
+        # Review -> Save workflow, but an API Collection's placeholder
+        # knowledge_items row (created by
+        # ApiCollectionRepository._get_or_create_linked_knowledge_item)
+        # has no such knowledge_versions row. force_direct_insert lets
+        # a caller that already knows exactly what it wants persisted
+        # (generate_automation_from_collection()) use the same simple,
+        # direct INSERT below even while also supplying
+        # source_knowledge_ids/test_case_document_name/document_type,
+        # instead of being silently routed into review_save() and
+        # failing (or being rejected) there. Every OTHER existing
+        # caller is unaffected: this only changes behavior when the
+        # new flag is explicitly passed True.
+        if source_knowledge_ids and not force_direct_insert:
             result = self.review_save(
                 scope, [{"action": "insert", "values": row} for row in rows]
             )
@@ -304,11 +355,11 @@ class TestCaseRepository:
                         pre_conditions, steps, expected_result,
                         status, automation_type, last_result,
                         execution_type, execution_tool, source_knowledge_ids,
-                        test_case_document_name,
+                        test_case_document_name, document_type, source_type,
                         created_date, modified_date
                     )
                     VALUES
-                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?, ?,?)
+                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?,?,?, ?,?)
                     """,
                     (
                         tc_number,
@@ -329,6 +380,8 @@ class TestCaseRepository:
                         self._execution_tool(row),
                         json.dumps(source_knowledge_ids or []),
                         test_case_document_name or "",
+                        document_type or "",
+                        source_type or "",
                         now,
                         now,
                     )
@@ -954,6 +1007,207 @@ class TestCaseRepository:
         text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
         return text.rstrip("\n")
 
+    @classmethod
+    def script_fingerprint(cls, value):
+        text = cls._canonical_script_text(value)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
+
+    @staticmethod
+    def _api_config_text(bound_api_endpoint_id, api_expected_status_code):
+        """
+        Canonical "content" for an API Automation asset's readiness
+        fingerprint. Per the required architecture ("Selenium/browser
+        script text must NOT control API execution readiness"), what
+        must be Validated/Activated for an API test case is the real
+        request config — which real, imported endpoint it's bound to,
+        and what HTTP status the assertion expects — NOT the
+        documentation-only text in automation_script. Reusing the same
+        auto_script_validated_hash column/hash mechanism already built
+        (see mark_script_validated()/is_script_source_validated()
+        below) for this second kind of "content" avoids a parallel,
+        duplicate validated/active bookkeeping system.
+        """
+        return (
+            f"endpoint={bound_api_endpoint_id or ''}"
+            f"|expected_status={api_expected_status_code or ''}"
+        )
+
+    def is_script_source_validated(self, test_case, source):
+        source = str(source or "AUTO").upper()
+        is_api = str(test_case.get("automation_type") or "").upper() == "API"
+        if is_api and source == "AUTO":
+            content = self._api_config_text(
+                test_case.get("bound_api_endpoint_id"),
+                test_case.get("api_expected_status_code"),
+            )
+            return (
+                bool(test_case.get("bound_api_endpoint_id"))
+                and test_case.get("auto_script_validated_hash")
+                == self.script_fingerprint(content)
+            )
+        script_field = (
+            "recorded_script" if source == "MANUAL" else "automation_script"
+        )
+        hash_field = (
+            "manual_script_validated_hash"
+            if source == "MANUAL"
+            else "auto_script_validated_hash"
+        )
+        return (
+            bool(test_case.get(script_field))
+            and test_case.get(hash_field)
+            == self.script_fingerprint(test_case.get(script_field))
+        )
+
+    def mark_script_validated(self, test_case_id, source, keep_active=False):
+        source = str(source or "AUTO").upper()
+        if source not in {"AUTO", "MANUAL"}:
+            raise ValueError("source must be 'AUTO' or 'MANUAL'.")
+        conn = self.db.get_connection()
+        conn.row_factory = self._dict_factory
+        try:
+            row = conn.execute(
+                """
+                SELECT automation_script, recorded_script,
+                       active_script_source, status, automation_type,
+                       bound_api_endpoint_id, api_expected_status_code
+                FROM test_cases
+                WHERE id=?
+                """,
+                (test_case_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Test case {test_case_id} not found.")
+            is_api = str(row.get("automation_type") or "").upper() == "API"
+            if is_api and source == "AUTO":
+                # API readiness content is the bound endpoint + expected
+                # status, not the (documentation-only) generated script
+                # text — see _api_config_text() above.
+                script = self._api_config_text(
+                    row.get("bound_api_endpoint_id"),
+                    row.get("api_expected_status_code"),
+                )
+            else:
+                script = (
+                    row.get("recorded_script")
+                    if source == "MANUAL"
+                    else row.get("automation_script")
+                )
+            field = (
+                "manual_script_validated_hash"
+                if source == "MANUAL"
+                else "auto_script_validated_hash"
+            )
+            keep_automated = (
+                keep_active
+                and (row.get("active_script_source") or "AUTO").upper()
+                == source
+            )
+            status = "Automated" if keep_automated else row.get("status")
+            conn.execute(
+                f"""
+                UPDATE test_cases
+                SET {field}=?, status=?, modified_date=?
+                WHERE id=?
+                """,
+                (
+                    self.script_fingerprint(script), status,
+                    datetime.now().isoformat(), test_case_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --------------------------------------------------
+    # API Automation endpoint binding + assertion config
+    # --------------------------------------------------
+
+    def _update_api_config_field(self, test_case_id, field, value):
+        """
+        Shared body for set_bound_api_endpoint()/
+        set_api_expected_status_code(): persists one API config field
+        and — same rule as update_automation() applies to script
+        content — demotes an AUTO-active Test Case back to Draft and
+        clears its validated-config fingerprint whenever the value
+        ACTUALLY changes, so a stale Validate/Set Active can never
+        silently carry over a different endpoint or assertion. A
+        no-op write (unchanged value) leaves Active state untouched.
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute(
+            f"SELECT {field},status,active_script_source FROM test_cases WHERE id=?",
+            (test_case_id,),
+        )
+        current = cursor.fetchone()
+        if current is None:
+            conn.close()
+            return self.get_test_case(test_case_id)
+        current_value, current_status, active_source = current
+        changed = (current_value or None) != (value or None)
+        active_changed = changed and (active_source or "AUTO").upper() == "AUTO"
+        next_status = "Draft" if active_changed else (current_status or "Draft")
+        cursor.execute(
+            f"""
+            UPDATE test_cases
+            SET {field}=?,
+                status=?,
+                auto_script_validated_hash=CASE WHEN ? THEN '' ELSE auto_script_validated_hash END,
+                modified_date=?
+            WHERE id=?
+            """,
+            (value, next_status, 1 if changed else 0, now, test_case_id),
+        )
+        conn.commit()
+        conn.close()
+        return self.get_test_case(test_case_id)
+
+    def set_bound_api_endpoint(self, test_case_id, endpoint_id):
+        """
+        Persists (or, with endpoint_id=None, clears) which real,
+        imported API Collection endpoint this Test Case is bound to
+        for API Automation execution. Callers are responsible for
+        having already validated endpoint_id belongs to this Test
+        Case's own Domain/Module/Knowledge Name scope — this method
+        does not re-validate, matching update_status()/
+        update_automation()'s existing "caller validates, repository
+        persists" split.
+        """
+
+        return self._update_api_config_field(
+            test_case_id, "bound_api_endpoint_id", endpoint_id,
+        )
+
+    def set_api_expected_status_code(self, test_case_id, expected_status_code):
+        """
+        Persists the explicit "expected HTTP status" assertion for an
+        API-type Test Case (e.g. 400 for a deliberate negative test).
+        None clears it back to "no explicit assertion — fall back to
+        the bound endpoint's own imported example_response_status".
+        """
+
+        return self._update_api_config_field(
+            test_case_id, "api_expected_status_code", expected_status_code,
+        )
+
+    def set_api_request_config(self, test_case_id, config_json_text):
+        """
+        Persists the full structured per-Test-Case API request
+        definition (section F) as a JSON text blob -- see the
+        api_request_config_json column migration above. '' clears it
+        back to "not yet configured". Reuses _update_api_config_field()
+        so -- exactly like set_bound_api_endpoint()/
+        set_api_expected_status_code() -- a real change here also
+        demotes an AUTO-active Test Case back to Draft and clears its
+        validated-config fingerprint, since the request Execute will
+        actually send just changed.
+        """
+
+        return self._update_api_config_field(
+            test_case_id, "api_request_config_json", config_json_text or "",
+        )
 
     def update_automation(
 
@@ -983,7 +1237,7 @@ class TestCaseRepository:
         now = datetime.now().isoformat()
 
         cursor.execute(
-            "SELECT automation_type, automation_script, status FROM test_cases WHERE id=?",
+            "SELECT automation_type,automation_script,status,active_script_source FROM test_cases WHERE id=?",
             (test_case_id,),
         )
         current = cursor.fetchone()
@@ -991,7 +1245,7 @@ class TestCaseRepository:
             conn.close()
             return False
 
-        current_type, current_script, current_status = current
+        current_type, current_script, current_status, active_source = current
         script_changed = (
             automation_script is not None
             and self._canonical_script_text(current_script)
@@ -999,7 +1253,8 @@ class TestCaseRepository:
         )
         type_changed = (current_type or "None") != (automation_type or "None")
         changed = script_changed or type_changed
-        next_status = "Draft" if changed else (current_status or "Draft")
+        active_changed = changed and (active_source or "AUTO").upper() == "AUTO"
+        next_status = "Draft" if active_changed else (current_status or "Draft")
 
         cursor.execute(
             """
@@ -1007,6 +1262,7 @@ class TestCaseRepository:
             SET automation_type=?,
                 automation_script=COALESCE(?, automation_script),
                 status=?,
+                auto_script_validated_hash=CASE WHEN ? THEN '' ELSE auto_script_validated_hash END,
                 execution_type='Automatable',
                 execution_tool=?,
                 modified_date=?
@@ -1016,6 +1272,7 @@ class TestCaseRepository:
                 automation_type,
                 automation_script,
                 next_status,
+                1 if changed else 0,
                 self.execution_tool_for_automation_type(automation_type),
                 now,
                 test_case_id,
@@ -1040,7 +1297,7 @@ class TestCaseRepository:
         now = datetime.now().isoformat()
 
         cursor.execute(
-            "SELECT recorded_script, status FROM test_cases WHERE id=?",
+            "SELECT recorded_script,status,active_script_source FROM test_cases WHERE id=?",
             (test_case_id,),
         )
         current = cursor.fetchone()
@@ -1048,12 +1305,13 @@ class TestCaseRepository:
             conn.close()
             return False
 
-        current_script, current_status = current
+        current_script, current_status, active_source = current
         changed = (
             self._canonical_script_text(current_script)
             != self._canonical_script_text(recorded_script)
         )
-        next_status = "Draft" if changed else (current_status or "Draft")
+        active_changed = changed and (active_source or "AUTO").upper() == "MANUAL"
+        next_status = "Draft" if active_changed else (current_status or "Draft")
 
         cursor.execute(
             """
@@ -1061,12 +1319,13 @@ class TestCaseRepository:
             SET recorded_script=?,
                 automation_type='Playwright',
                 status=?,
+                manual_script_validated_hash=CASE WHEN ? THEN '' ELSE manual_script_validated_hash END,
                 execution_type='Automatable',
                 execution_tool='Playwright',
                 modified_date=?
             WHERE id=?
             """,
-            (recorded_script, next_status, now, test_case_id)
+            (recorded_script, next_status, 1 if changed else 0, now, test_case_id)
         )
 
         conn.commit()

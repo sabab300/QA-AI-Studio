@@ -428,9 +428,32 @@ Do not fabricate missing information.
 
         request,
 
-        context
+        context,
+
+        automation_type=None,
 
     ):
+        """
+        QA-AI-STUDIO-API-SQL-AUTOMATION-LIFECYCLE-ROOT-FIX: this used
+        to be the SOLE prompt for every automation type — Playwright,
+        API, and SQL alike were all told "Generate production-quality
+        Selenium Python automation... Use Page Object Model... By.ID"
+        regardless of automation_type, which is exactly why an
+        API-type Test Case's "Add Automation" produced a full
+        Selenium/Page-Object script instead of anything related to a
+        real HTTP request. Playwright's own branch below is left
+        completely unchanged (same text, same behavior, out of scope
+        for this fix) — only API and SQL get their own, type-correct
+        prompt builders.
+        """
+
+        if automation_type == "API":
+
+            return self.build_api_automation_prompt(request, context)
+
+        if automation_type == "SQL":
+
+            return self.build_sql_automation_prompt(request, context)
 
         return self.clean_prompt(f"""
 {self._context_block(context)}
@@ -461,6 +484,93 @@ If locator information is unavailable, use placeholders such as:
 By.ID, "<locator_required>"
 
 Do not generate automation unrelated to the supplied requirement.
+""")
+
+    def build_api_automation_prompt(self, request, context):
+        """
+        API Automation's script is DOCUMENTATION/REFERENCE ONLY — the
+        real execution engine (Core/api_automation_runner.py) never
+        parses or runs this text; it sends the bound, imported
+        endpoint's own structured request directly. This prompt must
+        therefore never ask for a Selenium/browser script, and must
+        never invent an endpoint the requirement doesn't actually
+        supply — the requirement text passed in here already comes
+        from TestExecutionManager._build_api_requirement(), which
+        only ever includes REAL, imported endpoint details.
+        """
+
+        return self.clean_prompt(f"""
+{self._context_block(context)}
+
+{self._common_rules()}
+
+Requirement
+
+{request}
+
+Write a short, readable Python `requests`-based reference script that
+documents the real HTTP request described above — method, URL,
+headers, and body exactly as given, never invented.
+
+Requirements
+
+- Use the `requests` library only.
+- Never use Selenium, WebDriver, or any browser automation.
+- Never use By.ID/XPATH/NAME or any locator syntax — this is not a
+  UI script.
+- Base the request strictly on the endpoint details supplied above;
+  never invent a URL, method, header, or body value.
+- Include a comment noting this script is for reference — the actual
+  execution engine sends this exact request directly, this script is
+  not executed by the platform.
+- Include a basic status-code assertion.
+
+If the requirement does not actually supply a real, bound API
+endpoint (method + URL), respond with exactly this single line and
+nothing else:
+
+Insufficient bound API endpoint information.
+""")
+
+    def build_sql_automation_prompt(self, request, context):
+        """
+        SQL Automation must only ever produce a single, read-only
+        SELECT/WITH statement — never Python, never a browser/API
+        script, never a write statement. The runner
+        (Core/sql_automation_runner.py's validate_readonly_sql())
+        independently re-validates this before it can be saved,
+        Activated, or executed, so this prompt is a first line of
+        defense, not the only one.
+        """
+
+        return self.clean_prompt(f"""
+{self._context_block(context)}
+
+{self._common_rules()}
+
+Requirement
+
+{request}
+
+Write a single, read-only SQL query (SELECT or WITH only) that
+verifies the requirement above against the database schema supplied
+in the context.
+
+Requirements
+
+- Output ONLY the SQL query — no Python, no Selenium, no explanation
+  text, no markdown code fences.
+- SELECT or WITH statements only. Never INSERT, UPDATE, DELETE, DROP,
+  ALTER, CREATE, or TRUNCATE.
+- Exactly one statement — no semicolon-separated multiple statements.
+- Only reference tables/columns that actually appear in the supplied
+  schema — never invent a table or column name.
+
+If no real database schema was supplied in the context above, respond
+with exactly this single line and nothing else:
+
+Insufficient schema information — schema unavailable, do not invent
+executable SQL.
 """)
 
     # --------------------------------------------------

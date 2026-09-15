@@ -75,6 +75,7 @@ class ApiCollectionRepository:
         module=None,
         knowledge_name=None,
         version=None,
+        document_type=None,
     ):
         """
         Parses a Postman Collection .json export at `file_path` and
@@ -167,7 +168,7 @@ class ApiCollectionRepository:
         try:
 
             knowledge_item_id = self._get_or_create_linked_knowledge_item(
-                domain, module, knowledge_name, version
+                domain, module, knowledge_name, version, document_type
             )
 
             summary["knowledge_item_id"] = knowledge_item_id
@@ -210,6 +211,8 @@ class ApiCollectionRepository:
                     collection_name=collection_name,
                     source_file_name=Path(file_path).name,
                     endpoints=endpoints,
+                    document_type=document_type,
+                    variables=variables,
                 )
 
             summary["success"] = True
@@ -322,6 +325,8 @@ class ApiCollectionRepository:
 
         query_params = []
 
+        path_params = []
+
         if isinstance(url_field, dict):
 
             query_params = [
@@ -329,6 +334,43 @@ class ApiCollectionRepository:
                 for q in (url_field.get("query") or [])
                 if not q.get("disabled")
             ]
+
+            path_params = [
+                {"key": v.get("key", ""), "value": v.get("value", "")}
+                for v in (url_field.get("variable") or [])
+            ]
+
+        raw_description = request.get("description")
+
+        if raw_description is None:
+
+            raw_description = entry.get("description")
+
+        if isinstance(raw_description, dict):
+
+            description = raw_description.get("content", "")
+
+        else:
+
+            description = raw_description or ""
+
+        tests_script = ""
+
+        for event in (entry.get("event") or []):
+
+            if event.get("listen") == "test":
+
+                exec_lines = ((event.get("script") or {}).get("exec")) or []
+
+                if isinstance(exec_lines, str):
+
+                    exec_lines = [exec_lines]
+
+                tests_script = "\n".join(str(line) for line in exec_lines).strip()
+
+                if tests_script:
+
+                    break
 
         body = request.get("body") or {}
 
@@ -383,12 +425,15 @@ class ApiCollectionRepository:
             "url_raw": url_raw,
             "headers": headers,
             "query_params": query_params,
+            "path_params": path_params,
             "body_mode": body_mode,
             "body_raw": body_raw,
             "auth_type": auth_type,
             "auth_details": auth_details,
             "example_response_status": example_response_status,
             "example_response_body": example_response_body,
+            "description": description,
+            "tests_script": tests_script,
         }
 
     def _resolve_variables(self, text, variables):
@@ -543,6 +588,8 @@ class ApiCollectionRepository:
         collection_name,
         source_file_name,
         endpoints,
+        document_type=None,
+        variables=None,
     ):
         try:
 
@@ -550,8 +597,13 @@ class ApiCollectionRepository:
             from Core.embedding_engine import EmbeddingEngine
             from Core.vector_store import VectorStore
 
+            resolved_document_type = (
+                str(document_type or "").strip() or API_COLLECTION_DOCUMENT_TYPE
+            )
+
             text = self._build_searchable_text(
-                collection_name, domain, module, knowledge_name, endpoints
+                collection_name, domain, module, knowledge_name, endpoints,
+                variables=variables,
             )
 
             chunks = DocumentChunker().split(text)
@@ -588,7 +640,7 @@ class ApiCollectionRepository:
                         "file_name": source_file_name,
                         "file_type": ".json",
                         "category": "API",
-                        "document_type": API_COLLECTION_DOCUMENT_TYPE,
+                        "document_type": resolved_document_type,
                         "summary": (
                             f"Imported API collection '{collection_name}' "
                             f"({len(endpoints)} endpoint(s))."
@@ -618,13 +670,28 @@ class ApiCollectionRepository:
             return 0
 
     def _build_searchable_text(
-        self, collection_name, domain, module, knowledge_name, endpoints
+        self, collection_name, domain, module, knowledge_name, endpoints,
+        variables=None,
     ):
         """
         Flattens the collection into readable text an embedding
         model and an LLM can both make sense of — same intent as
         Postman's own request list, just linearized.
+
+        QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+        items 3/4/11: this is the ONLY text QA Engineering's grounded
+        retrieval ever sees for an imported API Collection, so it must
+        carry enough structure (headers, query/path params, auth type,
+        body, expected status, description, tests/scripts, variable
+        NAMES) for the AI to write real positive/negative/boundary/
+        integration cases against — but every header/auth value that
+        looks like a credential is masked first (Core.secret_masking),
+        never embedded as a live secret. Variable NAMES (e.g.
+        "X-Token") are listed so the AI can reference "{{X-Token}}";
+        their resolved VALUES are never included here.
         """
+
+        from Core.secret_masking import mask_value
 
         lines = [
             f"API Collection: {collection_name}",
@@ -634,10 +701,20 @@ class ApiCollectionRepository:
                 f"{knowledge_name or '(no knowledge name)'}"
             ),
             f"Total endpoints: {len(endpoints)}",
-            "",
-            "This collection defines the following API endpoints:",
-            "",
         ]
+
+        variable_names = sorted((variables or {}).keys())
+
+        if variable_names:
+
+            lines.append(
+                "Collection variables (reference as {{name}} — values "
+                "are never exposed here): " + ", ".join(variable_names)
+            )
+
+        lines.append("")
+        lines.append("This collection defines the following API endpoints:")
+        lines.append("")
 
         for endpoint in endpoints:
 
@@ -652,25 +729,49 @@ class ApiCollectionRepository:
 
                 lines.append(f"  Folder: {endpoint['folder_path']}")
 
+            if endpoint.get("description"):
+
+                lines.append(f"  Description: {endpoint['description']}")
+
             headers = endpoint.get("headers") or []
 
             if headers:
 
-                sensitive_names = {
-                    "authorization", "proxy-authorization", "x-api-key",
-                    "api-key", "cookie", "set-cookie",
-                }
-
                 header_text = ", ".join(
-                    f"{h.get('key', '')}: {h.get('value', '')}"
+                    f"{h.get('key', '')}: {mask_value(h.get('key', ''), h.get('value', ''))}"
                     for h in headers
                     if h.get("key")
-                    and str(h.get("key")).lower() not in sensitive_names
                 )
 
                 if header_text:
 
-                    lines.append(f"  Headers: {header_text}")
+                    lines.append(f"  Headers (required): {header_text}")
+
+            query_params = endpoint.get("query_params") or []
+
+            if query_params:
+
+                lines.append(
+                    "  Query params: " + ", ".join(
+                        f"{p.get('key', '')}={mask_value(p.get('key', ''), p.get('value', ''))}"
+                        for p in query_params if p.get("key")
+                    )
+                )
+
+            path_params = endpoint.get("path_params") or []
+
+            if path_params:
+
+                lines.append(
+                    "  Path params: " + ", ".join(
+                        f"{p.get('key', '')}={mask_value(p.get('key', ''), p.get('value', ''))}"
+                        for p in path_params if p.get("key")
+                    )
+                )
+
+            if endpoint.get("auth_type"):
+
+                lines.append(f"  Auth type: {endpoint['auth_type']}")
 
             if endpoint.get("body_raw"):
 
@@ -679,12 +780,32 @@ class ApiCollectionRepository:
                 lines.append(f"  Body ({endpoint.get('body_mode', '')}): "
                              f"{body_preview}")
 
+            if endpoint.get("example_response_status"):
+
+                lines.append(
+                    f"  Expected status (example): "
+                    f"{endpoint['example_response_status']}"
+                )
+
+            if endpoint.get("example_response_body"):
+
+                response_preview = str(endpoint["example_response_body"])[:500]
+
+                lines.append(f"  Example response: {response_preview}")
+
+            if endpoint.get("tests_script"):
+
+                lines.append(
+                    f"  Tests/scripts (from the collection): "
+                    f"{endpoint['tests_script'][:500]}"
+                )
+
             lines.append("")
 
         return "\n".join(lines)
 
     def _get_or_create_linked_knowledge_item(
-        self, domain, module, knowledge_name, version
+        self, domain, module, knowledge_name, version, document_type=None
     ):
         """
         Same bridge pattern as
@@ -695,6 +816,19 @@ class ApiCollectionRepository:
         alongside any document describing the same API. Returns None
         (no linkage) unless domain, module AND knowledge_name are
         all given.
+
+        QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+        item 1: Document Type is a user-selected classification
+        (e.g. "Integration Document") completely independent of
+        Source Type ("API Collection") — it must never be derived
+        from/overwritten by the source type. `document_type`, when
+        given a real value, both seeds a NEW placeholder row and
+        corrects an EXISTING one (an operator re-importing another
+        collection under the same scope with a different Document
+        Type should have that classification stick), instead of the
+        previous behavior of always hardcoding
+        API_COLLECTION_DOCUMENT_TYPE ("API Collection") regardless of
+        what the user actually chose.
         """
 
         domain = (domain or "").strip()
@@ -707,6 +841,8 @@ class ApiCollectionRepository:
             (version or "").strip() or DEFAULT_API_COLLECTION_VERSION
         )
 
+        document_type = (document_type or "").strip()
+
         if not domain or not module or not knowledge_name:
 
             return None
@@ -717,7 +853,7 @@ class ApiCollectionRepository:
 
         cursor.execute(
             """
-            SELECT id FROM knowledge_items
+            SELECT id, document_type FROM knowledge_items
             WHERE domain = ? AND module = ? AND knowledge_name = ?
               AND version = ? AND source_type = ?
             """,
@@ -729,9 +865,21 @@ class ApiCollectionRepository:
 
         if row:
 
+            existing_id, existing_document_type = row[0], row[1]
+
+            if document_type and document_type != existing_document_type:
+
+                cursor.execute(
+                    "UPDATE knowledge_items SET document_type = ?, "
+                    "modified_date = ? WHERE id = ?",
+                    (document_type, datetime.now().isoformat(), existing_id),
+                )
+
+                conn.commit()
+
             conn.close()
 
-            return row[0]
+            return existing_id
 
         conn.close()
 
@@ -778,7 +926,7 @@ class ApiCollectionRepository:
                 knowledge_path,
                 sentinel_sha256,
                 API_COLLECTION_SOURCE_TYPE,
-                API_COLLECTION_DOCUMENT_TYPE,
+                document_type or API_COLLECTION_DOCUMENT_TYPE,
                 now,
                 now,
                 domain_id,
@@ -835,6 +983,87 @@ class ApiCollectionRepository:
         conn.close()
 
         return row
+
+    def get_endpoints_by_ids(self, endpoint_ids):
+        """
+        Batch lookup for a list of real endpoint ids -- section D
+        (QA-AI-STUDIO-API-AUTOMATION-END-TO-END-DEVICE-FINALIZATION):
+        powers the API Automation grid's "TEST CASE / API TITLE"
+        column, which needs each bound Test Case's real endpoint
+        name/method without issuing one query per row. Silently
+        drops any id that doesn't correspond to a real endpoint
+        rather than erroring, since a bound_api_endpoint_id can point
+        at an endpoint that was later removed. Returns {id: row}.
+        """
+
+        endpoint_ids = [int(value) for value in (endpoint_ids or []) if value is not None]
+
+        if not endpoint_ids:
+
+            return {}
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        placeholders = ",".join("?" for _ in endpoint_ids)
+
+        cursor.execute(
+            f"SELECT * FROM api_endpoints WHERE id IN ({placeholders})",
+            endpoint_ids,
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        return {row["id"]: row for row in rows}
+
+    def backfill_linked_knowledge_item(self, collection_id):
+        """
+        Self-heals a legacy imported API Collection whose
+        linked_knowledge_item_id is NULL -- a state that predates
+        this linking logic and was never backfilled (real device
+        data: most imported collections currently have this NULL).
+        Idempotent: a collection that is already linked is returned
+        unchanged, untouched. Reuses the SAME
+        _get_or_create_linked_knowledge_item() a fresh import already
+        calls, per AGENTS.md's "Reuse before rewrite" -- never a
+        second, parallel linking implementation.
+        """
+
+        collection = self.get_collection(collection_id)
+
+        if not collection:
+
+            raise ValueError(f"API Collection {collection_id} not found.")
+
+        if collection.get("linked_knowledge_item_id"):
+
+            return collection["linked_knowledge_item_id"]
+
+        knowledge_item_id = self._get_or_create_linked_knowledge_item(
+            collection.get("domain"), collection.get("module"),
+            collection.get("knowledge_name"), collection.get("version"),
+            collection.get("document_type"),
+        )
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "UPDATE api_collections SET linked_knowledge_item_id = ? WHERE id = ?",
+            (knowledge_item_id, collection_id),
+        )
+
+        conn.commit()
+
+        conn.close()
+
+        return knowledge_item_id
 
     def list_endpoints(self, collection_id):
 
@@ -957,6 +1186,20 @@ class ApiCollectionRepository:
         the same Domain/Module/Knowledge Name as an imported
         collection can pull its REAL endpoints instead of the AI
         guessing.
+
+        QA-AI-STUDIO-API-SQL-AUTOMATION-LIFECYCLE-ROOT-FIX: the exact
+        match below is intentionally tried first and preferred (never
+        changes existing, correctly-scoped behavior), but it used to
+        be the ONLY attempt — an operator who imported a collection
+        under "Trade facilitation" (or with a trailing space) while
+        the test case's own scope says "Trade Facilitation" got a
+        silent, unexplained zero-endpoints result with no way to
+        tell why. Falls back to a case-insensitive, whitespace-
+        trimmed match on the same three fields whenever the exact
+        match finds nothing, so a harmless capitalization/whitespace
+        difference at import time no longer blocks every downstream
+        check (endpoint_available, AI generation grounding, Execute
+        Against Real Server) that depends on this lookup.
         """
 
         conn = self.db.get_connection()
@@ -979,6 +1222,24 @@ class ApiCollectionRepository:
         )
 
         rows = cursor.fetchall()
+
+        if not rows:
+
+            cursor.execute(
+                """
+                SELECT e.*
+                FROM api_endpoints e
+                JOIN api_collections c ON c.id = e.collection_id
+                WHERE c.status = 'Active' AND e.status = 'Active'
+                  AND TRIM(LOWER(c.domain)) = TRIM(LOWER(?))
+                  AND TRIM(LOWER(c.module)) = TRIM(LOWER(?))
+                  AND TRIM(LOWER(c.knowledge_name)) = TRIM(LOWER(?))
+                ORDER BY e.id ASC
+                """,
+                (domain or "", module or "", knowledge_name or ""),
+            )
+
+            rows = cursor.fetchall()
 
         conn.close()
 

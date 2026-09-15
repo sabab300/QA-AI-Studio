@@ -40,6 +40,10 @@ Protocol (JSON text frames):
                                                                    send as many of these as needed, then
                                                                    send a normal retry/retry_code/cancel
                                                                    decision to actually resume the run
+    {"type": "decision", "decision": {"action": "select_element"}} -- waits for one direct click in the
+                                                                   same Playwright page, verifies bounded
+                                                                   locator candidates, patches the failed
+                                                                   statement and retries that same step
     {"type": "decision", "decision": {"action": "cancel"}}    -- from INSIDE the repair dialog
     {"type": "ask_ai"}                                         -- grounded in whichever step_failed is outstanding
     {"type": "cancel_run"}                                     -- standalone Cancel Execution, any time
@@ -50,6 +54,7 @@ Protocol (JSON text frames):
     {"type": "progress", "text": "..."}
     {"type": "step_failed", "event": {...}}
     {"type": "locator_verified", "event": {"locator": "...", "found": bool, "count": int, "visible": bool, "error": "..."}}
+    {"type": "element_selected", "event": {"selection": {...}}}
     {"type": "step_repaired", "repair": {...}}
     {"type": "ai_suggestion", "result": {...}}
     {"type": "finished", "run_uuid": "...", "result": {...}}
@@ -116,6 +121,8 @@ async def execute_interactive_ws(websocket: WebSocket, test_case_id: int):
         # WebInteractiveExecutionSession._run()).
         while True:
             event = await loop.run_in_executor(None, session.next_event)
+            if event.get("type") == "element_selected":
+                _logger.info("[repair] websocket sent element_selected step=%s", (event.get("event") or {}).get("step"))
             await send_json(event)
             if event.get("type") == "finished":
                 break
@@ -151,8 +158,13 @@ async def execute_interactive_ws(websocket: WebSocket, test_case_id: int):
                 await send_json({"type": "ai_suggestion", "result": result})
 
             elif msg_type == "cancel_run":
+                await loop.run_in_executor(None, session.cancel_run)
 
-                session.cancel_run()
+            elif msg_type == "stop_run":
+                await loop.run_in_executor(None, session.stop_run)
+
+            elif msg_type == "cancel_selection":
+                await loop.run_in_executor(None, session.cancel_selection)
 
             elif msg_type == "save_repairs":
 
@@ -183,6 +195,9 @@ async def execute_interactive_ws(websocket: WebSocket, test_case_id: int):
 
     finally:
 
+        if session._thread and session._thread.is_alive():
+            session.abandon()
+
         if pump_task is not None:
             # Give the final "finished" event (and "repairs_saved", if
             # the operator answered before disconnecting) a moment to
@@ -192,6 +207,8 @@ async def execute_interactive_ws(websocket: WebSocket, test_case_id: int):
                 await asyncio.wait_for(pump_task, timeout=5)
             except Exception:
                 pump_task.cancel()
+
+        await loop.run_in_executor(None, session.wait_for_completion, 12)
 
         WebInteractiveExecutionSession.release()
 

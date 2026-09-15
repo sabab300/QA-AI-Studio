@@ -33,6 +33,7 @@ from Core.test_case_repository import TestCaseRepository
 from Core.automation_generator import AutomationGenerator
 from Core.llm_engine import LLMEngine
 from Core.playwright_runner import PlaywrightRunner
+from Core.playwright_step_metadata import metadata_comment
 from Core.test_environment_config import TestEnvironmentConfig
 from Core.logger import Logger
 import json
@@ -103,12 +104,13 @@ class TestExecutionManager:
     _IMPORT_FIELD_ALIASES = {
         "scenario": (
             "namescenariorequirement", "scenario", "requirement",
-            "name",
+            "name", "namescenarioreq",
         ),
         "importance": (
             "importancehighmediumlow", "importance", "priority",
+            "priorityhighmediumlow",
         ),
-        "test_type": ("testtype", "type"),
+        "test_type": ("testtype", "type", "testtypepositivenegative"),
         "test_case": ("testcase", "testcasetitle", "title"),
         "pre_conditions": (
             "preconditions", "precondition", "prerequisites",
@@ -122,6 +124,7 @@ class TestExecutionManager:
     def import_test_cases_from_excel(
         self, file_path, domain, module, knowledge_name, version=None,
         document_type=None, source_knowledge_ids=None, test_case_document_name=None,
+        default_automation_type=None,
     ):
         """
         Reads an .xlsx file's first sheet, maps its header row onto
@@ -135,7 +138,30 @@ class TestExecutionManager:
         A row with no usable "Test Case" text is skipped rather than
         inserted with a blank required field — reported back in
         "skipped" so the caller can tell the user.
+
+        `default_automation_type` (section B,
+        QA-AI-STUDIO-API-AUTOMATION-END-TO-END-DEVICE-FINALIZATION):
+        Core/automation_web_repository.py's import_from_excel() calls
+        this with the active Automation tab's automation_type (e.g.
+        "API" when importing from the API Automation tab) so a
+        workbook that OMITS the Execution Type column entirely, or
+        leaves a particular row's Execution Type cell blank, defaults
+        that row to Automatable + this tab's own registered execution
+        tool instead of always silently falling back to Manual. An
+        EXPLICIT Manual/Automatable value in the workbook always wins
+        and is validated exactly as before, regardless of this
+        default — this only fills in what the workbook left blank.
         """
+
+        default_execution_tool = ""
+
+        if default_automation_type:
+
+            default_execution_tool = (
+                self.repository.execution_tool_for_automation_type(
+                    default_automation_type
+                ) or ""
+            )
 
         summary = {
             "success": False,
@@ -227,7 +253,10 @@ class TestExecutionManager:
         }
         missing = [label for field, label in required_columns.items() if field not in column_fields.values()]
         if missing:
-            summary["error"] = "Required column(s) missing: " + ", ".join(missing) + "."
+            summary["error"] = (
+                f'Sheet "{sheet.title}": required column/field(s) missing: '
+                + ", ".join(missing) + "."
+            )
             return summary
         has_execution_type_column = "execution_type" in column_fields.values()
 
@@ -262,34 +291,62 @@ class TestExecutionManager:
             row_errors = []
             for field, label in required_columns.items():
                 if not str(row.get(field) or "").strip():
-                    row_errors.append(f"{label} is required")
-            if has_execution_type_column:
-                execution_type = str(row.get("execution_type") or "").strip().lower()
-                if execution_type not in {"manual", "automatable"}:
-                    row_errors.append("Execution Type must be Manual or Automatable")
+                    row_errors.append(
+                        f'field "{label}", value "": is required'
+                    )
+            raw_execution_type = (
+                str(row.get("execution_type") or "").strip().lower()
+                if has_execution_type_column else ""
+            )
+            if raw_execution_type:
+                # An explicit workbook value -- present and non-blank
+                # -- always wins and is validated exactly as before,
+                # regardless of default_automation_type.
+                if raw_execution_type not in {"manual", "automatable"}:
+                    row_errors.append(
+                        f'field "Execution Type", value "{row.get("execution_type") or ""}": '
+                        "must be Manual or Automatable"
+                    )
+                    execution_type = None
                 else:
-                    row["execution_type"] = execution_type.title()
+                    execution_type = raw_execution_type
+                    row["execution_type"] = raw_execution_type.title()
             else:
-                # No Execution Type column in this sheet at all -- see
-                # the sheet-level comment above: default to Manual
-                # rather than rejecting every row in a legitimately
-                # QA-Engineering-exported file.
-                execution_type = "manual"
-                row["execution_type"] = "Manual"
-            raw_tool = str(row.get("execution_tool") or "").strip()
-            if execution_type == "automatable":
-                mapped_tool = tool_aliases.get(normalize(raw_tool))
-                if not raw_tool:
-                    row_errors.append("Execution Tool is required for an Automatable Test Case")
-                elif not mapped_tool:
-                    row_errors.append(f'Execution Tool "{raw_tool}" is not registered')
+                # No Execution Type column at all, OR the column is
+                # present but this row's cell is blank -- section B:
+                # default from the active tab's automation type when
+                # one was given (Automatable + that tab's own
+                # registered tool), else fall back to the original
+                # Manual default so a plain/legacy import is unchanged.
+                execution_type = "automatable" if default_execution_tool else "manual"
+                row["execution_type"] = execution_type.title()
+
+            if execution_type is not None:
+                raw_tool = str(row.get("execution_tool") or "").strip()
+                if execution_type == "automatable":
+                    if not raw_tool:
+                        if default_execution_tool:
+                            row["execution_tool"] = default_execution_tool
+                        else:
+                            row_errors.append(
+                                'field "Execution Tool", value "": is required for an Automatable Test Case'
+                            )
+                    else:
+                        mapped_tool = tool_aliases.get(normalize(raw_tool))
+                        if not mapped_tool:
+                            row_errors.append(
+                                f'field "Execution Tool", value "{raw_tool}": is not registered'
+                            )
+                        else:
+                            row["execution_tool"] = mapped_tool
                 else:
-                    row["execution_tool"] = mapped_tool
-            else:
-                row["execution_tool"] = ""
+                    row["execution_tool"] = ""
             if row_errors:
                 summary["rejected"] += 1
-                summary["errors"].append(f"Row {row_number}: " + "; ".join(row_errors) + ".")
+                summary["errors"].append(
+                    f'Sheet "{sheet.title}", row {row_number}: '
+                    + "; ".join(row_errors) + "."
+                )
                 continue
 
             parsed_rows.append(row)
@@ -473,7 +530,7 @@ class TestExecutionManager:
                 f"with brief comments explaining each step."
             )
 
-        max_repair_attempts = 2 if automation_type == "Playwright" else 0
+        max_repair_attempts = 1 if automation_type == "Playwright" else 0
 
         result = self.automation_generator.generate(
             requirement=requirement,
@@ -481,6 +538,7 @@ class TestExecutionManager:
             module=module,
             knowledge_name=knowledge_name,
             version=version,
+            automation_type=automation_type,
         )
 
         if not result.get("success"):
@@ -529,6 +587,12 @@ class TestExecutionManager:
 
             if not valid:
 
+                if error and error.startswith("Incompatible Selenium"):
+                    raise RuntimeError(
+                        "AI returned an incompatible Selenium script. "
+                        "Playwright code is required."
+                    )
+
                 raise RuntimeError(
                     f"The AI's test steps could not be assembled "
                     f"into valid Python after {max_repair_attempts} "
@@ -536,6 +600,12 @@ class TestExecutionManager:
                     f"Use View Script to fix it by hand and Save, "
                     f"or try 'Update Automation' again."
                 )
+
+        elif automation_type == "API":
+
+            script = self._strip_code_fences(raw_output)
+
+            script = self._reject_if_not_real_api_script(script)
 
         else:
 
@@ -548,6 +618,54 @@ class TestExecutionManager:
         )
 
         return script
+
+    # API-SQL-AUTOMATION-END-TO-END: a generated API script is
+    # documentation/reference only (see api_automation_runner.py's
+    # module docstring — the real runner sends the bound endpoint's
+    # own structured request directly, never this text), but the AI
+    # can still return a Selenium/browser script if it misreads the
+    # requirement, or explicitly say it has no real endpoint to
+    # ground itself in (see prompt_builder.py's
+    # build_api_automation_prompt()). Both must be caught here,
+    # BEFORE the script is ever persisted, rather than silently
+    # accepted as a valid "API automation" asset.
+    _SELENIUM_LEAK_PATTERN = re.compile(
+        r"selenium|webdriver|from\s+bs4|find_element|"
+        r"page[_ ]?object|By\.(ID|XPATH|NAME|CSS_SELECTOR|"
+        r"CLASS_NAME|LINK_TEXT|TAG_NAME)|driver\.get\(|"
+        r"browser\.get\(|\.click\(\)|page\.goto\(",
+        re.IGNORECASE,
+    )
+    _INSUFFICIENT_ENDPOINT_MARKER = "insufficient bound api endpoint information"
+
+    def _reject_if_not_real_api_script(self, script):
+
+        text = (script or "").strip()
+
+        if not text:
+
+            raise RuntimeError(
+                "AI did not return a valid API automation script."
+            )
+
+        if self._INSUFFICIENT_ENDPOINT_MARKER in text.lower():
+
+            raise RuntimeError(
+                "Import and bind API endpoint first."
+            )
+
+        if self._SELENIUM_LEAK_PATTERN.search(text):
+
+            raise RuntimeError(
+                "The AI returned a Selenium/browser script for an API "
+                "automation asset — this is not allowed. API "
+                "execution readiness is based on the bound endpoint "
+                "and request/assertion config, never on script text. "
+                "Try generating again, or write the reference script "
+                "by hand."
+            )
+
+        return text
 
     # --------------------------------------------------
     # Playwright automation grounding
@@ -591,6 +709,14 @@ class TestExecutionManager:
             f"Result.\n"
             f"- Every line must be independently valid at zero "
             f"indentation.\n"
+            f"- Use Python Playwright sync API statements only. Never "
+            f"use Selenium, webdriver, By, WebDriverWait, or "
+            f"expected_conditions.\n"
+            f"- Before every action add '# QA_STEP: NN | concise action' "
+            f"using stable sequential numbers.\n"
+            f"- Prefer role, test-id, label, name, stable attribute, "
+            f"stable ID, relative CSS, then relative XPath. Avoid "
+            f"random/GUID IDs, absolute XPath, and nth-heavy locators.\n"
             f"- Playwright does NOT have a 'By' class — that is "
             f"Selenium, a different library. NEVER write "
             f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
@@ -608,8 +734,11 @@ class TestExecutionManager:
             f"Steps: {test_case.get('steps', '')}\n"
             f"Expected Result: {test_case.get('expected_result', '')}\n\n"
             f"Example of the exact format expected:\n"
+            f"# QA_STEP: 01 | Open application\n"
             f"page.goto('https://example.com/login')\n"
+            f"# QA_STEP: 02 | Enter username\n"
             f"page.fill('#username', 'myuser')\n"
+            f"# QA_STEP: 03 | Login\n"
             f"page.click('#login-button')\n"
             f"assert page.locator('#welcome').is_visible()\n\n"
             f"Return ONLY the flat list of statements, one per "
@@ -673,6 +802,14 @@ class TestExecutionManager:
             f"Result.\n"
             f"- Every line must be independently valid at zero "
             f"indentation.\n"
+            f"- Use Python Playwright sync API statements only. Never "
+            f"use Selenium, webdriver, By, WebDriverWait, or "
+            f"expected_conditions.\n"
+            f"- Before every action add '# QA_STEP: NN | concise action' "
+            f"using stable sequential numbers.\n"
+            f"- Prefer role, test-id, label, name, stable attribute, "
+            f"stable ID, relative CSS, then relative XPath. Avoid "
+            f"random/GUID IDs, absolute XPath, and nth-heavy locators.\n"
             f"- Playwright does NOT have a 'By' class — that is "
             f"Selenium, a different library. NEVER write "
             f"By.ID, By.XPATH, By.NAME, or similar. Selectors "
@@ -687,8 +824,11 @@ class TestExecutionManager:
             f"Steps: {test_case.get('steps', '')}\n"
             f"Expected Result: {test_case.get('expected_result', '')}\n\n"
             f"Example of the exact format expected:\n"
+            f"# QA_STEP: 01 | Open application\n"
             f"page.goto('https://example.com/login')\n"
+            f"# QA_STEP: 02 | Enter username\n"
             f"page.fill('#username', 'myuser')\n"
+            f"# QA_STEP: 03 | Login\n"
             f"page.click('#login-button')\n"
             f"assert page.locator('#welcome').is_visible()\n\n"
             f"Return ONLY the flat list of statements, one per "
@@ -965,6 +1105,32 @@ class TestExecutionManager:
             test_case, endpoints, max_endpoints=max_endpoints
         )
 
+    def list_api_endpoints_for_test_case(self, test_case):
+        """
+        ALL real, imported API Collection endpoints for this Test
+        Case's own Domain/Module/Knowledge Name scope — unlike
+        get_relevant_endpoints_for_test_case(), this does NOT narrow
+        the list by keyword-overlap score. That narrowing exists to
+        keep the AI script-generation prompt short; it is the wrong
+        tool for deciding what a human is allowed to bind a Test
+        Case to, since "ranked outside the AI's top match" is not the
+        same thing as "not a real endpoint for this scope". Used by
+        the endpoint-binding flow (see automation_web_repository.py's
+        execute_api()/list_api_endpoint_candidates()/
+        bind_api_endpoint()) so the operator always sees and chooses
+        from every real option, never a pre-filtered guess.
+        """
+
+        from Core.api_collection_repository import (
+            ApiCollectionRepository,
+        )
+
+        return ApiCollectionRepository().get_endpoints_for_scope(
+            test_case.get("domain", ""),
+            test_case.get("module", ""),
+            test_case.get("knowledge_name", ""),
+        )
+
     def _format_endpoints_for_prompt(self, endpoints):
 
         lines = ["Real uploaded API endpoint(s) for this scope:\n"]
@@ -993,8 +1159,19 @@ class TestExecutionManager:
 
             if headers:
 
+                # QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+                # item 11: this text goes straight into the LLM
+                # prompt (and, via provider-level request logging,
+                # potentially an application log) — a resolved
+                # client secret/token/password header value must
+                # never appear here unmasked. Header NAMES and
+                # {{variable}} references (not resolved secrets) are
+                # left untouched so the AI still knows which headers
+                # are required.
+                from Core.secret_masking import mask_value
+
                 header_str = ", ".join(
-                    f"{h.get('key', '')}: {h.get('value', '')}"
+                    f"{h.get('key', '')}: {mask_value(h.get('key', ''), h.get('value', ''))}"
                     for h in headers
                 )
 
@@ -1075,6 +1252,13 @@ class TestExecutionManager:
             "skipped": 0,
             "results": [],
             "error": None,
+            # Handed back so the frontend can auto-select the exact
+            # Document Type / source(s) / Test Case Document these
+            # generated rows are filed under, instead of the operator
+            # having to hunt for them (item 7's "auto-select it").
+            "document_type": "",
+            "source_knowledge_ids": [],
+            "document_name": "",
         }
 
         try:
@@ -1083,7 +1267,9 @@ class TestExecutionManager:
                 ApiCollectionRepository,
             )
 
-            endpoints = ApiCollectionRepository().get_endpoints_for_scope(
+            collection_repo = ApiCollectionRepository()
+
+            endpoints = collection_repo.get_endpoints_for_scope(
                 domain, module, knowledge_name
             )
 
@@ -1109,6 +1295,102 @@ class TestExecutionManager:
             )
 
             return summary
+
+        # QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+        # item 6/7 root cause: this method used to call
+        # save_generated_cases() with a row that never set
+        # execution_type/execution_tool (defaulting to "Manual"/""),
+        # no source_knowledge_ids, and no test_case_document_name.
+        # Every automation grid (Playwright/API/SQL) loads through
+        # TestCasesWeb.list_workspace()/list_scopes(), which requires
+        # execution_type=="Automatable" + the matching execution_tool
+        # AND a non-empty document key (test_case_document_name or
+        # reviewed_workbook_path) grouped under the same
+        # source_knowledge_ids the imported collection is linked to —
+        # so the generated rows were persisted but structurally
+        # invisible to the API Automation grid ("backend succeeds,
+        # grid stays empty"). Resolve the SAME linked knowledge
+        # item(s) the imported collection(s) belong to and this
+        # scope's real, user-set Document Type (item 1's fix — never
+        # the hardcoded "API Collection" source-type label), and give
+        # every endpoint-derived case a stable, canonical document
+        # name — no fake filename required (item 7), just the real DB
+        # linkage the grid already understands.
+        linked_knowledge_ids = set()
+
+        for collection_id in {
+            endpoint.get("collection_id") for endpoint in endpoints
+            if endpoint.get("collection_id")
+        }:
+
+            collection = collection_repo.get_collection(collection_id)
+
+            if collection and collection.get("linked_knowledge_item_id"):
+
+                linked_knowledge_ids.add(
+                    int(collection["linked_knowledge_item_id"])
+                )
+
+            elif collection:
+
+                # Section D root cause: several real, already-imported
+                # API Collections predate the linking logic above and
+                # have linked_knowledge_item_id = NULL, which silently
+                # degrades RAG grounding/knowledge-tree visibility and
+                # left source_knowledge_ids empty for their generated
+                # cases. Self-heal it here, idempotently, using the
+                # SAME linking method a fresh import already calls --
+                # never a second linking implementation.
+                try:
+
+                    knowledge_item_id = collection_repo.backfill_linked_knowledge_item(
+                        collection_id
+                    )
+
+                    if knowledge_item_id:
+
+                        linked_knowledge_ids.add(int(knowledge_item_id))
+
+                except Exception:
+
+                    self.logger.exception(
+                        f"Could not backfill linked_knowledge_item_id "
+                        f"for API Collection {collection_id} — "
+                        f"generation continues without it."
+                    )
+
+        source_knowledge_ids = sorted(linked_knowledge_ids)
+
+        document_type = ""
+
+        if linked_knowledge_ids:
+
+            try:
+
+                from Core.knowledge_web_repository import KnowledgeRepository
+
+                linked_item = KnowledgeRepository().get_item(
+                    source_knowledge_ids[0]
+                )
+
+                if linked_item:
+
+                    document_type = linked_item.get("document_type") or ""
+
+            except Exception:
+
+                self.logger.exception(
+                    "Could not resolve Document Type for the linked "
+                    "API Collection knowledge item — generated cases "
+                    "will still be created, just without a Document "
+                    "Type tag."
+                )
+
+        document_name = f"API Collection — {knowledge_name}"
+
+        summary["document_type"] = document_type
+        summary["source_knowledge_ids"] = source_knowledge_ids
+        summary["document_name"] = document_name
 
         existing_cases = self.repository.list_test_cases(
             domain, module, knowledge_name
@@ -1160,6 +1442,8 @@ class TestExecutionManager:
                             "The endpoint returns a successful "
                             "response, per the imported collection."
                         ),
+                        "execution_type": "Automatable",
+                        "execution_tool": "API Automation",
                     }
 
                     saved_ids = self.repository.save_generated_cases(
@@ -1168,6 +1452,11 @@ class TestExecutionManager:
                         knowledge_name=knowledge_name,
                         version=version or "1.0",
                         rows=[row],
+                        source_knowledge_ids=source_knowledge_ids,
+                        test_case_document_name=document_name,
+                        document_type=document_type,
+                        source_type="API_COLLECTION",
+                        force_direct_insert=True,
                     )
 
                     if not saved_ids:
@@ -1178,6 +1467,40 @@ class TestExecutionManager:
                         )
 
                     test_case_id = saved_ids[0]
+
+                    # Section D/E (QA-AI-STUDIO-API-AUTOMATION-END-TO-
+                    # END-DEVICE-FINALIZATION): this row was just
+                    # created FROM this exact endpoint, so binding it
+                    # is never a guess -- persist bound_api_endpoint_id
+                    # (and the endpoint's own recorded example status,
+                    # when it has one, as the starting expected-status
+                    # assertion) right away instead of leaving every
+                    # freshly-generated row unbound and requiring a
+                    # manual bind step immediately after. Never touches
+                    # an EXISTING, reused row's own configuration --
+                    # this only runs in the "just created" branch.
+                    try:
+
+                        self.repository.set_bound_api_endpoint(
+                            test_case_id, endpoint.get("id")
+                        )
+
+                        example_status = endpoint.get("example_response_status")
+
+                        if example_status:
+
+                            self.repository.set_api_expected_status_code(
+                                test_case_id, int(example_status)
+                            )
+
+                    except Exception:
+
+                        self.logger.exception(
+                            "Could not auto-bind the newly-generated "
+                            "test case to its source endpoint — it "
+                            "was still created and can be bound "
+                            "manually from API Automation."
+                        )
 
                 result_row["test_case_id"] = test_case_id
 
@@ -1345,6 +1668,7 @@ class TestExecutionManager:
                 "page before closing the recorder window."
             )
 
+        script = self._normalize_recorded_script_steps(script)
         self.repository.update_recorded_script(test_case_id, script)
 
         return script
@@ -1360,6 +1684,119 @@ class TestExecutionManager:
         self.repository.update_recorded_script(
             test_case_id, script_text
         )
+
+    @staticmethod
+    def _step_title(statement):
+        lowered = statement.lower()
+        if ".goto(" in lowered:
+            return "Open application"
+        if ".fill(" in lowered or ".type(" in lowered:
+            return "Enter value"
+        if ".click(" in lowered:
+            return "Click element"
+        if "expect(" in lowered or lowered.startswith("assert "):
+            return "Verify expected result"
+        return "Execute action"
+
+    @staticmethod
+    def _structured_step_metadata(statement, source="generated"):
+        locator = "-"
+        try:
+            tree = ast.parse(statement)
+            locator_calls = []
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr == "locator" or node.func.attr.startswith("get_by_"):
+                    locator_calls.append(node)
+            if locator_calls:
+                call = min(locator_calls, key=lambda node: (node.lineno, node.col_offset))
+                if call.func.attr == "locator" and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str):
+                    locator = call.args[0].value
+                else:
+                    locator = ast.get_source_segment(statement, call) or "-"
+        except (SyntaxError, ValueError):
+            pass
+        lowered = statement.lower()
+        action_types = ("click", "fill", "type", "press", "check", "uncheck", "select_option", "set_input_files", "hover", "dblclick", "goto")
+        action_type = next((action for action in action_types if f".{action}(" in lowered), "execute")
+        if ".goto(" in lowered:
+            field_type, field_name = "navigation", "Application URL"
+        elif "select_option" in lowered or "combobox" in lowered:
+            field_type, field_name = "dropdown", "Selection"
+        elif ".click(" in lowered:
+            field_type, field_name = "button", "Action"
+        elif "type=\"date\"" in lowered or "date" in locator.lower():
+            field_type, field_name = "date", "Date"
+        elif "type=\"file\"" in lowered or "set_input_files" in lowered:
+            field_type, field_name = "file", "File"
+        else:
+            field_type, field_name = "text", "Field"
+        token = "" if locator.startswith(("//", "xpath=")) else re.sub(r"^[#.]+", "", locator).split("[")[0].split(".")[-1]
+        words = re.sub(r"([a-z])([A-Z])", r"\1 \2", token).replace("_", " ").replace("-", " ").strip()
+        if words and locator != "-" and field_name in {"Field", "Action", "Selection", "Date", "File"}:
+            field_name = words.title()
+        xpath = "-"
+        if locator.startswith("#") and re.fullmatch(r"#[A-Za-z_][A-Za-z0-9_-]*", locator):
+            xpath = f'//*[@id="{locator[1:]}"]'
+        elif locator.startswith("//"):
+            xpath = locator
+        sensitive = bool(re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization)", statement))
+        return {
+            "field_type": field_type, "field_name": field_name,
+            "action_type": action_type, "primary_locator": locator,
+            "fallback_locators": "-", "xpath": xpath,
+            "is_sensitive": "true" if sensitive else "false", "source": source,
+        }
+
+    def _step_marker_lines(self, number, description, statement, source):
+        metadata = self._structured_step_metadata(statement, source)
+        return [
+            metadata_comment("QA_STEP", f"{number:03d}"),
+            metadata_comment("DESCRIPTION", description),
+            metadata_comment("FIELD_TYPE", metadata["field_type"]),
+            metadata_comment("FIELD_NAME", metadata["field_name"]),
+            metadata_comment("ACTION_TYPE", metadata["action_type"]),
+            metadata_comment("PRIMARY_LOCATOR", metadata["primary_locator"]),
+            metadata_comment("FALLBACK_LOCATORS", metadata["fallback_locators"]),
+            metadata_comment("XPATH", metadata["xpath"]),
+            metadata_comment("IS_SENSITIVE", metadata["is_sensitive"]),
+            metadata_comment("SOURCE", metadata["source"]),
+        ]
+
+    def _normalize_recorded_script_steps(self, script_text):
+        """Add stable QA_STEP markers to unmarked codegen statements."""
+        if re.search(r"^\s*#\s*QA_STEP:\s*\d+(?:\s*\||\s*$)", script_text, re.MULTILINE):
+            return script_text
+        try:
+            tree = ast.parse(script_text)
+        except SyntaxError:
+            return script_text
+        run_func = next(
+            (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run"),
+            None,
+        )
+        if not run_func:
+            return script_text
+        skip = (".launch(", ".new_context(", ".new_page(", ".close(")
+        markers = {}
+        number = 1
+        for statement in run_func.body:
+            source = ast.get_source_segment(script_text, statement) or ""
+            if "\n" not in source and any(token in source for token in skip):
+                continue
+            markers[statement.lineno] = [
+                "    " + line for line in self._step_marker_lines(
+                    number, self._step_title(source), source, "recorded"
+                )
+            ]
+            number += 1
+        output = []
+        for line_number, line in enumerate(script_text.splitlines(), 1):
+            if line_number in markers:
+                output.extend(markers[line_number])
+            output.append(line)
+        return "\n".join(output) + ("\n" if script_text.endswith("\n") else "")
 
     def scan_script_for_dynamic_locators(self, script_text):
         """
@@ -1487,20 +1924,18 @@ class TestExecutionManager:
         # locators inside Playwright code, where 'By' doesn't exist
         # and causes a NameError at runtime, not at file-write time.
         selenium_leak = re.search(
-            r"\bBy\.(ID|XPATH|NAME|CLASS_NAME|CSS_SELECTOR|"
-            r"LINK_TEXT|TAG_NAME)\b",
+            r"(?i)(?:\bselenium\b|\bwebdriver\s*\.\s*Chrome\b|"
+            r"\bWebDriverWait\b|\bexpected_conditions\b|"
+            r"\bBy\.(?:ID|XPATH|NAME|CLASS_NAME|CSS_SELECTOR|"
+            r"LINK_TEXT|TAG_NAME)\b)",
             script_text,
         )
 
         if selenium_leak:
 
             return False, (
-                f"Uses Selenium's '{selenium_leak.group(0)}' locator, "
-                f"which doesn't exist in Playwright and causes "
-                f"NameError: name 'By' is not defined at runtime. "
-                f"Playwright selectors are plain strings, e.g. "
-                f"page.fill('#username', 'value') instead of "
-                f"page.fill(By.ID, 'username', 'value')."
+                "Incompatible Selenium automation detected. "
+                "Playwright Python sync API code is required."
             )
 
         return True, None
@@ -1564,18 +1999,63 @@ class TestExecutionManager:
                 f"Test case {test_case_id} not found."
             )
 
+        # API-SQL-AUTOMATION-END-TO-END: Suggest Type must not
+        # default to/over-suggest API for what's actually a UI
+        # workflow (e.g. "Navigate -> select Domain -> click
+        # Upload") — ground the suggestion in whether a REAL,
+        # imported API endpoint actually exists for this test case's
+        # scope, exactly the same signal the API automation lifecycle
+        # itself uses (see list_api_endpoints_for_test_case()), not a
+        # guess from the test case's wording alone.
+        try:
+
+            endpoints = self.list_api_endpoints_for_test_case(test_case)
+
+        except Exception:
+
+            self.logger.exception(
+                "Suggest Type: could not look up API endpoints for "
+                "scope; proceeding without endpoint grounding."
+            )
+
+            endpoints = []
+
+        if endpoints:
+
+            endpoint_note = (
+                f"{len(endpoints)} real, imported API endpoint(s) "
+                f"exist for this test case's scope."
+            )
+
+        else:
+
+            endpoint_note = (
+                "No real, imported API endpoint exists for this test "
+                "case's scope."
+            )
+
         prompt = (
             "You are a QA automation architect. Look at this test "
             "case and decide which ONE automation approach fits it "
             "best:\n\n"
-            "- Playwright: browser/UI automation (clicking, forms, "
-            "navigating web pages)\n"
+            "- Playwright: browser/UI automation — navigating web "
+            "pages, selecting menu items, uploading files through a "
+            "web UI, clicking, filling forms\n"
             "- Selenium: older browser/UI automation, same use case "
             "as Playwright\n"
             "- API: testing a REST/SOAP API request and response "
             "directly, no browser\n"
             "- SQL: verifying data directly in a database, no UI or "
             "API involved\n\n"
+            f"Real API endpoint availability: {endpoint_note}\n\n"
+            "Strict rule: only suggest API when the test case is "
+            "actually verifying an HTTP request/response AND a real "
+            "API endpoint is available for this scope (see above). A "
+            "test case that describes navigating a web page, "
+            "clicking, selecting a menu/dropdown, or uploading a "
+            "file through the UI is a Playwright case even if a "
+            "similarly-named API endpoint happens to exist — never "
+            "suggest API just because one is available.\n\n"
             f"Test Case: {test_case.get('test_case', '')}\n"
             f"Pre-Conditions: {test_case.get('pre_conditions', '')}\n"
             f"Steps: {test_case.get('steps', '')}\n"
@@ -1643,13 +2123,18 @@ class TestExecutionManager:
                     ),
                 }
 
-        # Total fallback — default to API since it's the safest,
-        # most broadly-applicable guess when we truly can't tell.
+        # Total fallback — default to Playwright, not API: most
+        # unclassified test cases in this system are UI workflows,
+        # and defaulting to API here was actively steering UI-only
+        # test cases toward the wrong automation type (see
+        # API-SQL-AUTOMATION-END-TO-END's "Suggest Type must not
+        # over-suggest API" requirement).
         return {
-            "suggested_type": "API",
+            "suggested_type": "Playwright",
             "reason": (
                 "Could not determine a confident suggestion — "
-                "defaulted to API. Please review and change if needed."
+                "defaulted to Playwright. Please review and change "
+                "if needed."
             ),
         }
 
@@ -1766,7 +2251,9 @@ class TestExecutionManager:
 
     def execute_playwright_interactive(
         self, test_case_id, on_step_failed, on_repaired=None,
-        on_locator_verified=None, max_repair_rounds=3,
+        on_locator_verified=None, on_element_selected=None,
+        on_runtime_event=None,
+        max_repair_rounds=3,
     ):
         """
         Interactive counterpart to execute_playwright(). Works for
@@ -1799,12 +2286,22 @@ class TestExecutionManager:
                 "Manually first."
             )
 
+        valid, validation_error = self._validate_python_syntax(script)
+        if not valid:
+            return {
+                "interactive_supported": True,
+                "success": False,
+                "error": validation_error,
+            }
+
         result = self.playwright_runner.run_script_interactive(
             script,
             tc_number=test_case.get("tc_number", "script"),
             on_step_failed=on_step_failed,
             on_repaired=on_repaired,
             on_locator_verified=on_locator_verified,
+            on_element_selected=on_element_selected,
+            on_runtime_event=on_runtime_event,
             max_repair_rounds=max_repair_rounds,
         )
 
@@ -1884,15 +2381,76 @@ class TestExecutionManager:
 
                 continue
 
-            script = script.replace(original, corrected, 1)
+            step_number = repair.get("step")
+            lines = script.splitlines()
+            marker_index = next((
+                index for index, line in enumerate(lines)
+                if re.match(rf"^\s*#\s*QA_STEP:\s*0*{int(step_number or 0)}(?:\D|$)", line)
+            ), None)
+            replaced = False
+            if marker_index is not None:
+                end = next((
+                    index for index in range(marker_index + 1, len(lines))
+                    if re.match(r"^\s*#\s*QA_STEP:", lines[index])
+                ), len(lines))
+                for index in range(marker_index + 1, end):
+                    if lines[index].strip() == original.strip():
+                        indent = lines[index][:len(lines[index]) - len(lines[index].lstrip())]
+                        lines[index] = indent + corrected.strip()
+                        replaced = True
+                        corrected_metadata = self._structured_step_metadata(corrected, "repaired/user-selected")
+                        if corrected_metadata["primary_locator"] != "-":
+                            selection = repair.get("selection") or {}
+                            selected = selection.get("selected_candidate") or {}
+                            locator = selected.get("expression") or corrected_metadata["primary_locator"]
+                            fallback_values = [
+                                candidate.get("expression") or candidate.get("locator")
+                                for candidate in selection.get("candidates") or []
+                                if candidate is not selected
+                                and (candidate.get("verification") or {}).get("count") == 1
+                                and (candidate.get("verification") or {}).get("visible")
+                            ][:4]
+                            previous_primary = next((
+                                re.sub(r"^\s*#\s*PRIMARY_LOCATOR:\s*", "", lines[meta_index]).strip()
+                                for meta_index in range(marker_index + 1, end)
+                                if re.match(r"^\s*#\s*PRIMARY_LOCATOR:", lines[meta_index])
+                            ), "")
+                            if previous_primary and previous_primary != locator:
+                                fallback_values.insert(0, previous_primary)
+                                fallback_values = list(dict.fromkeys(fallback_values))[:4]
+                            for meta_index in range(marker_index + 1, end):
+                                if re.match(r"^\s*#\s*PRIMARY_LOCATOR:", lines[meta_index]):
+                                    lines[meta_index] = indent + metadata_comment("PRIMARY_LOCATOR", locator)
+                                if re.match(r"^\s*#\s*FALLBACK_LOCATORS:", lines[meta_index]) and fallback_values:
+                                    lines[meta_index] = indent + metadata_comment("FALLBACK_LOCATORS", " || ".join(fallback_values))
+                                if re.match(r"^\s*#\s*XPATH:", lines[meta_index]):
+                                    xpath = selection.get("xpath") or (f'//*[@id="{locator[1:]}"]' if locator.startswith("#") else "")
+                                    if xpath:
+                                        lines[meta_index] = indent + metadata_comment("XPATH", xpath)
+                                if re.match(r"^\s*#\s*FIELD_NAME:", lines[meta_index]) and selection.get("accessible_name"):
+                                    lines[meta_index] = indent + metadata_comment("FIELD_NAME", selection["accessible_name"])
+                                if re.match(r"^\s*#\s*SECTION:", lines[meta_index]) and selection.get("section"):
+                                    lines[meta_index] = indent + metadata_comment("SECTION", selection["section"])
+                                if re.match(r"^\s*#\s*SOURCE:", lines[meta_index]):
+                                    lines[meta_index] = indent + metadata_comment("SOURCE", "repaired/user-selected")
+                        break
+                script = "\n".join(lines) + ("\n" if script.endswith("\n") else "")
+            if not replaced:
+                script = script.replace(original, corrected, 1)
 
         if use_recorded_slot:
 
             self.update_recorded_script(test_case_id, script)
+            self.repository.mark_script_validated(
+                test_case_id, "MANUAL", keep_active=True
+            )
 
         else:
 
             self.update_script(test_case_id, "Playwright", script)
+            self.repository.mark_script_validated(
+                test_case_id, "AUTO", keep_active=True
+            )
 
         return script
 
@@ -2157,6 +2715,10 @@ class TestExecutionManager:
 
         self.playwright_runner.cancel_current_run()
 
+    def cancel_interactive_selection(self):
+
+        self.playwright_runner.cancel_current_selection()
+
     # --------------------------------------------------
 
     def _build_playwright_script(self, raw_steps_text, base_url):
@@ -2178,9 +2740,12 @@ class TestExecutionManager:
                 "with sync_playwright", "playwright.chromium.launch",
                 "browser.close()", "browser = ", "print('test passed')",
                 "print(\"test passed\")", "page = browser.new_page",
+                "page.goto(",
             )
 
             body_lines = []
+            pending_title = None
+            step_number = 2
     
             for raw_line in raw_steps_text.split("\n"):
     
@@ -2189,15 +2754,24 @@ class TestExecutionManager:
                 if not line:
     
                     continue
+
+                marker = re.match(r"#\s*QA_STEP:\s*\d+\s*\|\s*(.+)", line, re.IGNORECASE)
+                if marker:
+                    pending_title = marker.group(1).strip()
+                    continue
     
                 if any(
                     line.lower().startswith(marker)
                     for marker in boilerplate_markers
                 ):
-    
+                    pending_title = None
                     continue
     
+                title = pending_title or self._step_title(line)
+                body_lines.extend(self._step_marker_lines(step_number, title, line, "generated"))
                 body_lines.append(line)
+                pending_title = None
+                step_number += 1
     
             if not body_lines:
     
@@ -2215,6 +2789,16 @@ class TestExecutionManager:
                 "def run(playwright):\n"
                 "    browser = playwright.chromium.launch(headless=False)\n"
                 "    page = browser.new_page()\n"
+                "    # QA_STEP: 001\n"
+                "    # DESCRIPTION: Open application\n"
+                "    # FIELD_TYPE: navigation\n"
+                "    # FIELD_NAME: Application URL\n"
+                "    # ACTION_TYPE: goto\n"
+                f"    # PRIMARY_LOCATOR: {base_url}\n"
+                "    # FALLBACK_LOCATORS: -\n"
+                "    # XPATH: -\n"
+                "    # IS_SENSITIVE: false\n"
+                "    # SOURCE: generated\n"
                 f"    page.goto('{base_url}')\n"
                 f"{indented_body}\n"
                 "    browser.close()\n\n"

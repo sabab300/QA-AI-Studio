@@ -409,6 +409,13 @@
     font-size:12.5px; margin-bottom:14px; display:none;
   }
   .auth-error.show{ display:block; }
+  .auth-error.success{ background:var(--success-soft); color:var(--success); }
+  .auth-error .sql-conn-heading{ font-weight:700; font-size:13px; display:block; margin-bottom:4px; }
+  .auth-error .sql-conn-detail-row{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:2px 0; }
+  .sql-conn-status{ display:inline-block; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:999px; }
+  .sql-conn-status--untested{ background:var(--border); color:var(--ink-muted); }
+  .sql-conn-status--connected{ background:var(--success-soft); color:var(--success); }
+  .sql-conn-status--failed{ background:var(--danger-soft); color:var(--danger); }
   .auth-hint{ font-size:11.5px; color:var(--ink-faint); margin-top:16px; line-height:1.5; }
   .btn-block{ width:100%; justify-content:center; padding:10px; }
 
@@ -624,18 +631,22 @@
   .field label,.field-inline label,.field-label{font-size:10.5px}.field input,.field select,.field textarea{padding:7px 9px;border-radius:6px}
   .modal-card{border-radius:10px;box-shadow:0 20px 50px rgba(15,23,42,.22)}
   .tc-detail-card{width:95vw!important;max-width:1600px!important;height:92vh!important;max-height:92vh!important;overflow:hidden!important;}
+  .tc-detail-card.tc-maximized{width:99vw!important;max-width:none!important;height:98vh!important;max-height:98vh!important;}
+  .tc-detail-card.tc-minimized{width:min(680px,92vw)!important;height:auto!important;max-height:none!important;}
+  .tc-detail-card.tc-minimized .detail-body,.tc-detail-card.tc-minimized .detail-tabs,.tc-detail-card.tc-minimized .detail-foot{display:none!important;}
   .tc-detail-card .detail-body{overflow:hidden!important;min-height:0!important;}
   #d-script{min-height:0!important;overflow:hidden!important;}
   #tcScriptEditor{border:1px solid var(--border);border-radius:7px;background:#0B1220;color:#DCE7F5;line-height:1.5;caret-color:#fff;}
   #tcScriptSearchBar{border:1px solid var(--border);background:var(--surface-sunken);border-radius:7px;}
   #tcScriptSearchInput:focus{box-shadow:none!important;}
   #d-script.active{display:flex!important;flex-direction:column;min-height:0;}
-  #tcScriptWorkspace{position:relative;flex:1;min-height:360px;margin-top:6px;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:#0B1220;}
-  #tcScriptHighlight{position:absolute;inset:0;overflow:hidden;padding:12px 14px;margin:0;border:0;font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;white-space:pre;word-wrap:normal;color:#DCE7F5;background:#0B1220;pointer-events:none;}
-  #tcScriptHighlight mark{background:#FFE66D;color:#111827;border-radius:2px;padding:0;}
-  #tcScriptHighlight mark.current{background:#FFB020;color:#111827;box-shadow:0 0 0 1px rgba(255,255,255,.35);}
-  #tcScriptEditor{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:12px 14px!important;margin:0!important;border:0!important;border-radius:0!important;background:transparent!important;color:transparent!important;caret-color:#fff!important;overflow:auto!important;resize:none!important;font-family:var(--mono,monospace)!important;font-size:12.5px!important;line-height:1.5!important;white-space:pre!important;}
-  #tcScriptEditor::selection{background:rgba(255,176,32,.42);color:transparent;}
+  #tcScriptWorkspace{display:flex;position:relative;flex:1;min-height:360px;margin-top:6px;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:#0B1220;}
+  #tcScriptGutter{flex:0 0 52px;overflow:hidden;padding:10px 8px;text-align:right;white-space:pre;font-family:var(--mono,monospace);font-size:12px;line-height:1.42;color:#718096;background:#111A2B;border-right:1px solid #243047;user-select:none;}
+  #tcScriptGutter span{display:block;min-height:1.42em;}
+  #tcScriptGutter .qa-current{display:block;background:#334155;color:#fff;border-radius:3px;}
+  #tcScriptGutter .qa-failed{display:block;background:#7f1d1d;color:#fff;border-radius:3px;}
+  #tcScriptEditor{position:relative!important;flex:1!important;width:auto!important;height:100%!important;padding:10px 12px!important;margin:0!important;border:0!important;border-radius:0!important;background:#0B1220!important;color:#DCE7F5!important;caret-color:#fff!important;overflow:auto!important;resize:none!important;font-family:var(--mono,monospace)!important;font-size:12px!important;line-height:1.42!important;white-space:pre!important;}
+  #tcScriptEditor::selection{background:rgba(37,99,235,.65);color:#fff;}
   #khUploadSummaryModal .modal-card,#khSmartSummaryModal .modal-card{width:min(1000px,92vw);max-width:1000px!important;height:min(80vh,760px);display:flex;flex-direction:column;overflow:hidden;}
   #khUploadSummaryBody,#khSmartSummaryBody{overflow:auto;min-height:0;flex:1;padding-right:6px;}
   .kh-tree{padding:10px;background:var(--canvas);}
@@ -662,7 +673,7 @@
   #d-script>.auth-error{min-height:0!important;margin:0!important;}
   #d-script>.btn-row{flex:0 0 auto!important;align-items:center!important;gap:6px!important;padding-top:5px!important;margin:0!important;border-top:1px solid var(--border)!important;flex-wrap:nowrap!important;}
   #d-script>#tcValidateResult{flex:0 0 auto!important;max-height:48px!important;overflow:auto!important;margin:0!important;}
-  #tcScriptEditor,#tcScriptHighlight{font-size:12px!important;line-height:1.42!important;padding:10px 12px!important;}
+  #tcScriptEditor{font-size:12px!important;line-height:1.42!important;padding:10px 12px!important;}
 
   .auto-type-panel{gap:7px!important;padding-top:9px!important;}
   .auto-type-panel .auto-scope{gap:6px!important;align-items:center!important;}
@@ -980,7 +991,7 @@
     <div class="field"><label for="tcImportVersion">Version</label><select id="tcImportVersion" disabled></select></div>
     <div class="field"><label for="tcImportDocumentType">Document Type</label><select id="tcImportDocumentType" disabled></select></div>
     <div class="field"><label for="tcImportSourcePicker">Source File(s)</label><div class="source-picker" id="tcImportSourcePicker"><button type="button" class="btn source-picker-summary" disabled><span class="source-picker-label">Select source files…</span><span>▼</span></button><div class="source-picker-menu"></div></div></div>
-    <div class="field"><label for="tcImportFile">Excel file (.xlsx)</label><input id="tcImportFile" type="file" accept=".xlsx"></div>
+    <div class="field"><label for="tcImportFile">Excel file (.xlsx)</label><input id="tcImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
     <div id="tcImportSummary"></div>
     <div class="modal-actions">
       <button type="button" class="btn" id="tcImportCancel">Cancel</button>
@@ -1315,7 +1326,7 @@
             <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load Test Cases</button>
             <div class="fbar-spacer"></div>
-            <button class="btn" id="pwImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>External Test Case Import</button>
+            <button class="btn at-import" id="pwImportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>External Test Case Import</button>
             <button class="btn" id="pwTemplateBtn">Download Sample Template</button>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
@@ -1348,15 +1359,24 @@
             <button class="btn" id="pwEnvBtn">Test Environment Setting</button>
           </div>
 
-          <div class="card" style="flex:1;min-height:220px;">
-            <div class="card-head"><h3>Execution Log</h3><span class="muted-small" style="margin-left:8px;">Playwright runs for this scope</span><button class="btn btn-sm at-history-btn" style="margin-left:auto;">History</button><button class="btn btn-sm at-log-refresh" title="Clear this displayed execution log only. Persisted history is not deleted.">Clear</button></div>
-            <div class="table-scroll" style="max-height:340px;">
-              <table>
-                <thead><tr><th style="width:150px;">Started</th><th style="width:70px;">TC #</th><th style="width:100px;">Status</th><th style="width:90px;">Result</th><th style="width:80px;">Duration</th><th>Message</th><th style="width:80px;text-align:right;">Actions</th></tr></thead>
-                <tbody class="at-log-tbody"><tr><td colspan="7" class="muted-small" style="padding:12px 10px;">No runs yet.</td></tr></tbody>
-              </table>
+          <div class="card" id="pwReplayStatus" style="display:none;padding:10px;">
+            <div class="btn-row" style="margin-bottom:7px;">
+              <strong>Live Replay Status:</strong>
+              <span class="pill pill-neutral" id="pwReplayState">STARTING</span>
+              <div class="fbar-spacer"></div>
+              <button class="btn btn-sm at-history-btn">History</button>
+              <button class="btn btn-sm" id="pwCancelSelectionBtn" style="display:none;">Cancel Selection</button>
+              <button class="btn btn-sm" id="pwStopReplayBtn" style="background:var(--danger);color:#fff;border-color:var(--danger);">Stop Replay</button>
             </div>
+            <div class="kv" style="margin-bottom:8px;grid-template-columns:140px 1fr;">
+              <div>Test Case ID</div><div id="pwReplayTestCase">—</div>
+              <div>Current Step / Total</div><div id="pwReplayStep">— / —</div>
+              <div>Current</div><div id="pwReplayCurrent">Preparing replay</div>
+              <div>Browser</div><div id="pwReplayBrowser">Closed</div>
+            </div>
+            <div id="pwReplayActivity" class="muted-small" style="min-height:260px;max-height:52vh;overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;"></div>
           </div>
+
         </div>
 
         <!-- ============ API AUTOMATION ============ -->
@@ -1373,13 +1393,12 @@
             <button class="btn btn-primary at-load">Load APIs</button>
             <div class="fbar-spacer"></div>
             <button class="btn" id="apiGenFromCollectionBtn">Generate Automation from API Collection</button>
+            <button class="btn at-import">External Test Case Import</button>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
 
           <div class="card">
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
-              <button class="btn btn-sm at-select-all">Select All</button>
-              <button class="btn btn-sm at-clear-all">Clear All</button>
               <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
@@ -1389,14 +1408,12 @@
                 <thead><tr>
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
-                  <th>Test Case / API</th>
-                  <th style="width:120px;">Automation Readiness</th>
+                  <th>Test Case / API Title</th>
                   <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">Script</th>
-                  <th style="width:96px;">Active Source</th>
-                  <th style="width:150px;">Actions</th>
+                  <th style="width:96px;">Actions</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="6" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1404,7 +1421,6 @@
 
           <div class="btn-row">
             <button class="btn btn-primary at-exec-selected">Execute Selected</button>
-            <button class="btn at-exec-all">Execute All</button>
             <div class="fbar-spacer"></div>
             <button class="btn" id="apiEnvBtn">Test Environment Setting</button>
           </div>
@@ -1433,6 +1449,7 @@
             <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load Test Cases</button>
             <div class="fbar-spacer"></div>
+            <button class="btn at-import">External Test Case Import</button>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
 
@@ -1443,8 +1460,6 @@
 
           <div class="card">
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
-              <button class="btn btn-sm at-select-all">Select All</button>
-              <button class="btn btn-sm at-clear-all">Clear All</button>
               <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
@@ -1455,13 +1470,10 @@
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
                   <th>Test Case</th>
-                  <th style="width:120px;">Automation Readiness</th>
                   <th style="width:90px;">Last Result</th>
                   <th style="width:72px;">SQL</th>
-                  <th style="width:96px;">Active</th>
-                  <th style="width:150px;">Actions</th>
                 </tr></thead>
-                <tbody class="at-tbody"><tr><td colspan="8" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
+                <tbody class="at-tbody"><tr><td colspan="5" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load Test Cases.</td></tr></tbody>
               </table>
             </div>
             <div class="pg-bar at-pager"></div>
@@ -1469,7 +1481,6 @@
 
           <div class="btn-row">
             <button class="btn btn-primary at-exec-selected">Execute Selected</button>
-            <button class="btn at-exec-all">Execute All</button>
             <div class="fbar-spacer"></div>
             <button class="btn" id="sqlEnvBtn">Test Environment Setting</button>
           </div>
@@ -1493,7 +1504,8 @@
          from) — its Script/Execute panels switch behavior based on the
          open test case's own automation_type. -->
     <div class="modal-overlay" id="tcDetailModal">
-      <div class="modal-card tc-detail-card" style="position:relative;">
+      <div class="modal-card tc-detail-card" id="tcDetailCard" style="position:relative;">
+        <div style="position:absolute;right:44px;top:10px;display:flex;gap:4px;z-index:2;"><button class="btn btn-sm" id="tcDetailMinBtn" title="Minimize">—</button><button class="btn btn-sm" id="tcDetailMaxBtn" title="Maximize">□</button></div>
         <button class="modal-x" id="tcDetailCloseBtn" aria-label="Close" title="Close">&times;</button>
         <div class="detail-head">
           <div class="tc-id" id="detailId">—</div>
@@ -1501,7 +1513,7 @@
           <div style="display:flex; gap:6px;"><span class="pill pill-neutral" id="detailType">—</span><span class="pill pill-notrun" id="detailResult">Not Run</span></div>
         </div>
         <div class="detail-tabs">
-          <button class="dtab active" data-dtab="d-script">Script</button>
+          <button class="dtab active" data-dtab="d-script" id="tcScriptTabBtn">Script</button>
           <button class="dtab" data-dtab="d-execute">Execute</button>
           <button class="dtab" data-dtab="d-history">History</button>
         </div>
@@ -1532,7 +1544,7 @@
             </div>
             <div class="muted-small" style="margin-bottom:8px;">Viewing only — switching tabs does not change what Execute runs. Use Set Active below to change that.</div>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;" id="tcScriptHeaderRow">
               <div class="field-label" id="tcScriptLabel" style="margin-bottom:0;">Automation Script</div>
               <!-- Item 6: compact in-editor find. Deliberately never
                    touches tcScriptEditor's .value — it only reads it
@@ -1553,9 +1565,14 @@
                  its natural size, and overflow:auto (a textarea's own
                  native scrolling) keeps long scripts scrollable
                  WITHOUT the surrounding modal ever needing to scroll. -->
-            <div id="tcScriptWorkspace"><pre id="tcScriptHighlight" aria-hidden="true"></pre><textarea id="tcScriptEditor" class="code-block" spellcheck="false" aria-label="Automation script editor"></textarea></div>
+            <div id="tcScriptWorkspace"><div id="tcScriptGutter" aria-hidden="true"></div><textarea id="tcScriptEditor" class="code-block" spellcheck="false" wrap="off" aria-label="Automation script editor"></textarea></div>
 
-            <!-- SQL-only assertion fields — hidden for Playwright/API -->
+            <!-- SQL-only assertion fields — hidden for Playwright/API.
+                 Column/Value fields' wrappers carry explicit ids so
+                 JS can show/hide each independently per assertion
+                 type (row_exists/no_rows need neither; row_count_equals
+                 /scalar_equals need only Expected value; value_equals
+                 needs both — see SQL_ASSERTION_FIELD_RULES). -->
             <div id="tcSqlAssertionRow" style="display:none;gap:8px;margin-top:8px;">
               <div class="field" style="flex:1;">
                 <label for="tcSqlAssertionType">Assertion</label>
@@ -1567,13 +1584,173 @@
                   <option value="value_equals">Column value equals</option>
                 </select>
               </div>
-              <div class="field" style="flex:1;">
-                <label for="tcSqlAssertionColumn">Column (for "Column value equals")</label>
+              <div class="field" style="flex:1;" id="tcSqlAssertionColumnField">
+                <label for="tcSqlAssertionColumn">Column</label>
                 <input id="tcSqlAssertionColumn" placeholder="e.g. status">
               </div>
-              <div class="field" style="flex:1;">
+              <div class="field" style="flex:1;" id="tcSqlAssertionValueField">
                 <label for="tcSqlAssertionValue">Expected value</label>
                 <input id="tcSqlAssertionValue" placeholder="e.g. Approved">
+              </div>
+            </div>
+
+            <!-- API-only request workspace — hidden for Playwright/
+                 SQL. Execution readiness for API is based entirely on
+                 the EXECUTABLE REQUEST below (Method/URL/Params/
+                 Headers/Auth/Body/Assertions), never on the script
+                 text above (see Core/api_automation_runner.py's
+                 module docstring). Section 16 layout: a Postman-style
+                 request bar first (the editable executable request),
+                 then which imported SOURCE ENDPOINT it started from —
+                 selecting a different source endpoint reloads its
+                 imported definition into the request bar/tabs below
+                 (never auto-saved, and never mutates the imported
+                 endpoint itself — only "Save Request"/"Save Request
+                 Configuration" persist anything, per-Test-Case). -->
+            <div id="tcApiRequestBar" style="display:none;gap:8px;margin-top:8px;align-items:flex-end;">
+              <div class="field" style="width:130px;flex:none;">
+                <label for="tcApiMethod">Method</label>
+                <select id="tcApiMethod">
+                  <option>GET</option><option>POST</option><option>PUT</option>
+                  <option>PATCH</option><option>DELETE</option><option>HEAD</option>
+                  <option>OPTIONS</option>
+                </select>
+              </div>
+              <div class="field" style="flex:1;">
+                <label for="tcApiUrl">Request URL</label>
+                <input id="tcApiUrl" placeholder="https://…" spellcheck="false">
+              </div>
+              <button class="btn btn-primary" id="tcApiRequestBarSaveBtn">Save Request</button>
+            </div>
+            <div id="tcApiAssertionRow" style="display:none;gap:8px;margin-top:8px;align-items:flex-end;">
+              <div class="field" style="flex:1;">
+                <label for="tcApiBoundEndpoint">Source endpoint (imported) <span class="muted-small">— selecting a different one reloads its request below</span></label>
+                <select id="tcApiBoundEndpoint"><option value="">Select endpoint…</option></select>
+              </div>
+              <div class="field" style="flex:1;">
+                <label for="tcApiExpectedStatus">Expected HTTP status (assertion)</label>
+                <input id="tcApiExpectedStatus" type="number" min="100" max="599" placeholder="e.g. 400 for a negative test">
+              </div>
+              <button class="btn" id="tcApiAssertionSaveBtn">Save Binding &amp; Assertion</button>
+            </div>
+
+            <!-- Section F: Postman-style Request Configuration for the
+                 bound endpoint — Params/Headers/Auth/Body/Assertions/
+                 Extraction, all persisted on the Test Case itself (see
+                 Core/automation_web_repository.py's
+                 get_api_request_config()/set_api_request_config()) on
+                 top of the bound endpoint's own imported values and
+                 Test Environment Settings (Environment stays the
+                 place for reusable defaults/secrets — see section G;
+                 this is the per-Test-Case override). -->
+            <div id="tcApiRequestConfigSection" style="display:none;flex-direction:column;gap:0;margin-top:8px;">
+              <div class="card">
+                <div class="card-head" style="gap:6px;flex-wrap:wrap;">
+                  <h3 style="margin-right:auto;">Request Configuration</h3>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab active" data-panel="params">Params</button>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab" data-panel="headers">Headers</button>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab" data-panel="auth">Auth</button>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab" data-panel="body">Body</button>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab" data-panel="assertions">Assertions</button>
+                  <button type="button" class="btn btn-sm tc-api-cfg-tab" data-panel="extraction">Extraction</button>
+                </div>
+                <div class="card-body" style="padding:10px;display:flex;flex-direction:column;gap:8px;">
+
+                  <div class="tc-api-cfg-panel" data-panel="params">
+                    <div class="field-label" style="margin-bottom:4px;">Query Params</div>
+                    <div class="var-table-wrap" style="max-height:140px;">
+                      <table><thead><tr><th style="width:26px;"></th><th>Key</th><th>Value</th><th style="width:30px;"></th></tr></thead>
+                        <tbody id="tcApiQueryParamsBody"></tbody></table>
+                    </div>
+                    <button type="button" class="btn btn-sm" id="tcApiQueryParamAddBtn" style="margin-top:6px;">+ Add Query Param</button>
+                    <div class="field-label" style="margin:10px 0 4px;">Path Params <span class="muted-small">(fills a ":name" segment in the endpoint's own path)</span></div>
+                    <div class="var-table-wrap" style="max-height:140px;">
+                      <table><thead><tr><th style="width:26px;"></th><th>Key</th><th>Value</th><th style="width:30px;"></th></tr></thead>
+                        <tbody id="tcApiPathParamsBody"></tbody></table>
+                    </div>
+                    <button type="button" class="btn btn-sm" id="tcApiPathParamAddBtn" style="margin-top:6px;">+ Add Path Param</button>
+                  </div>
+
+                  <div class="tc-api-cfg-panel" data-panel="headers" style="display:none;">
+                    <div class="muted-small" style="margin-bottom:6px;">Added on top of the endpoint's own imported headers (these take precedence); Test Environment Settings' extra headers still apply underneath.</div>
+                    <div class="var-table-wrap" style="max-height:220px;">
+                      <table><thead><tr><th style="width:26px;"></th><th>Key</th><th>Value</th><th style="width:30px;"></th></tr></thead>
+                        <tbody id="tcApiHeadersBody"></tbody></table>
+                    </div>
+                    <button type="button" class="btn btn-sm" id="tcApiHeaderAddBtn" style="margin-top:6px;">+ Add Header</button>
+                  </div>
+
+                  <div class="tc-api-cfg-panel" data-panel="auth" style="display:none;">
+                    <div class="field"><label for="tcApiAuthType">Type</label>
+                      <select id="tcApiAuthType">
+                        <option value="Inherited">Inherit Environment default</option>
+                        <option value="None">None</option>
+                        <option value="Bearer Token">Bearer Token</option>
+                        <option value="Basic Auth">Basic Auth</option>
+                        <option value="API Key Header">API Key (Custom Header)</option>
+                      </select>
+                    </div>
+                    <div id="tcApiAuthBearerFields" style="display:none;">
+                      <div class="field"><label for="tcApiAuthToken">Bearer token</label><input id="tcApiAuthToken" type="password" autocomplete="new-password" placeholder="(leave blank to keep)"></div>
+                    </div>
+                    <div id="tcApiAuthHeaderFields" style="display:none;gap:8px;">
+                      <div class="field" style="flex:1;"><label for="tcApiAuthHeaderName">Header name</label><input id="tcApiAuthHeaderName"></div>
+                      <div class="field" style="flex:1;"><label for="tcApiAuthHeaderValue">Header value</label><input id="tcApiAuthHeaderValue" type="password" autocomplete="new-password" placeholder="(leave blank to keep)"></div>
+                    </div>
+                    <div id="tcApiAuthBasicFields" style="display:none;gap:8px;">
+                      <div class="field" style="flex:1;"><label for="tcApiAuthUsername">Username</label><input id="tcApiAuthUsername" autocomplete="off"></div>
+                      <div class="field" style="flex:1;"><label for="tcApiAuthPassword">Password</label><input id="tcApiAuthPassword" type="password" autocomplete="new-password" placeholder="(leave blank to keep)"></div>
+                    </div>
+                    <div class="muted-small" id="tcApiAuthSecretHint"></div>
+                  </div>
+
+                  <div class="tc-api-cfg-panel" data-panel="body" style="display:none;">
+                    <div class="field" style="max-width:220px;margin-bottom:6px;">
+                      <label for="tcApiBodyMode">Body</label>
+                      <select id="tcApiBodyMode">
+                        <option value="none">None</option>
+                        <option value="raw_json">Raw JSON</option>
+                        <option value="text">Text</option>
+                        <option value="urlencoded">x-www-form-urlencoded</option>
+                        <option value="form_data">form-data</option>
+                      </select>
+                    </div>
+                    <div id="tcApiBodyRawWrap">
+                      <div class="muted-small" style="margin-bottom:6px;">Overrides the endpoint's own imported body. Supports {{variables}}.</div>
+                      <textarea id="tcApiBodyText" class="code-block" style="min-height:160px;width:100%;" placeholder="(use the endpoint's own imported body)" spellcheck="false"></textarea>
+                      <div class="auth-error" id="tcApiBodyJsonError" style="margin-top:4px;"></div>
+                    </div>
+                    <div id="tcApiBodyParamsWrap" style="display:none;">
+                      <div class="var-table-wrap" style="max-height:220px;">
+                        <table><thead><tr><th style="width:26px;"></th><th>Key</th><th>Value</th><th style="width:30px;"></th></tr></thead>
+                          <tbody id="tcApiBodyParamsBody"></tbody></table>
+                      </div>
+                      <button type="button" class="btn btn-sm" id="tcApiBodyParamAddBtn" style="margin-top:6px;">+ Add Field</button>
+                    </div>
+                  </div>
+
+                  <div class="tc-api-cfg-panel" data-panel="assertions" style="display:none;">
+                    <div class="muted-small" style="margin-bottom:6px;">Every assertion below must pass for a run to be judged Pass. Leave empty to fall back to the Expected HTTP status set above.</div>
+                    <div class="var-table-wrap" style="max-height:220px;">
+                      <table><thead><tr><th style="width:170px;">Type</th><th>Path / Header Name</th><th style="width:140px;">Expected</th><th style="width:30px;"></th></tr></thead>
+                        <tbody id="tcApiAssertionsBody"></tbody></table>
+                    </div>
+                    <button type="button" class="btn btn-sm" id="tcApiAssertionAddBtn" style="margin-top:6px;">+ Add Assertion</button>
+                  </div>
+
+                  <div class="tc-api-cfg-panel" data-panel="extraction" style="display:none;">
+                    <div class="muted-small" style="margin-bottom:6px;">Saves a value from this response as a {{variable}} for reuse in a later request (remembered in Test Environment Settings).</div>
+                    <div class="var-table-wrap" style="max-height:220px;">
+                      <table><thead><tr><th style="width:120px;">Source</th><th>Path / Header Name</th><th style="width:160px;">Save as Variable</th><th style="width:30px;"></th></tr></thead>
+                        <tbody id="tcApiExtractionBody"></tbody></table>
+                    </div>
+                    <button type="button" class="btn btn-sm" id="tcApiExtractionAddBtn" style="margin-top:6px;">+ Add Extraction Rule</button>
+                  </div>
+
+                </div>
+                <div class="btn-row" style="padding:8px 10px;border-top:1px solid var(--line);">
+                  <button class="btn btn-primary" id="tcApiRequestConfigSaveBtn">Save Request Configuration</button>
+                </div>
               </div>
             </div>
 
@@ -1591,6 +1768,14 @@
 
           <div class="detail-panel-view" id="d-execute">
             <div id="tcExecuteReadiness"></div>
+            <!-- Section 11: a masked Request Preview — Method/
+                 Resolved URL/Params(baked into the URL)/Headers/Auth/
+                 Body — built from the SAME request the runner would
+                 actually send (Core/automation_web_repository.py's
+                 validate_for_execution() return.request_preview),
+                 never executed by Validate itself. API-only; empty
+                 for Playwright/SQL. -->
+            <div id="tcApiRequestPreview" style="display:none;margin-bottom:10px;"></div>
             <div class="btn-row">
               <button class="btn btn-primary" id="tcExecuteBtn">Execute</button>
               <button class="btn btn-primary" id="tcExecuteApiBtn" style="display:none;">Execute Against Real Server</button>
@@ -1672,6 +1857,7 @@
         <pre class="code-block" id="repairCode" style="max-height:50px;overflow:auto;"></pre>
         <div class="auth-error" id="repairError" style="margin:6px 0;"></div>
         <div class="muted-small" id="repairContext" style="margin-bottom:8px;"></div>
+        <div class="kv" id="repairStepMetadata" style="margin-bottom:10px;"></div>
         <div id="repairSimpleFields">
           <div class="field"><label for="repairLocator">Locator</label><input id="repairLocator"></div>
           <div class="field" id="repairValueField"><label for="repairValue">Value</label><input id="repairValue"></div>
@@ -1682,16 +1868,19 @@
         </label>
         <textarea id="repairCodeEdit" rows="2" style="display:none;width:100%;font-family:monospace;font-size:12px;"></textarea>
         <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+          <button class="btn btn-primary" id="repairSelectElementBtn" type="button">Select Element in Browser</button>
           <button class="btn" id="repairVerifyBtn" type="button">Test Locator Against Current Page</button>
           <div class="muted-small" id="repairVerifyStatus" style="flex:1;"></div>
         </div>
+        <div class="muted-small" id="repairSelectedLocator" style="display:none;margin-top:7px;overflow-wrap:anywhere;"></div>
         <div id="repairAiArea" style="display:none;margin-top:8px;">
           <div class="muted-small" id="repairAiStatus"></div>
           <pre class="code-block" id="repairAiSuggestion" style="display:none;max-height:50px;overflow:auto;"></pre>
           <div class="muted-small" id="repairAiExplanation" style="display:none;"></div>
         </div>
         <div class="modal-actions" style="justify-content:space-between;margin-top:12px;">
-          <button class="btn" id="repairCancelBtn" style="background:var(--danger);color:#fff;border-color:var(--danger);">Cancel Test Run</button>
+          <button class="btn" id="repairCancelSelectionBtn" style="display:none;">Cancel Selection</button>
+          <button class="btn" id="repairCancelBtn" style="background:var(--danger);color:#fff;border-color:var(--danger);">Stop Replay</button>
           <div style="display:flex;gap:8px;">
             <button class="btn" id="repairAskAiBtn">Ask AI for a Suggestion</button>
             <button class="btn" id="repairApplyAiBtn" style="display:none;">Apply AI Suggestion</button>
@@ -1737,7 +1926,7 @@
             <div class="field"><label for="envUsername">Username</label><input id="envUsername" autocomplete="off"></div>
             <div class="field"><label for="envPassword">Password</label><input id="envPassword" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
             <div style="display:flex; gap:8px;">
-              <div class="field" style="flex:1;"><label for="envSlowMo">Playback slow-mo (ms)</label><input id="envSlowMo" placeholder="300"></div>
+              <div class="field" style="flex:1;"><label for="envSlowMo">Replay Speed</label><select id="envSlowMo"><option value="100">Fast — 100 ms</option><option value="300" selected>Normal — 300 ms</option><option value="700">Safe — 700 ms</option><option value="1200">Slow — 1200 ms</option></select></div>
               <div class="field" style="flex:1;"><label for="envTimeout">Default timeout (ms)</label><input id="envTimeout" placeholder="45000"></div>
             </div>
             <div class="field"><label for="envNotes">Notes</label><textarea id="envNotes" rows="2"></textarea></div>
@@ -1846,6 +2035,10 @@
             <div class="field" style="flex:1;"><label for="sqlEnvMaxRows">Max rows returned</label><input id="sqlEnvMaxRows" placeholder="200"></div>
           </div>
           <div id="sqlEnvSecretHints" class="muted-small"></div>
+          <div class="field" style="margin-bottom:8px;">
+            <label>Connection Status</label>
+            <div id="sqlEnvConnStatus" class="sql-conn-status sql-conn-status--untested">Not Tested</div>
+          </div>
           <div class="auth-error" id="sqlEnvTestResult"></div>
         </div>
         <div class="modal-actions">
@@ -1889,7 +2082,7 @@
           <button class="btn" id="automationHistoryClear">Clear Filters</button>
         </div>
         <div class="table-scroll" style="max-height:56vh;">
-          <table><thead><tr><th>Started</th><th>TC ID</th><th>Status</th><th>Result</th><th>Duration</th><th>Message</th><th></th></tr></thead><tbody id="automationHistoryBody"></tbody></table>
+          <table><thead><tr><th>TC ID</th><th>Status</th><th>Result</th><th>Started</th><th>Finished</th><th>Duration</th><th>Message</th><th>Actions</th></tr></thead><tbody id="automationHistoryBody"></tbody></table>
         </div>
         <div class="modal-actions"><button class="btn" id="automationHistoryCloseBtn">Close</button></div>
       </div>
@@ -2842,7 +3035,7 @@
     panel.querySelector('.at-scope-count').textContent=((doc&&doc.counts&&doc.counts[type])||0)+' test cases';
   }
   function clearTypeResults(type){
-    autoTestCasesByType[type]=[]; autoGridControllers[type].setRows([]); autoLogControllers[type].setRows([]);
+    autoTestCasesByType[type]=[]; autoGridControllers[type].setRows([]); if(autoLogControllers[type])autoLogControllers[type].setRows([]);
   }
 
   // ---- Grid + Log controllers, one pair per automation type ----
@@ -2850,12 +3043,12 @@
     var panel = panelFor(type);
     autoGridControllers[type] = createGridController({
       name: 'auto-' + type, tbody: panel.querySelector('.at-tbody'),
-      footer: panel.querySelector('.at-pager'), colSpan: type === 'Playwright' ? 6 : 8,
+      footer: panel.querySelector('.at-pager'), colSpan: type === 'SQL' ? 5 : 6,
       searchInput: panel.querySelector('.at-search'),
       emptyText: 'No test cases in this scope.',
       onRendered: function(body){ wireGridRowActions(type, body); syncHeaderCheckbox(type); },
     });
-    autoLogControllers[type] = createGridController({
+    if(type!=='Playwright')autoLogControllers[type] = createGridController({
       name: 'auto-' + type + '-log', tbody: panel.querySelector('.at-log-tbody'),
       colSpan: 7, emptyText: 'No runs yet.',
       onRendered: function(body){ wireLogRowActions(type, body); },
@@ -2891,6 +3084,7 @@
     if(status === 'Failed') return '<span class="pill pill-fail"><span class="pill-dot"></span>Failed</span>';
     if(status === 'Error') return '<span class="pill pill-fail"><span class="pill-dot"></span>Error</span>';
     if(status === 'Cancelled') return '<span class="pill pill-blocked"><span class="pill-dot"></span>Cancelled</span>';
+    if(status === 'Stopped') return '<span class="pill pill-blocked"><span class="pill-dot"></span>Stopped</span>';
     if(status === 'Running') return '<span class="pill pill-neutral"><span class="pill-dot"></span>Running</span>';
     if(status === 'Queued') return '<span class="pill pill-neutral"><span class="pill-dot"></span>Queued</span>';
     return '<span class="pill pill-notrun">' + escapeHtml(status || '—') + '</span>';
@@ -2984,32 +3178,55 @@
       // the API or SQL tab, and vice versa.
       autoTestCasesByType[type] = data.test_cases || [];
       renderTypeTestCases(type);
+      if(!autoTestCasesByType[type].length){
+        var documentInfo=autoScopesByType[type].documents.find(function(item){return item.key===scope.test_case_document;});
+        if(documentInfo && documentInfo.total>0){
+          panelFor(type).querySelector('.at-tbody').innerHTML='<tr><td colspan="'+(type==='SQL'?5:6)+'" class="muted-small" style="padding:12px 10px;">No '+escapeHtml(type)+'-eligible test cases found in this document.</td></tr>';
+        }
+      }
     }).catch(function(err){ toast(err.message, true); });
   }
 
   function renderTypeTestCases(type){
     var items = autoTestCasesByType[type];
     var rows = items.map(function(tc){
-      var hasScript = !!((type === 'Playwright' && tc.active_script_source === 'MANUAL') ? tc.recorded_script : tc.automation_script);
       var latest = tc.latest_run || null;
-      var readiness = latest && ['Queued','Running'].indexOf(latest.status) !== -1 ? latest.status :
-        (!hasScript ? 'Not Automated' : (tc.status === 'Automated' ? 'Ready' : 'Draft Script'));
-      if(latest && latest.status === 'Error') readiness = 'Error';
       var scriptLabel = type === 'SQL' ? 'View SQL' : 'View Script';
       var clickUpCell = tc.last_result === 'Fail'
         ? '<button class="btn btn-sm at-clickup-btn" data-tc-id="' + tc.id + '">Create Bug</button>'
         : '<span class="muted-small">—</span>';
       var checkboxCell = '<input type="checkbox" class="at-row-check" data-tc-id="' + tc.id + '">';
-      // Item 4 — never show the raw AUTO/MANUAL enum in the grid
-      // either; same friendly-label helper the Automation tab uses.
-      var activeLabel = tc.status !== 'Automated' ? '—'
-        : (type === 'SQL' ? 'Active' : friendlyActiveSourceLabel(tc.active_script_source || 'AUTO', tc));
-      var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(tc.test_case||tc.scenario||'')+'</td>';
-      var cells=type==='Playwright'
-        ? commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td><td><button class="btn btn-sm at-record-btn" data-tc-id="'+tc.id+'" title="Record a Manually Recorded Script by driving a live browser">Record</button></td>'
-        : commonCells+'<td>'+escapeHtml(readiness)+'</td><td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td><td>'+escapeHtml(activeLabel)+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">Open</button> <button class="btn btn-sm at-generate-btn" data-tc-id="'+tc.id+'">Generate</button></td>';
+      // Section D: for a bound API test case, the title column shows
+      // the REAL bound endpoint's METHOD + name (tc.bound_endpoint_name,
+      // server-enriched — see TestCasesWeb.list_workspace()) — never
+      // fake/generated text. Falls back to the test case's own
+      // scenario/title until something is bound.
+      var titleText = (type === 'API' && tc.bound_endpoint_name)
+        ? tc.bound_endpoint_name : (tc.test_case || tc.scenario || '');
+      var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(titleText)+'</td>';
+      // API-SQL-AUTOMATION-END-TO-END grid cleanup: the API/SQL grids
+      // no longer show a separate Automation Readiness column, an
+      // Active Source column, or per-row Open/Generate buttons —
+      // readiness is available from View Script/View SQL's own
+      // detail panel, and the redundant row actions duplicated
+      // "Generate Automation for Selected" / the row's own View
+      // button. Shape now matches Playwright's own already-cleaned-up
+      // grid: checkbox, TC #, Test Case, Last Result, View button —
+      // API additionally gets its own Actions column (a quick Bind/
+      // Rebind endpoint shortcut, section D/E) since a bound-vs-
+      // unbound API test case needs that action far more often than
+      // Playwright needs Record.
+      var cells;
+      if(type === 'Playwright'){
+        cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td><td><button class="btn btn-sm at-record-btn" data-tc-id="'+tc.id+'" title="Record a Manually Recorded Script by driving a live browser">Record</button></td>';
+      } else if(type === 'API'){
+        var bindLabel = tc.bound_api_endpoint_id ? 'Rebind' : 'Bind';
+        cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td><td><button class="btn btn-sm at-bind-btn" data-tc-id="'+tc.id+'" title="Bind or change this test case\'s API endpoint">'+bindLabel+'</button></td>';
+      } else {
+        cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td>';
+      }
       var html = '<tr data-tc-id="' + tc.id + '">' + cells + '</tr>';
-      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '')).toLowerCase() };
+      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '') + ' ' + titleText).toLowerCase() };
     });
     autoGridControllers[type].setRows(rows);
   }
@@ -3038,6 +3255,19 @@
       btn.addEventListener('click', function(){
         var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
         if(tc) openRecordModal(tc, type);
+      });
+    });
+    // Section D/E: the grid's own Bind/Rebind Actions-column shortcut
+    // — opens the same detail panel View Script would, but jumps
+    // straight to the endpoint picker instead of leaving the operator
+    // to find it themselves.
+    body.querySelectorAll('.at-bind-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tc = autoTestCasesByType[type].find(function(t){ return t.id === parseInt(btn.getAttribute('data-tc-id'), 10); });
+        if(tc) selectTestCase(tc, type, function(){
+          var select = document.getElementById('tcApiBoundEndpoint');
+          if(select){ select.focus(); select.scrollIntoView({ block: 'center' }); }
+        });
       });
     });
   }
@@ -3109,7 +3339,7 @@
     // simply reloading the page will naturally repopulate this table
     // from the real persisted history again — that's expected, not a
     // bug, and the button's tooltip says so up front.
-    panel.querySelector('.at-log-refresh').addEventListener('click', function(){
+    if(type!=='Playwright')panel.querySelector('.at-log-refresh').addEventListener('click', function(){
       autoLogControllers[type].setRows([]);
       toast('Execution log display cleared — persisted history and Run Details are not affected.');
     });
@@ -3252,7 +3482,7 @@
   function waitForRun(runUuid, done){
     var timer = setInterval(function(){
       apiFetch('/api/automation/runs/' + runUuid).then(function(run){
-        if(['Passed', 'Failed', 'Error', 'Cancelled'].indexOf(run.status) !== -1){
+        if(['Passed', 'Failed', 'Error', 'Cancelled', 'Stopped'].indexOf(run.status) !== -1){
           clearInterval(timer);
           done();
         }
@@ -3262,6 +3492,7 @@
 
   // ---- Execution Log, per automation type ----
   function loadTypeLog(type){
+    if(type==='Playwright')return Promise.resolve();
     var scope = activeTypeScope(type);
     if(!scope.domain || !scope.module || !scope.knowledge_name || !scope.version || !scope.document_type || !scope.source_knowledge_ids.length || !scope.test_case_document){
       autoLogControllers[type].setRows([]); return Promise.resolve();
@@ -3332,10 +3563,10 @@
       return true;
     });
     var body=document.getElementById('automationHistoryBody');
-    if(!rows.length){body.innerHTML='<tr><td colspan="7" class="muted-small">No completed history matches these filters.</td></tr>';return;}
+    if(!rows.length){body.innerHTML='<tr><td colspan="8" class="muted-small">No completed history matches these filters.</td></tr>';return;}
     body.innerHTML=rows.map(function(r){
-      var msg=r.error_message||(r.stderr?r.stderr.split('\n').slice(-1)[0]:'')||'';
-      return '<tr><td>'+formatDateTime(r.started_at||r.created_date)+'</td><td class="mono">'+escapeHtml(r.tc_number||String(r.test_case_id||''))+'</td><td>'+runStatusPillHtml(r.status)+'</td><td>'+resultPillHtml(r.outcome==='Pass'?'Pass':(r.outcome==='Fail'?'Fail':null))+'</td><td>'+autoDurationLabel(r.duration_seconds)+'</td><td class="muted-small">'+escapeHtml(msg.slice(0,120))+'</td><td><button class="btn btn-sm automation-history-view" data-run-id="'+r.run_uuid+'">View</button></td></tr>';
+      var msg=r.final_message||r.error_message||'';
+      return '<tr><td class="mono">'+escapeHtml(r.tc_number||String(r.test_case_id||''))+'</td><td>'+runStatusPillHtml(r.status)+'</td><td>'+escapeHtml(r.outcome||'Not Completed')+'</td><td>'+formatDateTime(r.started_at||r.created_date)+'</td><td>'+formatDateTime(r.finished_at)+'</td><td>'+autoDurationLabel(r.duration_seconds)+'</td><td class="muted-small">'+escapeHtml(msg.slice(0,160))+'</td><td><button class="btn btn-sm automation-history-view" data-run-id="'+r.run_uuid+'">View</button></td></tr>';
     }).join('');
     body.querySelectorAll('.automation-history-view').forEach(function(btn){btn.onclick=function(){apiFetch('/api/automation/runs/'+btn.getAttribute('data-run-id')).then(openRunDetailModal).catch(function(err){toast(err.message,true);});};});
   }
@@ -3371,6 +3602,21 @@
     autoViewedSource = tc.active_script_source || 'AUTO';
     autoLastValidated = { AUTO: null, MANUAL: null };
     autoRepairInvalidated = { AUTO: false, MANUAL: false };
+    if((type || tc.automation_type) === 'Playwright' && tc.recorded_script &&
+       !/^\s*#\s*QA_STEP:\s*\d+/mi.test(tc.recorded_script) && autoCanEdit()){
+      apiFetch('/api/automation/test-cases/' + tc.id + '/recorded-script', {
+        method: 'PUT', body: JSON.stringify({script_text: tc.recorded_script})
+      }).then(function(data){
+        if(data && data.test_case && /QA_STEP:\s*\d+/i.test(data.test_case.recorded_script || '')){
+          autoSelectedTc = data.test_case;
+          tc = data.test_case;
+          renderScriptEditor();
+          toast('Existing recorded script upgraded to structured QA steps.');
+        }
+      }).catch(function(error){
+        document.getElementById('tcScriptError').textContent = 'Recorded script upgrade failed: ' + error.message;
+      });
+    }
     stopAutoPoll();
     document.getElementById('tcDetailModal').classList.add('show');
     document.getElementById('detailId').textContent = tc.tc_number;
@@ -3381,8 +3627,36 @@
     var isSql = autoSelectedType === 'SQL';
     var isApi = autoSelectedType === 'API';
 
-    document.getElementById('tcActiveSourceRow').style.display = isSql ? 'none' : 'flex';
-    document.getElementById('tcSourceButtons').style.display = isSql ? 'none' : 'flex';
+    // Section 12 (POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION): the
+    // AI-Generated/Manual-Recorded Script source toggle and its
+    // Generate(AI)/Save Script actions are Playwright-only concepts
+    // — for API automation the executable asset is the Request
+    // Configuration below (Method/URL/Params/Headers/Auth/Body/
+    // Assertions/Extraction), never this script text, so these are
+    // hidden (not just for SQL as before) rather than left visible
+    // and confusing. The script textarea itself stays visible,
+    // read-only, as the existing "reference/documentation only"
+    // notice already explains (see renderScriptEditor() below) —
+    // still useful as AI-generated documentation of the request.
+    document.getElementById('tcActiveSourceRow').style.display = (isSql || isApi) ? 'none' : 'flex';
+    document.getElementById('tcSourceButtons').style.display = (isSql || isApi) ? 'none' : 'flex';
+    document.getElementById('tcGenerateBtn').style.display = isApi ? 'none' : 'inline-flex';
+    document.getElementById('tcSaveScriptBtn').style.display = isApi ? 'none' : 'inline-flex';
+
+    // REMOVE-SCRIPT-LIFECYCLE item 1/2/7: API Automation has no
+    // script lifecycle at all — completely hide the "Automation
+    // Script" workspace (header row + editor + reference/
+    // documentation notice) and the Set Active action, and relabel
+    // the shared modal's first tab "Request" instead of "Script"
+    // (the persisted Request Configuration below is the executable
+    // asset — see tcApiRequestBar/tcApiRequestConfigSection, already
+    // shown for isApi further down). Playwright/SQL keep the script
+    // workspace and Set Active exactly as before.
+    document.getElementById('tcScriptTabBtn').textContent = isApi ? 'Request' : 'Script';
+    document.getElementById('tcScriptHeaderRow').style.display = isApi ? 'none' : 'flex';
+    document.getElementById('tcScriptWorkspace').style.display = isApi ? 'none' : 'flex';
+    document.getElementById('tcScriptError').style.display = isApi ? 'none' : '';
+    document.getElementById('tcActivateBtn').style.display = isApi ? 'none' : 'inline-flex';
     // Item 7: the old always-disabled "Playwright" type <select> here
     // was removed outright (not just hidden) — it was pure visual
     // clutter duplicating the SAME automation type this whole detail
@@ -3393,6 +3667,9 @@
     // automation_type enforcement is completely untouched.
     document.getElementById('tcSuggestTypeBtn').style.display = isApi ? 'inline-flex' : 'none';
     document.getElementById('tcSqlAssertionRow').style.display = isSql ? 'flex' : 'none';
+    document.getElementById('tcApiRequestBar').style.display = isApi ? 'flex' : 'none';
+    document.getElementById('tcApiAssertionRow').style.display = isApi ? 'flex' : 'none';
+    document.getElementById('tcApiRequestConfigSection').style.display = isApi ? 'flex' : 'none';
 
     var editor = document.getElementById('tcScriptEditor');
     document.getElementById('tcScriptError').textContent = '';
@@ -3406,10 +3683,16 @@
       document.getElementById('tcSqlAssertionType').value = script.assertion_type || 'row_exists';
       document.getElementById('tcSqlAssertionColumn').value = script.assertion_column || '';
       document.getElementById('tcSqlAssertionValue').value = script.assertion_value || '';
+      updateSqlAssertionFieldsVisibility();
     } else {
       renderScriptEditor();
     }
-    editor.disabled = !autoCanEdit();
+    if(isApi){
+      document.getElementById('tcApiExpectedStatus').value = tc.api_expected_status_code || '';
+      loadApiEndpointCandidates(tc);
+      loadApiRequestConfig(tc);
+    }
+    editor.disabled = !autoCanEdit() || isApi;
 
     // Record is a Playwright-only capability (see item 22-25): a live,
     // remotely-driven browser recording session over WebSocket — see
@@ -3421,10 +3704,13 @@
       document.getElementById('tcRecordBtn').style.display = 'none';
     }
 
-    // API/Playwright notice text is fully handled inside
+    // Playwright notice text is fully handled inside
     // renderScriptEditor() above (it knows autoViewedSource); SQL has
-    // no equivalent notice.
-    if(isSql){
+    // no equivalent notice, and API's whole script workspace
+    // (including this notice) is hidden outright above — it no
+    // longer needs its own "reference/documentation only" text since
+    // the script editor it used to annotate isn't shown at all.
+    if(isSql || isApi){
       document.getElementById('tcScriptNotice').style.display = 'none';
     }
 
@@ -3459,6 +3745,12 @@
     document.getElementById('tcDetailModal').classList.remove('show');
     stopAutoPoll();
   });
+  document.getElementById('tcDetailMinBtn').addEventListener('click',function(){
+    var card=document.getElementById('tcDetailCard');card.classList.toggle('tc-minimized');card.classList.remove('tc-maximized');
+  });
+  document.getElementById('tcDetailMaxBtn').addEventListener('click',function(){
+    var card=document.getElementById('tcDetailCard');card.classList.remove('tc-minimized');card.classList.toggle('tc-maximized');this.textContent=card.classList.contains('tc-maximized')?'❐':'□';this.title=card.classList.contains('tc-maximized')?'Restore':'Maximize';
+  });
 
   document.getElementById('tcClickUpBtn').addEventListener('click', function(){
     if(!autoSelectedTc) return;
@@ -3469,9 +3761,35 @@
     if(!autoSelectedTc) return;
     apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/validate').then(function(data){
       renderReadiness(document.getElementById('tcExecuteReadiness'), data);
+      renderApiRequestPreview(data.request_preview);
     }).catch(function(err){
       document.getElementById('tcExecuteReadiness').innerHTML = '<div class="muted-small">' + escapeHtml(err.message) + '</div>';
+      renderApiRequestPreview(null);
     });
+  }
+
+  // Section 11: a masked Request Preview before Execute — Method,
+  // Resolved URL, Headers, Auth (whatever Header/Auth masking already
+  // applied server-side — see ApiAutomationRunner._mask_headers()),
+  // Body. Built from validate_for_execution()'s request_preview (the
+  // SAME resolved request execute_api() would actually send); Validate
+  // itself never sends anything.
+  function renderApiRequestPreview(preview){
+    var el = document.getElementById('tcApiRequestPreview');
+    if(!preview){ el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    var headerRows = Object.keys(preview.headers || {}).map(function(k){
+      return '<div>' + escapeHtml(k) + '</div><div class="mono">' + escapeHtml(String(preview.headers[k])) + '</div>';
+    }).join('');
+    el.innerHTML =
+      '<div class="card">' +
+        '<div class="card-head"><h3 style="margin:0;">Request Preview <span class="muted-small">(masked — nothing here is sent yet)</span></h3></div>' +
+        '<div class="card-body" style="padding:10px;">' +
+          '<div class="kv"><div>Method &amp; URL</div><div class="mono">' + escapeHtml(preview.method || '') + ' ' + escapeHtml(preview.url || '') + '</div></div>' +
+          '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Headers</summary><div class="kv" style="margin-top:6px;">' + (headerRows || '<div class="muted-small">None.</div>') + '</div></details>' +
+          (preview.body ? '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Body</summary><pre class="code-block" style="max-height:180px;overflow:auto;">' + escapeHtml(preview.body) + '</pre></details>' : '') +
+        '</div>' +
+      '</div>';
   }
 
   function renderReadiness(el, data){
@@ -3500,6 +3818,556 @@
   function closeTcActionResult(){ document.getElementById('tcActionResultModal').classList.remove('show'); }
   document.getElementById('tcActionResultCloseBtn').addEventListener('click', closeTcActionResult);
   document.getElementById('tcActionResultCloseX').addEventListener('click', closeTcActionResult);
+
+  // ---- SQL assertion field visibility (item: Column/Expected Value
+  // requirement matrix must be enforced/reflected in the UI, not just
+  // the backend — row_exists/no_rows need neither, row_count_equals/
+  // scalar_equals need only Expected value, value_equals needs both;
+  // matches SqlAutomationWeb._ASSERTION_REQUIREMENTS exactly) ----
+  var SQL_ASSERTION_FIELD_RULES = {
+    row_exists: { column: false, value: false },
+    no_rows: { column: false, value: false },
+    row_count_equals: { column: false, value: true },
+    scalar_equals: { column: false, value: true },
+    value_equals: { column: true, value: true },
+  };
+  function updateSqlAssertionFieldsVisibility(){
+    var type = document.getElementById('tcSqlAssertionType').value;
+    var rules = SQL_ASSERTION_FIELD_RULES[type] || { column: true, value: true };
+    document.getElementById('tcSqlAssertionColumnField').style.display = rules.column ? '' : 'none';
+    document.getElementById('tcSqlAssertionValueField').style.display = rules.value ? '' : 'none';
+  }
+  document.getElementById('tcSqlAssertionType').addEventListener('change', updateSqlAssertionFieldsVisibility);
+
+  // ---- API endpoint binding picker — always shows every real
+  // candidate for this test case's scope; never guesses when there
+  // is more than one (see Core/automation_web_repository.py's
+  // list_api_endpoint_candidates()/_resolve_bound_endpoint()). ----
+  function loadApiEndpointCandidates(tc){
+    var select = document.getElementById('tcApiBoundEndpoint');
+    select.innerHTML = '<option value="">Loading…</option>';
+    apiFetch('/api/automation/test-cases/' + tc.id + '/api-endpoint-candidates').then(function(body){
+      if(!body.endpoints || !body.endpoints.length){
+        select.innerHTML = '<option value="">Import and bind API endpoint first.</option>';
+        return;
+      }
+      select.innerHTML = '<option value="">Select endpoint…</option>' + body.endpoints.map(function(ep){
+        var label = (ep.method || '') + ' ' + (ep.name || ep.url || ('Endpoint #' + ep.id));
+        var selected = body.bound_endpoint_id === ep.id ? ' selected' : '';
+        return '<option value="' + ep.id + '"' + selected + '>' + escapeHtml(label) + '</option>';
+      }).join('');
+    }).catch(function(){
+      select.innerHTML = '<option value="">Could not load endpoints.</option>';
+    });
+  }
+  // Section 2: "Selecting one should load its imported request
+  // definition" — picking a different Source Endpoint reloads
+  // Method/URL/Headers/Body from THAT endpoint's own imports
+  // (force=true — see applyEndpointToRequestFields() above), never
+  // auto-saved and never touching the endpoint record itself.
+  document.getElementById('tcApiBoundEndpoint').addEventListener('change', function(){
+    var id = this.value;
+    if(!id) return;
+    fetchApiEndpointDetail(parseInt(id, 10)).then(function(detail){
+      applyEndpointToRequestFields(detail, true);
+    });
+  });
+  document.getElementById('tcApiAssertionSaveBtn').addEventListener('click', function(){
+    if(!autoSelectedTc) return;
+    var btn = document.getElementById('tcApiAssertionSaveBtn');
+    var endpointId = document.getElementById('tcApiBoundEndpoint').value;
+    var expectedStatus = document.getElementById('tcApiExpectedStatus').value;
+    btn.disabled = true;
+    Promise.all([
+      apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/bind-api-endpoint', {
+        method: 'PATCH',
+        body: JSON.stringify({ endpoint_id: endpointId ? parseInt(endpointId, 10) : null }),
+      }),
+      apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/api-assertion', {
+        method: 'PATCH',
+        body: JSON.stringify({ expected_status_code: expectedStatus === '' ? null : parseInt(expectedStatus, 10) }),
+      }),
+    ]).then(function(results){
+      autoSelectedTc = results[1];
+      toast('Endpoint binding and assertion saved.');
+      refreshExecuteReadiness();
+      loadTypeTestCases('API');
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = false; });
+  });
+
+  // ---- API Request Configuration (Params/Headers/Auth/Body/
+  // Assertions/Extraction — section F). Persisted per-Test-Case on
+  // top of the bound endpoint's own imported values + Test
+  // Environment Settings (see
+  // Core/automation_web_repository.py's get_api_request_config()/
+  // set_api_request_config(), and Core/api_automation_runner.py's
+  // build_request()/evaluate_assertions()/extract_variables() for
+  // what each field actually does at Execute time). ----
+  var tcApiCfg = {
+    method: '', url: '', query_params: [], path_params: [], headers: [],
+    auth: {}, body: '', body_mode: '', body_params: [], assertions: [],
+    extraction_rules: [],
+  };
+
+  // Full imported detail (method/url_raw/url_resolved/headers_json/
+  // body_mode/body_raw/example_response_status — see
+  // Core/api_collection_repository.py's get_endpoint()) of whichever
+  // source endpoint is currently bound — fetched via the existing
+  // Knowledge Hub endpoint-editor route, reused here read-only so
+  // Method/URL/Headers/Body can auto-populate from the REAL imported
+  // request (section 1/2) without ever mutating the endpoint itself.
+  function fetchApiEndpointDetail(id){
+    if(!id) return Promise.resolve(null);
+    return apiFetch('/api/automation/api-endpoints/' + id).catch(function(){ return null; });
+  }
+
+  function updateApiBodyModeVisibility(){
+    var mode = document.getElementById('tcApiBodyMode').value;
+    var isParams = mode === 'urlencoded' || mode === 'form_data';
+    document.getElementById('tcApiBodyRawWrap').style.display = isParams ? 'none' : '';
+    document.getElementById('tcApiBodyParamsWrap').style.display = isParams ? '' : 'none';
+    validateApiBodyJson();
+  }
+
+  // Section 6: "For JSON: validate JSON syntax and show a useful
+  // validation error." Client-side only, instant feedback — the
+  // authoritative gate is validate_for_execution()'s server-side
+  // body_valid check (Core/automation_web_repository.py), which uses
+  // the SAME resolved request the runner would actually send.
+  function validateApiBodyJson(){
+    var mode = document.getElementById('tcApiBodyMode').value;
+    var errEl = document.getElementById('tcApiBodyJsonError');
+    if(mode !== 'raw_json'){ errEl.textContent = ''; return true; }
+    var text = document.getElementById('tcApiBodyText').value;
+    if(!text.trim()){ errEl.textContent = ''; return true; }
+    // {{variable}} placeholders are expected and would break a plain
+    // JSON.parse even in an otherwise-valid body — substitute each
+    // with a harmless JSON string literal before checking syntax.
+    var probe = text.replace(/\{\{\s*[^{}]+?\s*\}\}/g, '"__var__"');
+    try {
+      JSON.parse(probe);
+      errEl.textContent = '';
+      return true;
+    } catch(e){
+      errEl.textContent = 'Not valid JSON: ' + e.message;
+      return false;
+    }
+  }
+  document.getElementById('tcApiBodyMode').addEventListener('change', updateApiBodyModeVisibility);
+  document.getElementById('tcApiBodyText').addEventListener('input', validateApiBodyJson);
+
+  // Applies an imported endpoint's own Method/URL/Headers/Body into
+  // the editable request bar/tabs. force=false (initial load) only
+  // fills fields the operator hasn't already overridden for this
+  // Test Case; force=true (the Source Endpoint dropdown was changed
+  // by hand — section 2: "selecting one should load its imported
+  // request definition") always reloads from the newly chosen
+  // endpoint. Never persists anything — only Save Request/Save
+  // Request Configuration/Save Binding & Assertion do, and never
+  // writes back to the endpoint record itself.
+  function applyEndpointToRequestFields(detail, force){
+    if(!detail) return;
+
+    if(force || !tcApiCfg.method) tcApiCfg.method = (detail.method || tcApiCfg.method || 'GET').toUpperCase();
+    if(force || !tcApiCfg.url) tcApiCfg.url = detail.url_resolved || detail.url_raw || tcApiCfg.url || '';
+    document.getElementById('tcApiMethod').value = tcApiCfg.method || 'GET';
+    document.getElementById('tcApiUrl').value = tcApiCfg.url || '';
+
+    var hasHeaderOverride = tcApiCfg.headers && tcApiCfg.headers.length > 0;
+    if(force || !hasHeaderOverride){
+      var importedHeaders = [];
+      try { importedHeaders = JSON.parse(detail.headers_json || '[]') || []; } catch(e){ importedHeaders = []; }
+      tcApiReplaceRows(tcApiCfg.headers, importedHeaders.filter(function(h){ return h && h.key; }).map(function(h){
+        return { key: h.key || '', value: h.value || '', enabled: true };
+      }));
+      tcApiRenderKvRows('tcApiHeadersBody', tcApiCfg.headers);
+    }
+
+    var hasBodyOverride = !!tcApiCfg.body || (tcApiCfg.body_params && tcApiCfg.body_params.length > 0);
+    if(force || !hasBodyOverride){
+      if(detail.body_mode === 'urlencoded' || detail.body_mode === 'formdata'){
+        var pairsDict = {};
+        try { pairsDict = JSON.parse(detail.body_raw || '{}') || {}; } catch(e){ pairsDict = {}; }
+        tcApiCfg.body_mode = detail.body_mode === 'formdata' ? 'form_data' : 'urlencoded';
+        tcApiCfg.body = '';
+        tcApiReplaceRows(tcApiCfg.body_params, Object.keys(pairsDict).map(function(k){
+          return { key: k, value: pairsDict[k] == null ? '' : String(pairsDict[k]), enabled: true };
+        }));
+      } else if(detail.body_raw){
+        var trimmed = String(detail.body_raw).trim();
+        tcApiCfg.body_mode = (trimmed[0] === '{' || trimmed[0] === '[') ? 'raw_json' : 'text';
+        tcApiCfg.body = detail.body_raw;
+        tcApiReplaceRows(tcApiCfg.body_params, []);
+      } else {
+        tcApiCfg.body_mode = 'none';
+        tcApiCfg.body = '';
+        tcApiReplaceRows(tcApiCfg.body_params, []);
+      }
+      document.getElementById('tcApiBodyMode').value = tcApiCfg.body_mode || 'none';
+      document.getElementById('tcApiBodyText').value = tcApiCfg.body;
+      tcApiRenderKvRows('tcApiBodyParamsBody', tcApiCfg.body_params);
+      updateApiBodyModeVisibility();
+    }
+
+    if(force && !document.getElementById('tcApiExpectedStatus').value && detail.example_response_status){
+      document.getElementById('tcApiExpectedStatus').value = detail.example_response_status;
+    }
+  }
+
+  var API_ASSERTION_TYPES = [
+    { value: 'status_equals', label: 'HTTP Status equals', field: null, expected: 'status code' },
+    { value: 'json_field_exists', label: 'JSON field exists', field: 'path', expected: null },
+    { value: 'json_field_equals', label: 'JSON field equals', field: 'path', expected: 'value' },
+    { value: 'json_field_contains', label: 'JSON field contains', field: 'path', expected: 'substring' },
+    { value: 'response_time_lte', label: 'Response time ≤', field: null, expected: 'milliseconds' },
+    { value: 'header_exists', label: 'Header exists', field: 'header', expected: null },
+    { value: 'header_equals', label: 'Header equals', field: 'header', expected: 'value' },
+  ];
+  function apiAssertionTypeInfo(type){
+    return API_ASSERTION_TYPES.filter(function(t){ return t.value === type; })[0] || API_ASSERTION_TYPES[0];
+  }
+
+  // Params/Headers share one shape: [{key,value,enabled}].
+  function tcApiRenderKvRows(tbodyId, rows){
+    var body = document.getElementById(tbodyId);
+    if(!rows.length){
+      body.innerHTML = '<tr><td colspan="4" class="muted-small">None configured.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(row, index){
+      return '<tr data-index="' + index + '">' +
+        '<td><input type="checkbox" class="tc-api-kv-enabled"' + (row.enabled === false ? '' : ' checked') + '></td>' +
+        '<td><input class="tc-api-kv-key" value="' + escapeHtml(row.key || '') + '" placeholder="Key"></td>' +
+        '<td><input class="tc-api-kv-value" value="' + escapeHtml(row.value || '') + '" placeholder="Value"></td>' +
+        '<td><button type="button" class="btn btn-sm tc-api-kv-remove" title="Remove">✕</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+  function tcApiSyncKvRows(tbodyId, rows){
+    // Inputs here are uncontrolled -- read whatever's currently typed
+    // back into `rows` before any add/remove/re-render, so an
+    // in-progress edit is never silently dropped.
+    document.getElementById(tbodyId).querySelectorAll('tr[data-index]').forEach(function(tr){
+      var index = parseInt(tr.getAttribute('data-index'), 10);
+      if(!rows[index]) return;
+      rows[index].key = tr.querySelector('.tc-api-kv-key').value;
+      rows[index].value = tr.querySelector('.tc-api-kv-value').value;
+      rows[index].enabled = tr.querySelector('.tc-api-kv-enabled').checked;
+    });
+  }
+  function tcApiWireKvTable(tbodyId, addBtnId, rows){
+    document.getElementById(addBtnId).addEventListener('click', function(){
+      tcApiSyncKvRows(tbodyId, rows);
+      rows.push({ key: '', value: '', enabled: true });
+      tcApiRenderKvRows(tbodyId, rows);
+    });
+    document.getElementById(tbodyId).addEventListener('click', function(event){
+      var btn = event.target.closest('.tc-api-kv-remove');
+      if(!btn) return;
+      tcApiSyncKvRows(tbodyId, rows);
+      var index = parseInt(btn.closest('tr').getAttribute('data-index'), 10);
+      rows.splice(index, 1);
+      tcApiRenderKvRows(tbodyId, rows);
+    });
+  }
+  tcApiWireKvTable('tcApiQueryParamsBody', 'tcApiQueryParamAddBtn', tcApiCfg.query_params);
+  tcApiWireKvTable('tcApiPathParamsBody', 'tcApiPathParamAddBtn', tcApiCfg.path_params);
+  tcApiWireKvTable('tcApiHeadersBody', 'tcApiHeaderAddBtn', tcApiCfg.headers);
+  tcApiWireKvTable('tcApiBodyParamsBody', 'tcApiBodyParamAddBtn', tcApiCfg.body_params);
+
+  function tcApiRenderAssertionRows(){
+    var rows = tcApiCfg.assertions;
+    var body = document.getElementById('tcApiAssertionsBody');
+    if(!rows.length){
+      body.innerHTML = '<tr><td colspan="4" class="muted-small">No assertions configured — falls back to the Expected HTTP status above.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(row, index){
+      var info = apiAssertionTypeInfo(row.type);
+      var fieldHtml = info.field
+        ? '<input class="tc-api-assertion-field" value="' + escapeHtml(row.field || '') + '" placeholder="' + (info.field === 'path' ? 'e.g. $.data.id' : 'e.g. Content-Type') + '">'
+        : '<span class="muted-small">—</span>';
+      var expectedHtml = info.expected
+        ? '<input class="tc-api-assertion-expected" value="' + escapeHtml(row.expected == null ? '' : row.expected) + '" placeholder="' + info.expected + '">'
+        : '<span class="muted-small">—</span>';
+      var options = API_ASSERTION_TYPES.map(function(t){
+        return '<option value="' + t.value + '"' + (t.value === row.type ? ' selected' : '') + '>' + escapeHtml(t.label) + '</option>';
+      }).join('');
+      return '<tr data-index="' + index + '">' +
+        '<td><select class="tc-api-assertion-type">' + options + '</select></td>' +
+        '<td>' + fieldHtml + '</td>' +
+        '<td>' + expectedHtml + '</td>' +
+        '<td><button type="button" class="btn btn-sm tc-api-assertion-remove" title="Remove">✕</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+  function tcApiSyncAssertionRows(){
+    var rows = tcApiCfg.assertions;
+    document.getElementById('tcApiAssertionsBody').querySelectorAll('tr[data-index]').forEach(function(tr){
+      var index = parseInt(tr.getAttribute('data-index'), 10);
+      if(!rows[index]) return;
+      var typeSel = tr.querySelector('.tc-api-assertion-type');
+      if(typeSel) rows[index].type = typeSel.value;
+      var fieldInput = tr.querySelector('.tc-api-assertion-field');
+      if(fieldInput) rows[index].field = fieldInput.value;
+      var expectedInput = tr.querySelector('.tc-api-assertion-expected');
+      if(expectedInput) rows[index].expected = expectedInput.value;
+    });
+  }
+  document.getElementById('tcApiAssertionAddBtn').addEventListener('click', function(){
+    tcApiSyncAssertionRows();
+    tcApiCfg.assertions.push({ type: 'status_equals', field: '', expected: '' });
+    tcApiRenderAssertionRows();
+  });
+  document.getElementById('tcApiAssertionsBody').addEventListener('click', function(event){
+    var btn = event.target.closest('.tc-api-assertion-remove');
+    if(!btn) return;
+    tcApiSyncAssertionRows();
+    var index = parseInt(btn.closest('tr').getAttribute('data-index'), 10);
+    tcApiCfg.assertions.splice(index, 1);
+    tcApiRenderAssertionRows();
+  });
+  document.getElementById('tcApiAssertionsBody').addEventListener('change', function(event){
+    if(!event.target.classList.contains('tc-api-assertion-type')) return;
+    tcApiSyncAssertionRows();
+    tcApiRenderAssertionRows(); // re-render so the field/expected columns match the newly chosen type
+  });
+
+  function tcApiRenderExtractionRows(){
+    var rows = tcApiCfg.extraction_rules;
+    var body = document.getElementById('tcApiExtractionBody');
+    if(!rows.length){
+      body.innerHTML = '<tr><td colspan="4" class="muted-small">No extraction rules configured.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(row, index){
+      var isHeader = row.type === 'header';
+      return '<tr data-index="' + index + '">' +
+        '<td><select class="tc-api-extract-type"><option value="json_path"' + (isHeader ? '' : ' selected') + '>JSON Path</option><option value="header"' + (isHeader ? ' selected' : '') + '>Header</option></select></td>' +
+        '<td><input class="tc-api-extract-field" value="' + escapeHtml(row.field || '') + '" placeholder="' + (isHeader ? 'e.g. X-Request-Id' : 'e.g. $.data.id') + '"></td>' +
+        '<td><input class="tc-api-extract-variable" value="' + escapeHtml(row.variable || '') + '" placeholder="e.g. orderId"></td>' +
+        '<td><button type="button" class="btn btn-sm tc-api-extract-remove" title="Remove">✕</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+  function tcApiSyncExtractionRows(){
+    var rows = tcApiCfg.extraction_rules;
+    document.getElementById('tcApiExtractionBody').querySelectorAll('tr[data-index]').forEach(function(tr){
+      var index = parseInt(tr.getAttribute('data-index'), 10);
+      if(!rows[index]) return;
+      rows[index].type = tr.querySelector('.tc-api-extract-type').value;
+      rows[index].field = tr.querySelector('.tc-api-extract-field').value;
+      rows[index].variable = tr.querySelector('.tc-api-extract-variable').value;
+    });
+  }
+  document.getElementById('tcApiExtractionAddBtn').addEventListener('click', function(){
+    tcApiSyncExtractionRows();
+    tcApiCfg.extraction_rules.push({ type: 'json_path', field: '', variable: '' });
+    tcApiRenderExtractionRows();
+  });
+  document.getElementById('tcApiExtractionBody').addEventListener('click', function(event){
+    var btn = event.target.closest('.tc-api-extract-remove');
+    if(!btn) return;
+    tcApiSyncExtractionRows();
+    var index = parseInt(btn.closest('tr').getAttribute('data-index'), 10);
+    tcApiCfg.extraction_rules.splice(index, 1);
+    tcApiRenderExtractionRows();
+  });
+  document.getElementById('tcApiExtractionBody').addEventListener('change', function(event){
+    if(!event.target.classList.contains('tc-api-extract-type')) return;
+    tcApiSyncExtractionRows();
+    tcApiRenderExtractionRows();
+  });
+
+  document.querySelectorAll('.tc-api-cfg-tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      document.querySelectorAll('.tc-api-cfg-tab').forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      var panel = tab.getAttribute('data-panel');
+      document.querySelectorAll('.tc-api-cfg-panel').forEach(function(p){
+        p.style.display = p.getAttribute('data-panel') === panel ? '' : 'none';
+      });
+    });
+  });
+
+  function tcApiUpdateAuthFieldsVisibility(){
+    var type = document.getElementById('tcApiAuthType').value;
+    document.getElementById('tcApiAuthBearerFields').style.display = type === 'Bearer Token' ? '' : 'none';
+    document.getElementById('tcApiAuthHeaderFields').style.display = type === 'API Key Header' ? 'flex' : 'none';
+    document.getElementById('tcApiAuthBasicFields').style.display = type === 'Basic Auth' ? 'flex' : 'none';
+  }
+  document.getElementById('tcApiAuthType').addEventListener('change', tcApiUpdateAuthFieldsVisibility);
+
+  function tcApiReplaceRows(rows, items){
+    rows.length = 0;
+    (items || []).forEach(function(item){ rows.push(item); });
+  }
+
+  // GET the per-Test-Case config (masked — every secret auth field
+  // comes back blank with a companion "<field>_is_set" flag; see
+  // TestCasesWeb.get_api_request_config()) and populate every tab.
+  function loadApiRequestConfig(tc){
+    document.getElementById('tcApiRequestConfigSaveBtn').disabled = true;
+    apiFetch('/api/automation/test-cases/' + tc.id + '/api-request-config').then(function(config){
+      config = config || {};
+      tcApiReplaceRows(tcApiCfg.query_params, (config.query_params || []).map(function(r){ return { key: r.key || '', value: r.value || '', enabled: r.enabled !== false }; }));
+      tcApiReplaceRows(tcApiCfg.path_params, (config.path_params || []).map(function(r){ return { key: r.key || '', value: r.value || '', enabled: r.enabled !== false }; }));
+      tcApiReplaceRows(tcApiCfg.headers, (config.headers || []).map(function(r){ return { key: r.key || '', value: r.value || '', enabled: r.enabled !== false }; }));
+      tcApiReplaceRows(tcApiCfg.assertions, (config.assertions || []).map(function(r){
+        var info = apiAssertionTypeInfo(r.type);
+        var field = info.field === 'header' ? (r.header || '') : (r.path || '');
+        return { type: r.type || 'status_equals', field: field, expected: r.expected == null ? '' : r.expected };
+      }));
+      tcApiReplaceRows(tcApiCfg.extraction_rules, (config.extraction_rules || []).map(function(r){
+        var isHeader = r.type === 'header';
+        return { type: isHeader ? 'header' : 'json_path', field: isHeader ? (r.header || '') : (r.path || ''), variable: r.variable || '' };
+      }));
+      tcApiCfg.method = (config.method || '').toUpperCase();
+      tcApiCfg.url = config.url || '';
+      tcApiCfg.body = config.body || '';
+      tcApiCfg.body_mode = config.body_mode || '';
+      tcApiReplaceRows(tcApiCfg.body_params, (config.body_params || []).map(function(r){ return { key: r.key || '', value: r.value || '', enabled: r.enabled !== false }; }));
+      if(!tcApiCfg.body_mode){
+        // No explicit body_mode saved yet — a legacy override
+        // (pre-section-6) or a fresh Test Case: guess a sensible
+        // display mode from whatever's already there so the Body tab
+        // opens on the right sub-view instead of always "None".
+        if(tcApiCfg.body_params.length) tcApiCfg.body_mode = 'urlencoded';
+        else if(tcApiCfg.body){
+          var bodyTrimmed = tcApiCfg.body.trim();
+          tcApiCfg.body_mode = (bodyTrimmed[0] === '{' || bodyTrimmed[0] === '[') ? 'raw_json' : 'text';
+        }
+      }
+      var auth = config.auth || {};
+      document.getElementById('tcApiAuthType').value = auth.type || 'Inherited';
+      document.getElementById('tcApiAuthToken').value = '';
+      document.getElementById('tcApiAuthHeaderName').value = auth.header_name || '';
+      document.getElementById('tcApiAuthHeaderValue').value = '';
+      document.getElementById('tcApiAuthUsername').value = auth.username || '';
+      document.getElementById('tcApiAuthPassword').value = '';
+      document.getElementById('tcApiBodyText').value = tcApiCfg.body;
+      var hints = [];
+      if(auth.token_is_set) hints.push('Bearer token is set (leave blank to keep it).');
+      if(auth.header_value_is_set) hints.push('Header value is set (leave blank to keep it).');
+      if(auth.password_is_set) hints.push('Password is set (leave blank to keep it).');
+      document.getElementById('tcApiAuthSecretHint').textContent = hints.join(' ');
+      tcApiUpdateAuthFieldsVisibility();
+      tcApiRenderKvRows('tcApiQueryParamsBody', tcApiCfg.query_params);
+      tcApiRenderKvRows('tcApiPathParamsBody', tcApiCfg.path_params);
+      tcApiRenderKvRows('tcApiHeadersBody', tcApiCfg.headers);
+      tcApiRenderKvRows('tcApiBodyParamsBody', tcApiCfg.body_params);
+      tcApiRenderAssertionRows();
+      tcApiRenderExtractionRows();
+      document.getElementById('tcApiMethod').value = tcApiCfg.method || 'GET';
+      document.getElementById('tcApiUrl').value = tcApiCfg.url || '';
+      document.getElementById('tcApiBodyMode').value = tcApiCfg.body_mode || 'none';
+      updateApiBodyModeVisibility();
+      // Section 1: "When an imported endpoint is bound: automatically
+      // populate Method/URL/Params/Headers/Auth/Body" — fills only
+      // whatever this Test Case hasn't already overridden for itself
+      // (force=false); an explicit dropdown change (see the 'change'
+      // listener above) always force-reloads instead.
+      if(tc.bound_api_endpoint_id){
+        fetchApiEndpointDetail(tc.bound_api_endpoint_id).then(function(detail){
+          applyEndpointToRequestFields(detail, false);
+        });
+      }
+      document.getElementById('tcApiRequestConfigSaveBtn').disabled = !autoCanEdit();
+      document.getElementById('tcApiRequestBarSaveBtn').disabled = !autoCanEdit();
+    }).catch(function(err){ toast(err.message, true); });
+  }
+
+  // Shared by both "Save Request" (the request bar) and "Save Request
+  // Configuration" (the full tab set) — section 1/16: the request bar
+  // is just the Method/URL half of the SAME per-Test-Case config the
+  // tabs below save, not a separate asset, so both buttons persist
+  // everything together (an operator editing only the URL still gets
+  // their already-configured Headers/Auth/Body saved alongside it,
+  // and vice versa).
+  function saveApiRequestConfig(){
+    if(!autoSelectedTc) return;
+    tcApiSyncKvRows('tcApiQueryParamsBody', tcApiCfg.query_params);
+    tcApiSyncKvRows('tcApiPathParamsBody', tcApiCfg.path_params);
+    tcApiSyncKvRows('tcApiHeadersBody', tcApiCfg.headers);
+    tcApiSyncKvRows('tcApiBodyParamsBody', tcApiCfg.body_params);
+    tcApiSyncAssertionRows();
+    tcApiSyncExtractionRows();
+
+    if(!validateApiBodyJson()){
+      toast('Fix the Raw JSON body syntax error before saving.', true);
+      return;
+    }
+
+    var btn = document.getElementById('tcApiRequestConfigSaveBtn');
+    var barBtn = document.getElementById('tcApiRequestBarSaveBtn');
+
+    var authType = document.getElementById('tcApiAuthType').value;
+    var auth = { type: authType };
+    var token = document.getElementById('tcApiAuthToken').value;
+    if(token) auth.token = token;
+    auth.header_name = document.getElementById('tcApiAuthHeaderName').value;
+    var headerValue = document.getElementById('tcApiAuthHeaderValue').value;
+    if(headerValue) auth.header_value = headerValue;
+    auth.username = document.getElementById('tcApiAuthUsername').value;
+    var password = document.getElementById('tcApiAuthPassword').value;
+    if(password) auth.password = password;
+
+    var assertions = tcApiCfg.assertions.map(function(row){
+      var info = apiAssertionTypeInfo(row.type);
+      var out = { type: row.type };
+      if(info.field === 'path') out.path = row.field || '';
+      if(info.field === 'header') out.header = row.field || '';
+      if(info.expected){
+        out.expected = (row.type === 'status_equals' || row.type === 'response_time_lte')
+          ? Number(row.expected) : row.expected;
+      }
+      return out;
+    }).filter(function(a){
+      var info = apiAssertionTypeInfo(a.type);
+      return !info.field || (info.field === 'path' ? a.path : a.header);
+    });
+
+    var extractionRules = tcApiCfg.extraction_rules.map(function(row){
+      var out = { type: row.type, variable: row.variable || '' };
+      if(row.type === 'header') out.header = row.field || ''; else out.path = row.field || '';
+      return out;
+    }).filter(function(r){ return r.variable && (r.type === 'header' ? r.header : r.path); });
+
+    var bodyMode = document.getElementById('tcApiBodyMode').value;
+
+    var payload = {
+      request_config: {
+        method: document.getElementById('tcApiMethod').value,
+        url: document.getElementById('tcApiUrl').value.trim(),
+        query_params: tcApiCfg.query_params.filter(function(r){ return r.key; }),
+        path_params: tcApiCfg.path_params.filter(function(r){ return r.key; }),
+        headers: tcApiCfg.headers.filter(function(r){ return r.key; }),
+        auth: auth,
+        body_mode: bodyMode,
+        body: bodyMode === 'raw_json' || bodyMode === 'text' ? document.getElementById('tcApiBodyText').value : '',
+        body_params: tcApiCfg.body_params.filter(function(r){ return r.key; }),
+        assertions: assertions,
+        extraction_rules: extractionRules,
+      },
+    };
+
+    btn.disabled = true;
+    barBtn.disabled = true;
+    apiFetch('/api/automation/test-cases/' + autoSelectedTc.id + '/api-request-config', {
+      method: 'PATCH', body: JSON.stringify(payload),
+    }).then(function(){
+      toast('Request configuration saved.');
+      refreshExecuteReadiness();
+      loadTypeTestCases('API');
+      loadApiRequestConfig(autoSelectedTc);
+    }).catch(function(err){
+      toast(err.message, true);
+    }).then(function(){ btn.disabled = false; barBtn.disabled = !autoCanEdit(); });
+  }
+  document.getElementById('tcApiRequestConfigSaveBtn').addEventListener('click', saveApiRequestConfig);
+  document.getElementById('tcApiRequestBarSaveBtn').addEventListener('click', saveApiRequestConfig);
 
   // ---- Script actions (branch by automation type — Playwright/API vs SQL) ----
   document.getElementById('tcSaveScriptBtn').addEventListener('click', function(){
@@ -3573,7 +4441,11 @@
   // data. Never mutates the server; safe to call as often as needed
   // (after Save, after Validate, on tab switch, after Set Active).
   function renderScriptEditor(){
-    if(!autoSelectedTc || autoSelectedType === 'SQL') return;
+    // REMOVE-SCRIPT-LIFECYCLE item 1: the Automation Script workspace
+    // this function renders into is completely hidden for API (see
+    // the isApi toggles in selectTestCase()) — nothing left for it to
+    // populate, so skip it exactly like the pre-existing SQL case.
+    if(!autoSelectedTc || autoSelectedType === 'SQL' || autoSelectedType === 'API') return;
     resetScriptSearch(); // new script text is about to replace the old — stale match positions must not carry over
     var tc = autoSelectedTc;
     var isApi = autoSelectedType === 'API';
@@ -3631,14 +4503,36 @@
     } else {
       notice.style.display = 'none';
     }
+    renderScriptGutter();
   }
 
   // ---- Item 6: compact in-editor Find (never mutates the script) ----
   var tcSearchMatches = [];
   var tcSearchIndex = -1;
+  var tcReplayCurrentStep = null;
+  var tcReplayFailedStep = null;
+
+  function renderScriptGutter(){
+    var editor=document.getElementById('tcScriptEditor'), gutter=document.getElementById('tcScriptGutter');
+    if(!editor||!gutter)return;
+    var lines=(editor.value||'').split('\n'), activeLine=-1, failedLine=-1;
+    lines.forEach(function(line,index){
+      var marker=line.match(/^\s*#\s*QA_STEP:\s*(\d+)/i);
+      if(!marker)return;
+      var step=Number(marker[1]);
+      if(step===Number(tcReplayCurrentStep))activeLine=index;
+      if(step===Number(tcReplayFailedStep))failedLine=index;
+    });
+    gutter.innerHTML=lines.map(function(_,index){
+      var cls=index===failedLine?'qa-failed':(index===activeLine?'qa-current':'');
+      return '<span class="'+cls+'">'+(index+1)+'</span>';
+    }).join('');
+    gutter.scrollTop=editor.scrollTop;
+  }
 
   function renderScriptSearchHighlights(){
     var editor=document.getElementById('tcScriptEditor'), layer=document.getElementById('tcScriptHighlight');
+    renderScriptGutter();
     if(!editor||!layer)return;
     var text=editor.value||'', html='', cursor=0;
     tcSearchMatches.forEach(function(match,index){
@@ -4134,9 +5028,17 @@
         '<div>Started</div><div>' + formatDateTime(run.started_at) + '</div>' +
         '<div>Finished</div><div>' + formatDateTime(run.finished_at) + '</div>' +
         '<div>Duration</div><div>' + autoDurationLabel(run.duration_seconds) + '</div>' +
+        '<div>Final Message</div><div>' + escapeHtml(run.final_message || run.error_message || '—') + '</div>' +
         '<div>Exit Code</div><div>' + (run.return_code === null || run.return_code === undefined ? '—' : run.return_code) + '</div>' +
         (run.error_message ? '<div>Error</div><div style="color:var(--danger);">' + escapeHtml(run.error_message) + '</div>' : '') +
       '</div>';
+    if(run.runtime_activity && run.runtime_activity.length){
+      html += '<div class="field-label" style="margin-top:10px;">Runtime Activity</div><div style="max-height:340px;overflow:auto;">' + run.runtime_activity.map(function(item){
+        var event=item.event||{}, details=event.details||{}, selected=event.selected_candidate||(event.selection&&event.selection.selected_candidate)||{};
+        var label=event.message||details.action||event.error||selected.locator||event.corrected||item.type;
+        return '<div style="padding:7px 8px;margin:3px 0;border-radius:5px;background:'+(item.type==='step_failed'?'#fee2e2':'var(--surface-sunken)')+';"><strong>'+escapeHtml(formatDateTime(item.timestamp))+' · '+escapeHtml(item.type.replace(/_/g,' '))+'</strong><div class="muted-small" style="white-space:pre-wrap;">'+escapeHtml(label||'')+'</div></div>';
+      }).join('') + '</div>';
+    }
     if(run.stdout){
       html += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">stdout</summary><pre class="code-block" style="max-height:200px;overflow:auto;">' + escapeHtml(run.stdout) + '</pre></details>';
     }
@@ -4166,6 +5068,35 @@
   var interactiveSocket = null;
   var currentRepairEvent = null;
   var lastAiSuggestionCode = '';
+  var replayEventKeys = new Set();
+
+  function updateReplayStatus(state, current, browserState, event){
+    var card = document.getElementById('pwReplayStatus');
+    if(!card) return;
+    card.style.display = 'block';
+    document.getElementById('pwReplayState').textContent = String(state || 'RUNNING').toUpperCase();
+    document.getElementById('pwReplayBrowser').textContent = browserState || 'Open';
+    if(current) document.getElementById('pwReplayCurrent').textContent = current;
+    if(event && event.step !== undefined){
+      document.getElementById('pwReplayStep').textContent = event.step + ' / ' + (event.total_steps || '—');
+      tcReplayCurrentStep = event.step;
+      renderScriptGutter();
+    }
+    var stop = document.getElementById('pwStopReplayBtn');
+    stop.style.display = browserState === 'Closed' ? 'none' : 'inline-flex';
+    stop.disabled = String(state).toUpperCase() === 'STOPPING';
+  }
+
+  function appendReplayActivity(runId, type, event, text, failed){
+    var payload=event||{}, selected=payload.selected_candidate||(payload.selection&&payload.selection.selected_candidate)||{};
+    var key=[runId||'',type||'',payload.step===undefined?'':payload.step,payload.attempt||'',payload.persisted===undefined?'':payload.persisted,payload.error||payload.message||'',selected.expression||selected.locator||''].join('|');
+    if(replayEventKeys.has(key))return;
+    replayEventKeys.add(key);
+    var log=document.getElementById('pwReplayActivity'), row=document.createElement('div');
+    row.style.cssText='padding:7px 8px;margin:3px 0;border-radius:5px;white-space:pre-wrap;'+(failed?'background:#fee2e2;color:#7f1d1d;':'background:var(--surface-sunken);');
+    row.textContent=new Date().toLocaleTimeString()+'\n'+text;
+    log.appendChild(row);log.scrollTop=log.scrollHeight;
+  }
 
   function interactiveSend(payload){
     if(interactiveSocket && interactiveSocket.readyState === WebSocket.OPEN){
@@ -4177,10 +5108,18 @@
     currentRepairEvent = event;
     lastAiSuggestionCode = '';
     document.getElementById('repairTitle').textContent =
-      'Step ' + event.step + ' Failed — Element Not Found' + (event.attempt > 1 ? ' (attempt ' + event.attempt + ')' : '');
+      'Step ' + event.step + ' of ' + event.total_steps + ' Failed — Element Not Found' + (event.attempt > 1 ? ' (attempt ' + event.attempt + ')' : '');
     document.getElementById('repairCode').textContent = event.code || '';
     document.getElementById('repairError').textContent = 'Error: ' + (event.error || '');
     document.getElementById('repairContext').textContent = 'Page: ' + (event.title || '(unknown)') + '  (' + (event.url || '') + ')';
+    var repairDetails = event.details || {};
+    document.getElementById('repairStepMetadata').innerHTML =
+      '<div>Field</div><div>' + escapeHtml(repairDetails.field_name || '—') + '</div>' +
+      '<div>Section</div><div>' + escapeHtml(repairDetails.section || '—') + '</div>' +
+      '<div>Type</div><div>' + escapeHtml(repairDetails.field_type || '—') + '</div>' +
+      '<div>Action</div><div class="mono">' + escapeHtml(repairDetails.action_type || '—') + '</div>' +
+      '<div>Fallbacks</div><div class="mono" style="overflow-wrap:anywhere;">' + escapeHtml(repairDetails.fallback_locators || '—') + '</div>' +
+      '<div>XPath</div><div class="mono" style="overflow-wrap:anywhere;">' + escapeHtml(repairDetails.xpath || '—') + '</div>';
     document.getElementById('repairLocator').value = event.locator || '';
     var hasValue = !!event.value;
     document.getElementById('repairValue').value = event.value || '';
@@ -4196,9 +5135,15 @@
     document.getElementById('repairAiExplanation').style.display = 'none';
     document.getElementById('repairApplyAiBtn').style.display = 'none';
     document.getElementById('repairAskAiBtn').disabled = false;
+    document.getElementById('repairSelectElementBtn').disabled = false;
+    document.getElementById('repairSelectElementBtn').textContent = 'Select Element in Browser';
+    document.getElementById('repairCancelSelectionBtn').style.display = 'none';
+    document.getElementById('repairRetryBtn').disabled = false;
     document.getElementById('repairVerifyBtn').disabled = false;
     document.getElementById('repairVerifyStatus').textContent = '';
     document.getElementById('repairVerifyStatus').style.color = '';
+    document.getElementById('repairSelectedLocator').style.display = 'none';
+    document.getElementById('repairSelectedLocator').textContent = '';
     document.getElementById('tcRepairModal').classList.add('show');
   }
 
@@ -4277,9 +5222,28 @@
     });
   });
 
+  document.getElementById('repairSelectElementBtn').addEventListener('click', function(){
+    this.disabled = true;
+    this.textContent = 'Waiting for element click...';
+    document.getElementById('repairRetryBtn').disabled = true;
+    document.getElementById('repairVerifyBtn').disabled = true;
+    var statusEl = document.getElementById('repairVerifyStatus');
+    statusEl.style.color = '';
+    statusEl.textContent = 'WAITING FOR USER CLICK — timeout 120s. Go to the Playwright browser and click the exact control you want.';
+    document.getElementById('repairCancelSelectionBtn').style.display = 'inline-flex';
+    interactiveSend({ type: 'decision', decision: { action: 'select_element' } });
+  });
+
+  document.getElementById('repairCancelSelectionBtn').addEventListener('click', function(){
+    this.disabled = true;
+    document.getElementById('repairVerifyStatus').textContent = 'Cancelling element selection; replay will remain paused.';
+    interactiveSend({type:'cancel_selection'});
+  });
+
   document.getElementById('repairCancelBtn').addEventListener('click', function(){
     closeRepairModal();
-    interactiveSend({ type: 'decision', decision: { action: 'cancel' } });
+    updateReplayStatus('STOPPING', 'Cancelling during locator repair.', 'Closing');
+    interactiveSend({ type: 'cancel_run' });
   });
 
   document.getElementById('repairAskAiBtn').addEventListener('click', function(){
@@ -4340,6 +5304,11 @@
       '<div>Test Case</div><div>' + escapeHtml(tc.tc_number || '') + '</div>' +
       '<div>Status</div><div class="muted-small">Launching browser and running the script…</div>';
     document.getElementById('tcRunResult').innerHTML = '';
+    document.getElementById('pwReplayActivity').textContent = '';
+    replayEventKeys = new Set();
+    document.getElementById('pwReplayTestCase').textContent = tc.tc_number || String(tc.id);
+    updateReplayStatus('STARTING', 'Launching replay', 'Opening');
+    appendReplayActivity('', 'launch', {}, 'Launching replay for ' + (tc.tc_number || 'test case') + '.');
     if(isSelectedTc){
       document.getElementById('tcExecuteBtn').disabled = true;
       document.getElementById('tcCancelBtn').style.display = 'inline-flex';
@@ -4349,6 +5318,7 @@
     var socket = new WebSocket(url);
     interactiveSocket = socket;
     var finished = false;
+    var activeRunId = '';
 
     function done(){
       if(finished) return;
@@ -4359,7 +5329,6 @@
         document.getElementById('tcExecuteBtn').disabled = !autoCanExecute();
         document.getElementById('tcCancelBtn').style.display = 'none';
       }
-      document.getElementById('tcRunLive').style.display = 'none';
       onDone();
     }
 
@@ -4378,14 +5347,73 @@
       var msg;
       try { msg = JSON.parse(ev.data); } catch(e){ return; }
 
-      if(msg.type === 'progress'){
+      if(msg.type === 'started'){
+        activeRunId = msg.run_uuid || '';
+      } else if(msg.type === 'progress'){
+        updateReplayStatus('RUNNING', msg.text, 'Open');
+        appendReplayActivity(activeRunId, 'progress', msg, msg.text);
         var kv = document.getElementById('tcRunLiveKv');
         if(kv) kv.innerHTML =
           '<div>Test Case</div><div>' + escapeHtml(tc.tc_number || '') + '</div>' +
           '<div>Status</div><div class="muted-small">' + escapeHtml(msg.text) + '</div>';
       } else if(msg.type === 'step_failed'){
+        tcReplayFailedStep = msg.event.step;
+        updateReplayStatus('WAITING FOR USER', 'Paused on locator failure', 'Waiting', msg.event);
+        var fd=msg.event.details||{};
+        appendReplayActivity(activeRunId,'step_failed',msg.event,'✕ Step '+msg.event.step+' locator not found\nField: '+(fd.field_name||'—')+' ('+(fd.field_type||'unknown')+')\nAction:\n'+(fd.action||msg.event.code||'')+'\nSaved Locator:\n'+(fd.locator||msg.event.locator||'—')+'\nFallbacks:\n'+(fd.fallback_locators||'—')+'\nSaved XPath:\n'+(fd.xpath||'—')+'\nFailure:\n'+(msg.event.error||'Unknown failure'),true);
         openRepairModal(msg.event);
+        setTimeout(function(){
+          appendReplayActivity(activeRunId,'selection_required',msg.event,'Selection required after automatic parent and fallback repair attempts.');
+          document.getElementById('repairSelectElementBtn').click();
+        },0);
+      } else if(msg.type === 'auto_repair_attempted'){
+        appendReplayActivity(activeRunId,'auto_repair_attempted',msg.event,'Automatic repair attempted for Step '+msg.event.step+'.');
+      } else if(msg.type === 'parent_reopen_succeeded'){
+        appendReplayActivity(activeRunId,'parent_reopen_succeeded',msg.event,'Parent control reopened and Step '+msg.event.step+' passed.');
+      } else if(msg.type === 'step_started'){
+        updateReplayStatus('RUNNING', (msg.event.details&&msg.event.details.action)||('Executing Step '+msg.event.step), 'Open', msg.event);
+      } else if(msg.type === 'step_retrying'){
+        updateReplayStatus('RETRYING', 'Retrying Step ' + msg.event.step, 'Open', msg.event);
+        appendReplayActivity(activeRunId,'step_retrying',msg.event,'↻ Retrying Step '+msg.event.step+' in the same browser.');
+      } else if(msg.type === 'step_passed'){
+        tcReplayFailedStep = null;
+        updateReplayStatus('RUNNING', 'Step ' + msg.event.step + ' passed', 'Open', msg.event);
+        var pd=msg.event.details||{};
+        appendReplayActivity(activeRunId,'step_passed',msg.event,'✓ Step '+msg.event.step+' passed\nField: '+(pd.field_name||'—')+' ('+(pd.field_type||'unknown')+')\nAction:\n'+(pd.action||'')+'\nSaved Locator:\n'+(pd.locator||'—')+'\nFallbacks:\n'+(pd.fallback_locators||'—')+'\nSaved XPath:\n'+(pd.xpath||'—'));
+      } else if(msg.type === 'fallback_succeeded'){
+        var fb=msg.event.details||{};
+        updateReplayStatus('RUNNING', 'Step ' + msg.event.step + ' recovered with a saved fallback', 'Open', msg.event);
+        appendReplayActivity(activeRunId,'fallback_succeeded',msg.event,'↪ Step '+msg.event.step+' used a validated fallback locator.\nLocator:\n'+(fb.locator||'—'));
+      } else if(msg.type === 'selection_started' || msg.type === 'selection_waiting'){
+        updateReplayStatus('WAITING FOR USER', 'Go to the Playwright browser and click the required element.', 'Waiting', msg.event);
+        document.getElementById('pwCancelSelectionBtn').style.display='inline-flex';
+        document.getElementById('repairCancelSelectionBtn').style.display='inline-flex';
+        if(msg.type==='selection_waiting')document.getElementById('repairVerifyStatus').textContent='WAITING FOR USER CLICK — timeout '+((msg.event&&msg.event.timeout_seconds)||120)+'s. Go to the Playwright browser and click the exact control you want.';
+        if(msg.type==='selection_waiting')appendReplayActivity(activeRunId,'selection_waiting',msg.event,'⏳ Selection mode active.\nClick the required element in the Playwright browser.\nPress Esc to cancel selection.');
+      } else if(msg.type === 'selection_cancelled'){
+        document.getElementById('pwCancelSelectionBtn').style.display='none';
+        document.getElementById('repairCancelSelectionBtn').style.display='none';
+        document.getElementById('repairCancelSelectionBtn').disabled=false;
+        updateReplayStatus('WAITING FOR USER', (msg.event && msg.event.error) || 'Element selection cancelled.', 'Waiting', msg.event);
+        document.getElementById('repairSelectElementBtn').disabled = false;
+        document.getElementById('repairSelectElementBtn').textContent = 'Select Element in Browser';
+        document.getElementById('repairRetryBtn').disabled = false;
+        document.getElementById('repairVerifyBtn').disabled = false;
+        document.getElementById('repairVerifyStatus').textContent = (msg.event && msg.event.error) || 'Selection cancelled. You can select again.';
+      } else if(msg.type === 'selection_failed'){
+        document.getElementById('pwCancelSelectionBtn').style.display='none';
+        document.getElementById('repairCancelSelectionBtn').style.display='none';
+        document.getElementById('repairCancelSelectionBtn').disabled=false;
+        updateReplayStatus('WAITING FOR USER', 'Element selection failed.', 'Waiting', msg.event);
+        document.getElementById('repairSelectElementBtn').disabled = false;
+        document.getElementById('repairSelectElementBtn').textContent = 'Select Element in Browser';
+        document.getElementById('repairRetryBtn').disabled = false;
+        document.getElementById('repairVerifyBtn').disabled = false;
+        document.getElementById('repairVerifyStatus').style.color = 'var(--danger)';
+        document.getElementById('repairVerifyStatus').textContent = (msg.event && msg.event.error) || 'Element selection failed. Try again or stop replay.';
       } else if(msg.type === 'step_repaired'){
+        updateReplayStatus('RUNNING', 'Step ' + msg.repair.step + ' repaired', 'Open', msg.repair);
+        appendReplayActivity(activeRunId,'step_repaired',msg.repair,'✓ Step '+msg.repair.step+' repaired and '+(msg.persisted?'saved.':'not saved.'),!msg.persisted);
         if(msg.persisted){
           toast('Step ' + msg.repair.step + ' fixed and saved into the active script — replay is continuing from the next step.');
           // The live-proven repair is already persisted server-side.
@@ -4452,7 +5480,52 @@
           vstatus.style.color = 'var(--danger)';
           vstatus.textContent = '✗ Locator not found on the current page (0 matches).' + (ev.error ? ' ' + ev.error : '') + ' Retry will likely fail — try another locator or ask AI again.';
         }
+      } else if(msg.type === 'element_selected'){
+        console.info('[repair] frontend received element_selected', msg.event && msg.event.step);
+        var selection = msg.event || {};
+        var selected = selection.selected_candidate;
+        var selectButton = document.getElementById('repairSelectElementBtn');
+        selectButton.disabled = false;
+        selectButton.textContent = 'Select Element in Browser';
+        document.getElementById('repairRetryBtn').disabled = false;
+        document.getElementById('repairVerifyBtn').disabled = false;
+        if(!selected || !selection.corrected_code){
+          var selectStatus = document.getElementById('repairVerifyStatus');
+          var tested = selection.candidates || [];
+          var diagnostics = tested.slice(0,4).map(function(candidate){
+            var verification=candidate.verification||{};
+            return (candidate.label||candidate.locator||candidate.expression||candidate.type)+' → '+verification.count+' match'+(verification.count===1?'':'es')+(candidate.rejected_reason?' ('+candidate.rejected_reason+')':'');
+          });
+          selectStatus.style.color = 'var(--danger)';
+          selectStatus.textContent = 'Captured: '+(selection.field_name||(selection.clicked&&selection.clicked.text)||'element')+'. Section: '+(selection.section||'not detected')+'. Candidates tested: '+tested.length+'.'+(diagnostics.length?' '+diagnostics.join('; ')+'.':'')+' No unique visible actionable locator was verified; try selection again or use Advanced Edit.';
+          return;
+        }
+        document.getElementById('pwCancelSelectionBtn').style.display='none';
+        document.getElementById('repairCancelSelectionBtn').style.display='none';
+        updateReplayStatus('RETRYING', 'Captured element; retrying failed step', 'Open', msg.event);
+        appendReplayActivity(activeRunId,'element_selected',msg.event,'✓ Element captured and live verified.\nSelected Element:\n'+(selection.field_name||(selection.clicked&&selection.clicked.text)||(selection.clicked&&selection.clicked.tag)||'element')+'\nSelected Locator:\n'+(selection.locator||selected.expression||selected.locator)+'\nRelative XPath:\n'+(selection.xpath||'—')+'\nValidation:\nUnique + Visible + Actionable');
+        document.getElementById('repairLocator').value = selection.locator || selected.expression || selected.locator || '';
+        document.getElementById('repairAdvancedCheckbox').checked = true;
+        document.getElementById('repairCodeEdit').value = selection.corrected_code;
+        document.getElementById('repairCodeEdit').style.display = '';
+        var selectedEl = document.getElementById('repairSelectedLocator');
+        selectedEl.textContent = 'Selected Element: ' + (selection.field_name || (selection.clicked&&selection.clicked.text) || (selection.clicked&&selection.clicked.tag) || 'element') +
+          '\nSection: ' + (selection.section || 'Unavailable') +
+          '\nSelected Locator: ' + (selected.locator || selected.expression) +
+          '\nAlternative XPath: ' + (selection.xpath || 'Unavailable') +
+          '\nValidation: Unique + Visible';
+        selectedEl.style.whiteSpace = 'pre-wrap';
+        selectedEl.title = selectedEl.textContent;
+        selectedEl.style.display = '';
+        var runKv = document.getElementById('tcRunLiveKv');
+        if(runKv) runKv.innerHTML =
+          '<div>Status</div><div class="muted-small">Selected element verified with ' + escapeHtml(selected.type || 'locator') + '. Retrying the same step…</div>' +
+          '<div>Locator</div><div class="muted-small" title="' + escapeHtml(selected.locator || selected.expression) + '">' + escapeHtml(selected.locator || selected.expression) + '</div>' +
+          '<div>XPath</div><div class="muted-small" title="' + escapeHtml(selection.xpath || '') + '">' + escapeHtml(selection.xpath || '—') + '</div>';
+        toast('Element captured and live-verified. Retrying the same failed step with ' + (selected.locator || selected.expression) + '.');
+        closeRepairModal();
       } else if(msg.type === 'error'){
+        updateReplayStatus('ERROR', msg.message || 'Replay error.', 'Closed');
         toast(msg.message, true);
       } else if(msg.type === 'repairs_saved'){
         // Confirms apply_script_repairs() has now actually written the
@@ -4498,6 +5571,9 @@
       } else if(msg.type === 'finished'){
         closeRepairModal();
         var result = msg.result || {};
+        document.getElementById('pwCancelSelectionBtn').style.display='none';
+        updateReplayStatus(result.cancelled ? 'USER CANCELLED' : (result.success ? 'PASSED' : (result.error?'ERROR':'FAILED')), result.cancelled ? 'Replay cancelled' : (result.success ? 'Replay completed successfully' : 'Replay failed'), 'Closed');
+        appendReplayActivity(activeRunId,'finished',msg,result.cancelled?'Replay cancelled.\nBrowser cleanup completed.':(result.success?'Replay completed successfully.\nBrowser cleanup completed.':'Replay failed.\nBrowser cleanup completed.'),!result.success&&!result.cancelled);
         if(msg.run_uuid){
           apiFetch('/api/automation/runs/' + msg.run_uuid).then(function(run){
             renderRunResult(document.getElementById('tcRunResult'), run);
@@ -4569,6 +5645,19 @@
     });
   });
 
+  document.getElementById('pwStopReplayBtn').addEventListener('click', function(){
+    if(!interactiveSocket) return;
+    updateReplayStatus('STOPPING', 'Stop requested by user.', 'Closing');
+    appendReplayActivity('', 'stop_requested', {}, 'Stop requested by user.');
+    interactiveSend({ type: 'stop_run' });
+  });
+
+  document.getElementById('pwCancelSelectionBtn').addEventListener('click', function(){
+    this.style.display='none';
+    updateReplayStatus('WAITING FOR USER', 'Cancelling element selection…', 'Waiting');
+    interactiveSend({type:'cancel_selection'});
+  });
+
   // ---- Execute (API — real HTTP request) ----
   function runExecuteApi(endpointId){
     if(!autoSelectedTc) return;
@@ -4630,19 +5719,39 @@
     });
   }
 
+  // Section 11: everything after Execute — status/verdict/elapsed/
+  // assertion results/extracted variable NAMES (never values — those
+  // stay in Test Environment Settings, masked on read just like
+  // every other secret)/masked response headers+body/error. Every
+  // value here already comes back masked from execute_api() (see
+  // Core/automation_web_repository.py) — nothing further to redact
+  // client-side.
   function renderApiExecuteResult(body){
     var r = body.result;
     var verdictPill = r.auto_verdict === 'Pass' ? resultPillHtml('Pass')
-      : (r.error ? resultPillHtml('Fail') : '<span class="pill pill-notrun">Needs review</span>');
+      : (r.auto_verdict === 'Fail' ? resultPillHtml('Fail') : '<span class="pill pill-notrun">Needs review</span>');
+    var assertionRows = (r.assertions || []).map(function(a){
+      return '<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12.5px;">' +
+        '<strong style="color:' + (a.passed ? 'var(--success)' : 'var(--danger)') + ';">' + (a.passed ? '✓' : '✗') + '</strong>' +
+        '<div>' + escapeHtml(a.label || a.type || '') + (a.message ? '<div class="muted-small">' + escapeHtml(a.message) + '</div>' : '') + '</div>' +
+      '</div>';
+    }).join('');
+    var extractedNames = Object.keys(r.extracted_variables || {});
+    var headerRows = Object.keys(r.response_headers || {}).map(function(k){
+      return '<div>' + escapeHtml(k) + '</div><div class="mono">' + escapeHtml(String(r.response_headers[k])) + '</div>';
+    }).join('');
     document.getElementById('tcRunResult').innerHTML =
       '<div class="kv">' +
         '<div>Endpoint</div><div class="mono">' + escapeHtml(body.endpoint.method) + ' ' + escapeHtml(body.endpoint.url) + '</div>' +
         '<div>Status Code</div><div>' + (r.status_code === null ? '—' : r.status_code) + (r.expected_status ? ' (expected ' + r.expected_status + ')' : '') + '</div>' +
-        '<div>Elapsed</div><div>' + (r.elapsed_ms ? r.elapsed_ms + ' ms' : '—') + '</div>' +
+        '<div>Response Time</div><div>' + (r.elapsed_ms ? r.elapsed_ms + ' ms' : '—') + '</div>' +
         '<div>Verdict</div><div>' + verdictPill + '</div>' +
         (r.error ? '<div>Error</div><div style="color:var(--danger);">' + escapeHtml(r.error) + '</div>' : '') +
       '</div>' +
-      '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Response Body</summary><pre class="code-block" style="max-height:220px;overflow:auto;">' + escapeHtml(r.response_body_text || '') + '</pre></details>';
+      (assertionRows ? '<div class="field-label" style="margin-top:10px;">Assertion Results</div>' + assertionRows : '') +
+      (extractedNames.length ? '<div class="field-label" style="margin-top:10px;">Extracted Variables</div><div class="muted-small">' + extractedNames.map(function(n){ return '{{' + escapeHtml(n) + '}}'; }).join(', ') + ' — saved to Test Environment Settings for reuse.</div>' : '') +
+      '<details style="margin-top:10px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Response Headers (masked)</summary><div class="kv" style="margin-top:6px;">' + (headerRows || '<div class="muted-small">None.</div>') + '</div></details>' +
+      '<details style="margin-top:8px;" open><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Response Body (masked)</summary><pre class="code-block" style="max-height:220px;overflow:auto;">' + escapeHtml(r.response_body_text || '') + '</pre></details>';
     loadTypeTestCases('API');
     loadTypeLog('API');
   }
@@ -4695,8 +5804,9 @@
   // task's spec (Manual Excel Import lives on the Playwright Automation
   // tab). Pre-fills from whatever Domain/Module/Knowledge is currently
   // selected there, same as the old Test Cases tab used to.
+  var tcImportAutomationType = 'Playwright';
   function refreshImportHierarchy(level){
-    var sources=(autoScopesByType.Playwright.sources || []), domain=document.getElementById('tcImportDomain').value,
+    var sources=(autoScopesByType[tcImportAutomationType].sources || []), domain=document.getElementById('tcImportDomain').value,
       module=document.getElementById('tcImportModule').value, knowledge=document.getElementById('tcImportKnowledge').value,
       version=document.getElementById('tcImportVersion').value, docType=document.getElementById('tcImportDocumentType').value;
     function set(id, values, placeholder, enabled){var sel=document.getElementById(id);fillSelect(sel,values,placeholder);sel.disabled=!enabled;}
@@ -4716,11 +5826,12 @@
   document.getElementById('tcImportKnowledge').addEventListener('change',function(){refreshImportHierarchy('knowledge');});
   document.getElementById('tcImportVersion').addEventListener('change',function(){refreshImportHierarchy('version');});
   document.getElementById('tcImportDocumentType').addEventListener('change',function(){refreshImportHierarchy('document_type');});
-  document.getElementById('pwImportBtn').addEventListener('click', function(){
+  document.querySelectorAll('.at-import').forEach(function(importButton){importButton.addEventListener('click', function(){
+    var importPanel=importButton.closest('.auto-type-panel');
+    tcImportAutomationType=importPanel.getAttribute('data-automation-type') || 'Playwright';
     document.getElementById('tcImportError').textContent = '';
     document.getElementById('tcImportSummary').innerHTML = '';
-    var pwPanel = panelFor('Playwright');
-    var scope=activeTypeScope('Playwright'), sources=autoScopesByType.Playwright.sources || [];
+    var scope=activeTypeScope(tcImportAutomationType), sources=autoScopesByType[tcImportAutomationType].sources || [];
     fillSelect(document.getElementById('tcImportDomain'),uniqueVals(sources.map(function(s){return s.domain;})),'Select Domain…');
     document.getElementById('tcImportDomain').value=scope.domain||''; refreshImportHierarchy('domain');
     document.getElementById('tcImportModule').value=scope.module||''; refreshImportHierarchy('module');
@@ -4730,9 +5841,19 @@
     setSourcePickerSelection(document.getElementById('tcImportSourcePicker'),scope.source_knowledge_ids);
     document.getElementById('tcImportFile').value = '';
     document.getElementById('tcImportModal').classList.add('show');
-  });
+  });});
   document.getElementById('tcImportCancel').addEventListener('click', function(){
     document.getElementById('tcImportModal').classList.remove('show');
+  });
+  document.getElementById('tcImportFile').addEventListener('change', function(){
+    var errBox = document.getElementById('tcImportError');
+    var f = this.files && this.files[0];
+    if(f && !/\.xlsx$/i.test(f.name)){
+      errBox.textContent = 'External Test Case Import accepts Excel test case files only.\nUse API Collection upload/import for Postman JSON collections.';
+      this.value = '';
+    } else {
+      errBox.textContent = '';
+    }
   });
   document.getElementById('tcImportRun').addEventListener('click', function(){
     var domain = document.getElementById('tcImportDomain').value.trim();
@@ -4746,6 +5867,10 @@
     errBox.textContent = '';
     if(!domain || !module || !knowledge || !version || !documentType || !sourceIds.length){ errBox.textContent = 'Complete the hierarchy and select at least one Source File.'; return; }
     if(!fileInput.files.length){ errBox.textContent = 'Choose an .xlsx file to import.'; return; }
+    if(!/\.xlsx$/i.test(fileInput.files[0].name)){
+      errBox.textContent = 'External Test Case Import accepts Excel test case files only.\nUse API Collection upload/import for Postman JSON collections.';
+      return;
+    }
     var formData = new FormData();
     formData.append('file', fileInput.files[0]);
     formData.append('domain', domain);
@@ -4754,6 +5879,8 @@
     if(version) formData.append('version', version);
     formData.append('document_type', documentType);
     sourceIds.forEach(function(id){formData.append('source_knowledge_ids',id);});
+    formData.append('automation_type',tcImportAutomationType);
+    var importedFileName=fileInput.files[0].name;
     var runBtn = document.getElementById('tcImportRun');
     runBtn.disabled = true;
     fetch(API_BASE + '/api/automation/test-cases/import', {
@@ -4767,33 +5894,35 @@
       });
     }).then(function(result){
       document.getElementById('tcImportSummary').innerHTML =
-        '<div class="muted-small">Imported: ' + (result.imported || 0) +
-        '<br>Skipped duplicates: ' + (result.skipped_duplicates || 0) +
-        '<br>Rejected: ' + (result.rejected || 0) + '.' +
-        (result.errors && result.errors.length ? '<br>' + result.errors.map(escapeHtml).join('<br>') : '') + '</div>';
+        '<div class="muted-small"><strong>Import Completed</strong><br>Document: ' + escapeHtml(result.document || importedFileName) +
+        '<br>Imported: ' + (result.imported || 0) +
+        '<br>Skipped: ' + (result.skipped || 0) +
+        '<br>Failed: ' + (result.rejected || 0) +
+        '<br>Automation Target: ' + escapeHtml(result.automation_target || tcImportAutomationType) + '.' +
+        (result.errors && result.errors.length ? '<br><br><strong>Import failures</strong><br>' + result.errors.map(escapeHtml).join('<br>') : '') + '</div>';
       toast('Imported ' + (result.imported || 0) + ' test case(s).');
-      var pwPanel = panelFor('Playwright');
-      return loadTypeScopes('Playwright').then(function(){
-        pwPanel.querySelector('.at-domain').value = domain;
-        refreshTypeModuleOptions('Playwright');
-        pwPanel.querySelector('.at-module').value = module;
-        refreshTypeKnowledgeOptions('Playwright');
-        pwPanel.querySelector('.at-knowledge').value = knowledge;
-        refreshTypeVersionOptions('Playwright');
-        pwPanel.querySelector('.at-version').value = version;
-        refreshTypeDocumentTypeOptions('Playwright');
-        pwPanel.querySelector('.at-document-type').value = documentType;
-        refreshTypeSourceOptions('Playwright');
-        setSourcePickerSelection(pwPanel.querySelector('.at-source-picker'),sourceIds);
-        refreshTypeDocumentOptions('Playwright');
-        pwPanel.querySelector('.at-document').value = fileInput.files[0].name;
-        refreshTypeScopeCount('Playwright');
-        return loadTypeTestCases('Playwright');
+      var targetPanel = panelFor(tcImportAutomationType);
+      return loadTypeScopes(tcImportAutomationType).then(function(){
+        targetPanel.querySelector('.at-domain').value = domain;
+        refreshTypeModuleOptions(tcImportAutomationType);
+        targetPanel.querySelector('.at-module').value = module;
+        refreshTypeKnowledgeOptions(tcImportAutomationType);
+        targetPanel.querySelector('.at-knowledge').value = knowledge;
+        refreshTypeVersionOptions(tcImportAutomationType);
+        targetPanel.querySelector('.at-version').value = version;
+        refreshTypeDocumentTypeOptions(tcImportAutomationType);
+        targetPanel.querySelector('.at-document-type').value = documentType;
+        refreshTypeSourceOptions(tcImportAutomationType);
+        setSourcePickerSelection(targetPanel.querySelector('.at-source-picker'),sourceIds);
+        refreshTypeDocumentOptions(tcImportAutomationType);
+        targetPanel.querySelector('.at-document').value = result.document || importedFileName;
+        refreshTypeScopeCount(tcImportAutomationType);
+        return loadTypeTestCases(tcImportAutomationType);
       });
     }).then(function(){
       document.getElementById('tcImportModal').classList.remove('show');
     }).catch(function(err){
-      errBox.textContent = err.message;
+      errBox.textContent = 'Import failed.\n' + err.message;
     }).then(function(){ runBtn.disabled = false; });
   });
 
@@ -4829,7 +5958,8 @@
       document.getElementById('envBaseUrl').value = env.base_url || '';
       document.getElementById('envUsername').value = env.username || '';
       document.getElementById('envPassword').value = '';
-      document.getElementById('envSlowMo').value = env.slow_mo_ms || '';
+      var replaySpeed=String(env.slow_mo_ms||'300');
+      document.getElementById('envSlowMo').value=['100','300','700','1200'].indexOf(replaySpeed)>=0?replaySpeed:'300';
       document.getElementById('envTimeout').value = env.default_timeout_ms || '';
       document.getElementById('envNotes').value = env.notes || '';
 
@@ -4965,6 +6095,40 @@
   }
   document.getElementById('sqlEnvDbType').addEventListener('change', sqlEnvToggleFields);
 
+  // QA-AI-STUDIO-SQL-TEST-CONNECTION-FRONTEND-FEEDBACK-FIX: the backend
+  // (/api/automation/sql/environment/test-connection) already returns a
+  // real {success, message, error} body on HTTP 200 -- the bug was purely
+  // that the result box is a shared ".auth-error" element which is
+  // "display:none" until a ".show" class is added, and the old handler
+  // never added it. Below: HTTP 200 alone is never treated as success --
+  // only result.success === true is. Nothing here reads/renders the
+  // password field or a connection string, only the non-secret fields the
+  // user themselves already typed into the form (db type / sqlite path /
+  // host / database).
+  function sqlEnvSetConnStatus(state){ // 'untested' | 'connected' | 'failed'
+    var el = document.getElementById('sqlEnvConnStatus');
+    if(!el) return;
+    el.className = 'sql-conn-status sql-conn-status--' + state;
+    el.textContent = state === 'connected' ? 'Connected' : (state === 'failed' ? 'Failed' : 'Not Tested');
+  }
+
+  function sqlEnvClearTestResult(){
+    var resultEl = document.getElementById('sqlEnvTestResult');
+    resultEl.classList.remove('show', 'success');
+    resultEl.innerHTML = '';
+  }
+
+  function sqlEnvResetOnFieldChange(){
+    sqlEnvSetConnStatus('untested');
+    sqlEnvClearTestResult();
+  }
+  ['sqlEnvDbType','sqlEnvSqlitePath','sqlEnvHost','sqlEnvPort','sqlEnvDatabase',
+   'sqlEnvUsername','sqlEnvPassword'].forEach(function(id){
+    var el = document.getElementById(id);
+    el.addEventListener('input', sqlEnvResetOnFieldChange);
+    el.addEventListener('change', sqlEnvResetOnFieldChange);
+  });
+
   function loadSqlEnvironment(){
     return apiFetch('/api/automation/sql/environment').then(function(env){
       document.getElementById('sqlEnvDbType').value = env.sql_db_type || 'sqlite';
@@ -4978,7 +6142,8 @@
       document.getElementById('sqlEnvMaxRows').value = env.sql_max_rows || '';
       document.getElementById('sqlEnvSecretHints').textContent = env.sql_password_is_set
         ? 'Password is set (unchanged unless you type a new one).' : '';
-      document.getElementById('sqlEnvTestResult').textContent = '';
+      sqlEnvClearTestResult();
+      sqlEnvSetConnStatus('untested');
       sqlEnvToggleFields();
       var canEdit = autoCanEdit();
       ['sqlEnvDbType','sqlEnvSqlitePath','sqlEnvHost','sqlEnvPort','sqlEnvDatabase',
@@ -4997,16 +6162,58 @@
     document.getElementById('sqlEnvModal').classList.remove('show');
   });
   document.getElementById('sqlEnvTestBtn').addEventListener('click', function(){
+    var btn = document.getElementById('sqlEnvTestBtn');
     var resultEl = document.getElementById('sqlEnvTestResult');
-    resultEl.textContent = 'Testing…';
-    resultEl.style.color = '';
-    apiFetch('/api/automation/sql/environment/test-connection', { method: 'POST' }).then(function(result){
-      resultEl.textContent = result.success ? (result.message || 'Connection succeeded.') : (result.error || 'Connection failed.');
-      resultEl.style.color = result.success ? 'var(--success)' : 'var(--danger)';
-    }).catch(function(err){
-      resultEl.textContent = err.message;
-      resultEl.style.color = 'var(--danger)';
-    });
+    var originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Testing…';
+    sqlEnvClearTestResult();
+    sqlEnvSetConnStatus('untested');
+    apiFetch('/api/automation/sql/environment/test-connection', { method: 'POST' })
+      .then(function(result){
+        // HTTP 200 is not treated as success by itself -- only an explicit
+        // success flag in the response body is.
+        var success = !!(result && result.success === true);
+        var dbType = document.getElementById('sqlEnvDbType').value || 'sqlite';
+        if(success){
+          sqlEnvSetConnStatus('connected');
+          var rows = [['Database Type', dbType.toUpperCase()]];
+          if(dbType === 'sqlite'){
+            rows.push(['SQLite Path', document.getElementById('sqlEnvSqlitePath').value || '(not set)']);
+          } else {
+            rows.push(['Host', document.getElementById('sqlEnvHost').value || '(not set)']);
+            rows.push(['Database', document.getElementById('sqlEnvDatabase').value || '(not set)']);
+          }
+          if(result.duration_seconds !== undefined && result.duration_seconds !== null){
+            rows.push(['Connection Time', result.duration_seconds + 's']);
+          }
+          rows.push(['Read-Only Validation', 'Passed']);
+          resultEl.innerHTML = '<span class="sql-conn-heading">SQL Connection Successful</span>' +
+            rows.map(function(r){
+              return '<div class="sql-conn-detail-row"><span>' + escapeHtml(r[0]) + '</span><strong>' + escapeHtml(String(r[1])) + '</strong></div>';
+            }).join('');
+          resultEl.classList.add('show', 'success');
+          toast('SQL connection successful.');
+        } else {
+          sqlEnvSetConnStatus('failed');
+          var reason = (result && (result.error || result.message)) || 'Connection failed.';
+          resultEl.innerHTML = '<span class="sql-conn-heading">SQL Connection Failed</span>' +
+            '<div class="sql-conn-detail-row"><span>Reason</span><strong>' + escapeHtml(reason) + '</strong></div>';
+          resultEl.classList.add('show');
+          toast('SQL connection failed.', true);
+        }
+      })
+      .catch(function(err){
+        sqlEnvSetConnStatus('failed');
+        resultEl.innerHTML = '<span class="sql-conn-heading">SQL Connection Failed</span>' +
+          '<div class="sql-conn-detail-row"><span>Reason</span><strong>' + escapeHtml(err.message || 'Request failed.') + '</strong></div>';
+        resultEl.classList.add('show');
+        toast('SQL connection failed.', true);
+      })
+      .then(function(){
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      });
   });
   document.getElementById('sqlEnvSaveBtn').addEventListener('click', function(){
     var payload = {
@@ -5099,7 +6306,34 @@
       }),
     }).then(function(result){
       toast('Generated ' + (result.generated || 0) + ' API automation script(s), skipped ' + (result.skipped || 0) + '.');
-      loadTypeTestCases('API');
+      var panel = panelFor('API');
+      // The generated test cases are grouped under a real, canonical
+      // document (test_case_document_name / source_knowledge_ids) even
+      // though no file was ever uploaded for them — refresh the type's
+      // scopes/options so that document appears in the Test Case
+      // Document dropdown, then auto-select it and reload the grid so
+      // the newly generated rows are visible immediately instead of
+      // requiring a manual refresh.
+      return loadTypeScopes('API').then(function(){
+        panel.querySelector('.at-domain').value = scope.domain;
+        refreshTypeModuleOptions('API');
+        panel.querySelector('.at-module').value = scope.module;
+        refreshTypeKnowledgeOptions('API');
+        panel.querySelector('.at-knowledge').value = scope.knowledge_name;
+        refreshTypeVersionOptions('API');
+        if(scope.version) panel.querySelector('.at-version').value = scope.version;
+        refreshTypeDocumentTypeOptions('API');
+        if(result.document_type) panel.querySelector('.at-document-type').value = result.document_type;
+        refreshTypeSourceOptions('API');
+        if(result.source_knowledge_ids && result.source_knowledge_ids.length){
+          setSourcePickerSelection(panel.querySelector('.at-source-picker'), result.source_knowledge_ids);
+        }
+        refreshTypeDocumentOptions('API');
+        if(result.document_name) panel.querySelector('.at-document').value = result.document_name;
+        refreshTypeScopeCount('API');
+        return loadTypeTestCases('API');
+      });
+    }).then(function(){
       loadTypeLog('API');
     }).catch(function(err){
       toast(err.message, true);
@@ -5134,7 +6368,10 @@
   function generateQe(){var scope=qeScope(),types=qeSelectedTypes('.qe-type:checked'),button=document.getElementById('qeGenerateBtn'),count=document.getElementById('qeCaseCount').value;if(!scope.domain||!scope.module||!scope.knowledge_name||!scope.version||!scope.document_type||!scope.knowledge_source_ids.length){qeStatus('Failed','Select the complete hierarchy, Document Type, and at least one Source File.');return;}if(!count){qeStatus('Failed','Select the intended Number of Cases.');return;}if(!types.length){qeStatus('Failed','Select at least one Test Type.');return;}button.disabled=true;document.getElementById('qeRefreshBtn').disabled=true;qeLogsCleared=false;qeLogsHistoryMode=false;qeStatus('Running','Preparing generation from '+scope.knowledge_source_ids.length+' source(s).');apiFetch('/api/qa-engineering/generate',{method:'POST',body:JSON.stringify(Object.assign(scope,{number_of_cases:Number(count),test_types:types,output_formats:['Excel']}))}).then(function(job){qeJobId=job.job_id;qeLogsPage=0;loadQeLogs();pollQeJob();}).catch(function(error){button.disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;qeStatus('Failed',error.message);loadQeLogs();});}
   function pollQeJob(){clearTimeout(qePollTimer);if(!qeJobId)return;apiFetch('/api/qa-engineering/jobs/'+encodeURIComponent(qeJobId)).then(function(job){loadQeLogs();if(qeLogJobId===qeJobId&&document.getElementById('qeLogModal').classList.contains('show'))renderQeLogDetail(job);if(job.status==='queued'||job.status==='running'){qeStatus('Running',job.message||'Generating.');qePollTimer=setTimeout(pollQeJob,1000);return;}document.getElementById('qeGenerateBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;if(job.status==='error'){qeStatus('Failed',job.error||job.message);return;}var generated=(job.result&&job.result.rows)||[],scope=qeScope();generated.forEach(function(row,index){row._state='Draft';row._draftId='D'+String(Date.now()+index);row._selected=true;row.source_knowledge_ids=scope.knowledge_source_ids.slice();});qeDraftRows=qeDraftRows.filter(function(row){return row.id;}).concat(generated);renderQeDrafts();qeStatus('Completed','Generated '+generated.length+' draft test case(s).');}).catch(function(error){document.getElementById('qeGenerateBtn').disabled=!hasPermission('qa_engineering','create');document.getElementById('qeRefreshBtn').disabled=false;qeStatus('Failed',error.message);});}
   function qeUpdateDraftHeader(){var boxes=Array.from(document.querySelectorAll('.qe-draft-check')),checked=boxes.filter(function(box){return box.checked;}).length,header=document.getElementById('qeDraftSelectAll');header.checked=boxes.length>0&&checked===boxes.length;header.indeterminate=checked>0&&checked<boxes.length;}
-  function renderQeDrafts(){var body=document.getElementById('qeDraftBody'),s=qeScope(),query=document.getElementById('qeSearch').value.trim().toLowerCase(),visible=[];qeDraftRows.forEach(function(row,index){if(!query||[row.tc_id,row.tc_number,row.test_case,row.scenario].join(' ').toLowerCase().indexOf(query)>=0)visible.push({row:row,index:index});});document.getElementById('qeSavedCount').textContent='Saved: '+String(qeDraftRows.filter(function(row){return !!row.id;}).length).padStart(2,'0');document.getElementById('qeSavedContext').textContent=s.domain?[s.domain,s.module,s.knowledge_name,s.version,s.document_type].filter(Boolean).join(' / '):'';document.getElementById('qeTrace').textContent=s.knowledge_source_ids.length?' · '+s.knowledge_source_ids.length+' source(s)':'';if(!visible.length){body.innerHTML='<tr><td colspan="10" class="muted-small">No Test Cases in the current working context.</td></tr>';qeUpdateDraftHeader();return;}body.innerHTML=visible.map(function(entry){var row=entry.row,index=entry.index,state=row._state||(row.id?'Reviewed/Saved':'Draft'),deleted=state==='Pending Delete';return '<tr class="'+(deleted?'qe-pending-delete':'')+'"><td><input type="checkbox" class="qe-draft-check" data-index="'+index+'" '+(row._selected?'checked':'')+'></td><td class="mono">'+escapeHtml(row.tc_id||row.tc_number||row._draftId||('D'+String(index+1).padStart(3,'0')))+'</td><td><strong>'+escapeHtml(row.test_case||'Untitled')+'</strong><div class="muted-small">'+escapeHtml(row.scenario||'')+'</div></td><td>'+escapeHtml(row.test_type||'—')+'</td><td><div class="qe-clamp">'+escapeHtml(row.steps||'—')+'</div></td><td><div class="qe-clamp">'+escapeHtml(row.expected_result||'—')+'</div></td><td>'+escapeHtml(row.execution_type||'Manual')+'</td><td>'+escapeHtml(row.execution_tool||'—')+'</td><td>'+escapeHtml(state)+'</td><td><button class="btn btn-sm qe-draft-edit" data-index="'+index+'" '+(deleted?'disabled':'')+'>Edit</button> <button class="btn btn-sm qe-draft-delete" data-index="'+index+'">'+(deleted?'Undo':'Delete')+'</button></td></tr>';}).join('');body.querySelectorAll('.qe-draft-edit').forEach(function(button){button.onclick=function(){openQeEditor('draft',Number(button.dataset.index));};});body.querySelectorAll('.qe-draft-delete').forEach(function(button){button.onclick=function(){var index=Number(button.dataset.index),row=qeDraftRows[index];if(!row.id){qeDraftRows.splice(index,1);}else if(row._state==='Pending Delete'){row._state=row._preDeleteState||'Reviewed/Saved';delete row._preDeleteState;}else{row._preDeleteState=row._state||'Reviewed/Saved';row._state='Pending Delete';row._selected=true;}renderQeDrafts();};});body.querySelectorAll('.qe-draft-check').forEach(function(box){box.onchange=function(){qeDraftRows[Number(box.dataset.index)]._selected=box.checked;qeUpdateDraftHeader();};});qeUpdateDraftHeader();}
+  function qeRowKey(row){if(!row._rowKey)row._rowKey=row.id?'persisted-'+row.id:'draft-'+(row._draftId||Date.now()+'-'+Math.random().toString(16).slice(2));return row._rowKey;}
+  function qeToggleDelete(row){if(!row)return;if(row._state==='Pending Delete'){row._state=row._preDeleteState||(row.id?'Reviewed/Saved':'Draft');delete row._preDeleteState;}else{row._preDeleteState=row._state||(row.id?'Reviewed/Saved':'Draft');row._state='Pending Delete';row._selected=true;}}
+  function qeBuildReviewOperations(){var operations=[];qeDraftRows.forEach(function(row){if(row._state==='Pending Delete'&&row.id)operations.push({action:'delete',id:row.id});else if(!row.id&&row._state==='Draft')operations.push({action:'insert',values:qeCaseValues(row)});else if(row.id&&row._state==='Modified')operations.push({action:'update',id:row.id,values:qeCaseValues(row)});});return operations;}
+  function renderQeDrafts(){var body=document.getElementById('qeDraftBody'),s=qeScope(),query=document.getElementById('qeSearch').value.trim().toLowerCase(),visible=[];qeDraftRows.forEach(function(row,index){var key=qeRowKey(row);if(!query||[row.tc_id,row.tc_number,row.test_case,row.scenario].join(' ').toLowerCase().indexOf(query)>=0)visible.push({row:row,index:index,key:key});});document.getElementById('qeSavedCount').textContent='Saved: '+String(qeDraftRows.filter(function(row){return !!row.id;}).length).padStart(2,'0');document.getElementById('qeSavedContext').textContent=s.domain?[s.domain,s.module,s.knowledge_name,s.version,s.document_type].filter(Boolean).join(' / '):'';document.getElementById('qeTrace').textContent=s.knowledge_source_ids.length?' · '+s.knowledge_source_ids.length+' source(s)':'';if(!visible.length){body.innerHTML='<tr><td colspan="10" class="muted-small">No Test Cases in the current working context.</td></tr>';qeUpdateDraftHeader();return;}body.innerHTML=visible.map(function(entry){var row=entry.row,index=entry.index,state=row._state||(row.id?'Reviewed/Saved':'Draft'),deleted=state==='Pending Delete';return '<tr class="'+(deleted?'qe-pending-delete':'')+'"><td><input type="checkbox" class="qe-draft-check" data-index="'+index+'" '+(row._selected?'checked':'')+'></td><td class="mono">'+escapeHtml(row.tc_id||row.tc_number||row._draftId||('D'+String(index+1).padStart(3,'0')))+'</td><td><strong>'+escapeHtml(row.test_case||'Untitled')+'</strong><div class="muted-small">'+escapeHtml(row.scenario||'')+'</div></td><td>'+escapeHtml(row.test_type||'—')+'</td><td><div class="qe-clamp">'+escapeHtml(row.steps||'—')+'</div></td><td><div class="qe-clamp">'+escapeHtml(row.expected_result||'—')+'</div></td><td>'+escapeHtml(row.execution_type||'Manual')+'</td><td>'+escapeHtml(row.execution_tool||'—')+'</td><td>'+escapeHtml(state)+'</td><td><button class="btn btn-sm qe-draft-edit" data-index="'+index+'" '+(deleted?'disabled':'')+'>Edit</button> <button class="btn btn-sm qe-draft-delete" data-row-key="'+escapeHtml(entry.key)+'">'+(deleted?'Undo':'Delete')+'</button></td></tr>';}).join('');body.querySelectorAll('.qe-draft-edit').forEach(function(button){button.onclick=function(){openQeEditor('draft',Number(button.dataset.index));};});body.querySelectorAll('.qe-draft-delete').forEach(function(button){button.onclick=function(){var key=button.dataset.rowKey,row=qeDraftRows.find(function(item){return qeRowKey(item)===key;});qeToggleDelete(row);renderQeDrafts();};});body.querySelectorAll('.qe-draft-check').forEach(function(box){box.onchange=function(){qeDraftRows[Number(box.dataset.index)]._selected=box.checked;qeUpdateDraftHeader();};});qeUpdateDraftHeader();}
   function loadQeSaved(){var s=qeScope();if(!s.domain||!s.module||!s.knowledge_name||!s.version||!s.document_type||!s.knowledge_source_ids.length){qeDraftRows=[];renderQeDrafts();return Promise.resolve();}var params=new URLSearchParams({domain:s.domain,module:s.module,knowledge_name:s.knowledge_name,version:s.version});return apiFetch('/api/qa-engineering/test-cases?'+params.toString()).then(function(data){var selected=new Set(s.knowledge_source_ids);qeDraftRows=(data.test_cases||[]).filter(function(row){return row.document_type===s.document_type&&(row.source_knowledge_ids||[]).some(function(id){return selected.has(Number(id));});}).map(function(row){row._state='Reviewed/Saved';row._selected=false;return row;});renderQeDrafts();}).catch(function(error){qeStatus('Failed',error.message);});}
   function qeTestTypesFor(row){return row.test_types&&row.test_types.length?row.test_types:String(row.test_type||'').split(',').map(function(v){return v.trim();}).filter(Boolean);}
   function openQeEditor(kind,value){var row=kind==='draft'?qeDraftRows[value]:value;qeEditTarget={kind:kind,value:value};document.getElementById('qeEditHeading').textContent=kind==='draft'?'Review Generated Draft':'Edit '+(row.tc_number||'Test Case');document.getElementById('qeEditSub').textContent=kind==='draft'?'Unsaved draft':'Persisted Test Case';document.getElementById('qeEditId').value=row.tc_number||(kind==='draft'?'Draft '+(value+1):'');document.getElementById('qeEditImportance').value=['Low','Medium','High'].indexOf(row.importance)>=0?row.importance:'Medium';document.getElementById('qeEditExecutionType').value=row.execution_type==='Automatable'?'Automatable':'Manual';document.getElementById('qeEditExecutionTool').value=row.execution_tool||'';document.getElementById('qeEditExecutionTool').disabled=document.getElementById('qeEditExecutionType').value==='Manual';document.getElementById('qeEditScenario').value=row.scenario||'';document.getElementById('qeEditPreconditions').value=row.pre_conditions||'';document.getElementById('qeEditTitleInput').value=row.test_case||'';document.getElementById('qeEditSteps').value=row.steps||'';document.getElementById('qeEditExpected').value=row.expected_result||'';var selected=qeTestTypesFor(row);document.querySelectorAll('.qe-edit-type').forEach(function(box){box.checked=selected.indexOf(box.value)>=0;});qeUpdateTypeSummary();document.getElementById('qeEditError').classList.remove('show');document.getElementById('qeEditModal').classList.add('show');}
@@ -5142,7 +6379,7 @@
   function qeEditorValues(){var types=qeSelectedTypes('.qe-edit-type:checked'),executionType=document.getElementById('qeEditExecutionType').value;return {scenario:document.getElementById('qeEditScenario').value.trim(),importance:document.getElementById('qeEditImportance').value,test_types:types,test_type:types.join(', '),test_case:document.getElementById('qeEditTitleInput').value.trim(),pre_conditions:document.getElementById('qeEditPreconditions').value.trim(),steps:document.getElementById('qeEditSteps').value.trim(),expected_result:document.getElementById('qeEditExpected').value.trim(),execution_type:executionType,execution_tool:executionType==='Automatable'?document.getElementById('qeEditExecutionTool').value:''};}
   function saveQeEditor(){var values=qeEditorValues(),error=document.getElementById('qeEditError'),missing=[];[['Importance',values.importance],['Execution Type',values.execution_type],['Test Types',values.test_types.length],['Scenario',values.scenario],['Preconditions',values.pre_conditions],['Test Case',values.test_case],['Steps',values.steps],['Expected Result',values.expected_result]].forEach(function(item){if(!item[1])missing.push(item[0]);});if(missing.length){error.textContent='Required: '+missing.join(', ')+'.';error.classList.add('show');return;}if(values.execution_type==='Automatable'&&!values.execution_tool){error.textContent='Select a registered Execution Tool for an Automatable Test Case.';error.classList.add('show');return;}var existing=qeDraftRows[qeEditTarget.value];qeDraftRows[qeEditTarget.value]=Object.assign({},existing,values,{_state:existing.id?'Modified':'Draft',_selected:true});renderQeDrafts();document.getElementById('qeEditModal').classList.remove('show');}
   function addQeCase(){var s=qeScope();if(!s.knowledge_source_ids.length){qeStatus('Failed','Select the complete hierarchy and at least one source first.');return;}var index=qeDraftRows.push({_draftId:'D'+Date.now(),_state:'Draft',_selected:true,scenario:'',importance:'Medium',test_types:[],test_type:'',test_case:'',pre_conditions:'',steps:'',expected_result:'',execution_type:'Manual',execution_tool:'',source_knowledge_ids:s.knowledge_source_ids.slice()})-1;renderQeDrafts();openQeEditor('draft',index);}
-  function saveQeDrafts(){var s=qeScope(),operations=[];qeDraftRows.forEach(function(row){if(row._state==='Pending Delete'&&row.id)operations.push({action:'delete',id:row.id});else if(!row.id&&row._state==='Draft')operations.push({action:'insert',values:qeCaseValues(row)});else if(row.id&&row._state==='Modified')operations.push({action:'update',id:row.id,values:qeCaseValues(row)});});if(!operations.length){qeStatus('Idle','No Test Case changes to review and save.');return;}qePendingReview={scope:s,operations:operations};var input=document.getElementById('qeReviewedFileName');input.value=qeDefaultExportName().replace(/\.xlsx$/i,'');document.getElementById('qeReviewedFileError').classList.remove('show');document.getElementById('qeReviewedFileModal').classList.add('show');input.focus();}
+  function saveQeDrafts(){var s=qeScope(),operations=qeBuildReviewOperations(),discardedDrafts=qeDraftRows.filter(function(row){return !row.id&&row._state==='Pending Delete';});if(!operations.length){if(discardedDrafts.length){qeDraftRows=qeDraftRows.filter(function(row){return row.id||row._state!=='Pending Delete';});renderQeDrafts();qeStatus('Completed',discardedDrafts.length+' unsaved Pending Delete Test Case(s) discarded; nothing was inserted.');}else{qeStatus('Idle','No Test Case changes to review and save.');}return;}qePendingReview={scope:s,operations:operations};var input=document.getElementById('qeReviewedFileName');input.value=qeDefaultExportName().replace(/\.xlsx$/i,'');document.getElementById('qeReviewedFileError').classList.remove('show');document.getElementById('qeReviewedFileModal').classList.add('show');input.focus();}
   function confirmQeReviewSave(){if(!qePendingReview)return;var name=document.getElementById('qeReviewedFileName').value.trim(),error=document.getElementById('qeReviewedFileError'),scope=qePendingReview.scope;if(!name){error.textContent='Reviewed Test Case File name is required.';error.classList.add('show');return;}var button=document.getElementById('qeSaveDraftBtn');button.disabled=true;document.getElementById('qeReviewedFileOk').disabled=true;apiFetch('/api/qa-engineering/review-save',{method:'POST',body:JSON.stringify({domain:scope.domain,module:scope.module,knowledge_name:scope.knowledge_name,version:scope.version,document_type:scope.document_type,source_knowledge_ids:scope.knowledge_source_ids,reviewed_file_name:name,operations:qePendingReview.operations})}).then(function(result){document.getElementById('qeReviewedFileModal').classList.remove('show');qePendingReview=null;qeStatus('Completed','Reviewed & Saved: '+result.inserted_ids.length+' new, '+result.updated_ids.length+' updated, '+result.deleted_ids.length+' deleted. Workbook: '+(result.reviewed_file&&result.reviewed_file.file_name||name+'.xlsx'));return loadQeSaved();}).catch(function(failure){error.textContent=failure.message;error.classList.add('show');}).finally(function(){button.disabled=!hasPermission('qa_engineering','create');document.getElementById('qeReviewedFileOk').disabled=false;});}
   function qeCaseValues(row){return {scenario:row.scenario||'',importance:row.importance||'',test_type:row.test_type||'',test_types:row.test_types||qeTestTypesFor(row),test_case:row.test_case||'',pre_conditions:row.pre_conditions||'',steps:row.steps||'',expected_result:row.expected_result||'',execution_type:row.execution_type||'Manual',execution_tool:row.execution_tool||'',source_knowledge_ids:(row.source_knowledge_ids||qeScope().knowledge_source_ids).map(Number)};}
   function qeExportValues(row,scope){return Object.assign({},qeCaseValues(row),{tc_number:row.tc_id||row.tc_number||row._draftId||'',tc_id:row.tc_id||'',domain:scope.domain,module:scope.module,knowledge_name:scope.knowledge_name,version:scope.version,document_type:scope.document_type});}
@@ -5691,7 +6928,7 @@
         updateKhUploadProgress(source.file.webkitRelativePath || source.file.name, total, completed, successful, failed);
         metadata.sourceType = source.sourceType || selectedSourceType;
         var operation = source.sourceType === 'API Collection'
-          ? (function(){ var form=new FormData();form.append('file',source.file);form.append('domain',metadata.domain);form.append('module',metadata.module);form.append('knowledge_name',metadata.name);form.append('version',metadata.version);var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/api-collections/import',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'API Collection import failed.');return data;});});})()
+          ? (function(){ var form=new FormData();form.append('file',source.file);form.append('domain',metadata.domain);form.append('module',metadata.module);form.append('knowledge_name',metadata.name);form.append('version',metadata.version);form.append('document_type',metadata.documentType);var headers={};if(authState.token)headers.Authorization='Bearer '+authState.token;return fetch(API_BASE+'/api/knowledge/api-collections/import',{method:'POST',headers:headers,body:form}).then(function(response){return response.json().catch(function(){return {};}).then(function(data){if(!response.ok)throw new Error(data.detail||'API Collection import failed.');return data;});});})()
           : postKhUploadFile(source, metadata);
         return operation
           .then(function(result){

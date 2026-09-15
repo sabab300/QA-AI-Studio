@@ -51,6 +51,7 @@ still be viewed/edited/executed (non-interactively) from Web.
 """
 
 import json
+import re
 import shutil
 import tempfile
 import threading
@@ -69,6 +70,35 @@ from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
 from Core.sql_generator import SQLGenerator
 
 GIT_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "Output" / "GitWorkspaces"
+
+# Section F/I: the same 7 assertion types
+# Core/api_automation_runner.py's evaluate_assertions() actually
+# understands — kept here too (not imported from there) purely so
+# validate_for_execution()'s readiness check can flag an assertion
+# with an unrecognized/misspelled "type" BEFORE Execute ever runs it,
+# without adding an import-time dependency between the two modules
+# for what is fundamentally a duplicated constant, not shared logic.
+_API_ASSERTION_TYPES = {
+    "status_equals", "json_field_exists", "json_field_equals",
+    "json_field_contains", "response_time_lte", "header_exists",
+    "header_equals",
+}
+
+# API-SQL-AUTOMATION-END-TO-END: a coarse "this isn't SQL at all" gate
+# for SqlAutomationWeb.save_script(), deliberately SEPARATE from and
+# looser than sql_automation_runner.validate_readonly_sql() (which
+# still fully applies at Validate/Set Active time). Save Script must
+# still allow an imperfect/in-progress SQL draft to be iterated on —
+# this only rejects content that plainly isn't SQL to begin with
+# (Python/Selenium/Playwright script text pasted into the wrong slot),
+# per "Reject INSERT/UPDATE/... Python/Selenium/Playwright/HTTP code."
+_NON_SQL_CONTENT_PATTERN = re.compile(
+    r"^\s*(import\s+\w|from\s+\w[\w.]*\s+import\b|class\s+\w+.*:|"
+    r"def\s+\w+\s*\(|@\w+|<html|<!doctype|\{\{|"
+    r"(self\.)?driver\.|webdriver\.|page\.(goto|click|fill)\(|"
+    r"async\s+def\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _workspace_path_for(remote_url):
@@ -92,7 +122,7 @@ class ApiCollectionsWeb:
 
     def import_collection(
         self, file_bytes, original_filename, domain=None, module=None,
-        knowledge_name=None, version=None,
+        knowledge_name=None, version=None, document_type=None,
     ):
 
         if not file_bytes:
@@ -114,6 +144,7 @@ class ApiCollectionsWeb:
                 module=module,
                 knowledge_name=knowledge_name,
                 version=version,
+                document_type=document_type,
             )
 
         finally:
@@ -473,6 +504,44 @@ class TestCasesWeb:
 
             test_case["latest_run"] = latest_runs.get(test_case["id"])
 
+        # Section D: the grid's "TEST CASE / API TITLE" column must
+        # show the REAL bound endpoint's METHOD + name for an API
+        # test case that has one — never fake/placeholder data. One
+        # batch lookup for every bound endpoint id on this page,
+        # rather than one query per row.
+        api_endpoint_ids = {
+            test_case.get("bound_api_endpoint_id")
+            for test_case in result["test_cases"]
+            if test_case.get("automation_type") == "API"
+            and test_case.get("bound_api_endpoint_id")
+        }
+
+        if api_endpoint_ids:
+
+            endpoints_by_id = ApiCollectionRepository().get_endpoints_by_ids(
+                api_endpoint_ids
+            )
+
+            for test_case in result["test_cases"]:
+
+                if test_case.get("automation_type") != "API":
+
+                    continue
+
+                endpoint = endpoints_by_id.get(test_case.get("bound_api_endpoint_id"))
+
+                if not endpoint:
+
+                    continue
+
+                method = (endpoint.get("method") or "").upper()
+
+                name = endpoint.get("name") or ""
+
+                test_case["bound_endpoint_name"] = (
+                    f"{method} {name}".strip() if method else name
+                )
+
         return result
 
     def list_scopes(self):
@@ -531,7 +600,8 @@ class TestCasesWeb:
     # --------------------------------------------------
 
     def import_from_excel(self, file_bytes, original_filename, domain, module, knowledge_name,
-                          version=None, document_type=None, source_knowledge_ids=None):
+                          version=None, document_type=None, source_knowledge_ids=None,
+                          automation_type="Playwright"):
 
         if not file_bytes:
 
@@ -553,6 +623,7 @@ class TestCasesWeb:
                 knowledge_name=knowledge_name, version=version,
                 document_type=document_type, source_knowledge_ids=source_knowledge_ids,
                 test_case_document_name=safe_name,
+                default_automation_type=automation_type,
             )
 
         finally:
@@ -563,6 +634,10 @@ class TestCasesWeb:
 
             raise ValueError(result["error"])
 
+        result["document"] = safe_name
+        result["automation_target"] = self.repository.execution_tool_for_automation_type(
+            automation_type
+        )
         return result
 
     # --------------------------------------------------
@@ -704,6 +779,24 @@ class TestCasesWeb:
 
             raise ValueError(f"Test case {test_case_id} not found.")
 
+        # REMOVE-SCRIPT-LIFECYCLE item 7: Set Active is a Playwright/
+        # SQL script-lifecycle concept (Draft script -> Validate ->
+        # Set Active -> Execute). API Automation has no script to
+        # activate — its executable asset is the persisted Request
+        # Configuration, and a successful Validate marks it Ready to
+        # Execute directly (see validate_for_execution()'s
+        # mark_script_validated(..., keep_active=True) for API). This
+        # endpoint must never be reachable for an API test case —
+        # every branch below that used to special-case is_api has been
+        # removed along with it; only Playwright/SQL reach past here.
+        if (test_case.get("automation_type") or "").upper() == "API":
+
+            raise ValueError(
+                "Set Active is not used for API Automation — a "
+                "successful Validate marks the saved Request "
+                "Configuration Ready to Execute directly."
+            )
+
         script_text = (
             test_case.get("recorded_script")
             if source == "MANUAL"
@@ -741,6 +834,12 @@ class TestCasesWeb:
                     f"cannot be made Active for Execution: "
                     f"{syntax_error}"
                 )
+
+        if not self.repository.is_script_source_validated(test_case, source):
+            raise ValueError(
+                "This saved script source has not been validated, or it "
+                "changed since validation. Validate it before Set Active."
+            )
 
         manager.set_active_script(test_case_id, source)
 
@@ -790,6 +889,14 @@ class TestCasesWeb:
 
         automation_type = test_case.get("automation_type") or "None"
 
+        # POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION section 11: a
+        # masked Request Preview (Method/Resolved URL/Headers/Body) —
+        # populated only for API test cases with a successfully-built
+        # request, below. Never includes a real secret (reuses the
+        # same masking helpers execute_api()'s result already goes
+        # through) and Validate never sends this request.
+        request_preview = None
+
         checks = []
 
         def add(name, ok, detail=""):
@@ -813,18 +920,66 @@ class TestCasesWeb:
                 "The central Test Case is not classified as Automatable.",
             )
 
-            add(
-                "active_script_approved", test_case.get("status") == "Automated",
-                "" if test_case.get("status") == "Automated" else
-                "The saved script is a Draft. Validate and activate it first.",
-            )
+            # REMOVE-SCRIPT-LIFECYCLE item 4/7: API Automation has no
+            # Set Active step and no "active_script_source" concept —
+            # a successful Validate is what marks the saved Request
+            # Configuration Ready to Execute (see the
+            # mark_script_validated(..., keep_active=True) call at the
+            # bottom of this method). Readiness for API is therefore
+            # just "is the CURRENT persisted request config the one
+            # that was last successfully validated" — content-
+            # fingerprint based (is_script_source_validated() against
+            # the fixed "AUTO" slot API always uses), never gated on
+            # active_script_source or a separate activation click.
+            # Playwright/SQL keep their existing Set-Active-based
+            # active_script_approved check untouched.
+            if automation_type == "API":
 
-        add(
-            "automation_type_set", automation_type != "None",
-            "" if automation_type != "None" else (
-                "No Automation Type is set on this test case yet."
-            ),
-        )
+                request_validated = self.repository.is_script_source_validated(
+                    test_case, "AUTO"
+                )
+                add(
+                    "request_validated",
+                    test_case.get("status") == "Automated" and request_validated,
+                    "" if test_case.get("status") == "Automated" and request_validated
+                    else "The saved Request Configuration has not been "
+                    "validated yet, or it changed since the last successful "
+                    "Validate — run Validate again.",
+                )
+
+            else:
+
+                active_source = (
+                    test_case.get("active_script_source") or "AUTO"
+                ).upper()
+                source_validated = self.repository.is_script_source_validated(
+                    test_case, active_source
+                )
+                add(
+                    "active_script_approved",
+                    test_case.get("status") == "Automated" and source_validated,
+                    "" if test_case.get("status") == "Automated" and source_validated
+                    else "The active script changed since validation, or has not "
+                    "been validated and activated.",
+                )
+
+        # REMOVE-SCRIPT-LIFECYCLE item 4: "automation_type_set" is a
+        # script-lifecycle-era generic check ("has ANY automation type
+        # been chosen at all") that is trivially/meaninglessly true for
+        # every API test case reaching this point (automation_type is
+        # already "API") — API readiness/validation is reported purely
+        # via the substantive checks below (endpoint/binding, method,
+        # URL, params, headers, auth, body, variables/secrets,
+        # assertions, extraction). Playwright/SQL/unset keep this
+        # check unchanged.
+        if automation_type != "API":
+
+            add(
+                "automation_type_set", automation_type != "None",
+                "" if automation_type != "None" else (
+                    "No Automation Type is set on this test case yet."
+                ),
+            )
 
         if validating_selected_source:
             script = (
@@ -834,13 +989,23 @@ class TestCasesWeb:
         else:
             script = TestExecutionManager.get_active_script(test_case)
 
-        add(
-            "script_present", bool(script and script.strip()),
-            "" if script else (
-                "No automation script has been generated or recorded "
-                "yet."
-            ),
-        )
+        # API-SQL-AUTOMATION-END-TO-END: "Selenium/browser script text
+        # must NOT control API execution readiness" — automation_script
+        # is documentation/reference only for API test cases (the real
+        # runner sends the bound endpoint's own request directly, see
+        # execute_api()), so script presence/syntax is not part of API
+        # readiness at all. Skip this check for API; it still applies
+        # to Playwright (and to the generic "no script yet" case for
+        # any other/unset type).
+        if automation_type != "API":
+
+            add(
+                "script_present", bool(script and script.strip()),
+                "" if script else (
+                    "No automation script has been generated or recorded "
+                    "yet."
+                ),
+            )
 
         if automation_type == "Playwright" and script:
 
@@ -876,22 +1041,364 @@ class TestCasesWeb:
 
         elif automation_type == "API":
 
+            # API-SQL-AUTOMATION-END-TO-END: readiness = automation
+            # type + a real BOUND endpoint + valid request config +
+            # required variables supplied + an assertion configured
+            # + validated/active state — NEVER script text. This is a
+            # read-only check (it must never silently persist a
+            # binding just from being asked "are you ready") —
+            # compare against test_case's OWN persisted
+            # bound_api_endpoint_id, do not auto-resolve/auto-bind
+            # here even when exactly one candidate exists. Only
+            # Execute (execute_api(), via _resolve_bound_endpoint())
+            # may actually persist an auto-bind.
+
+            # Section F/I: the per-Test-Case Params/Headers/Auth/Body/
+            # Assertions/Extraction definition (never the masked
+            # get_api_request_config() — readiness checks below build
+            # the SAME request_overrides execute_api() will actually
+            # send, so a raw, unmasked secret is fine here; nothing in
+            # this dict is ever returned to the caller).
+            request_config = self._parsed_api_request_config(test_case)
+
+            structured_assertions = request_config.get("assertions") or []
+
+            invalid_assertion_types = [
+                str((assertion or {}).get("type") or "<blank>")
+                for assertion in structured_assertions
+                if str((assertion or {}).get("type") or "")
+                not in _API_ASSERTION_TYPES
+            ]
+
             try:
 
-                endpoints = manager.get_relevant_endpoints_for_test_case(test_case)
+                candidates = manager.list_api_endpoints_for_test_case(
+                    test_case
+                )
 
             except Exception:
 
-                endpoints = []
+                candidates = []
 
-            add(
-                "endpoint_available", bool(endpoints),
-                "" if endpoints else (
+            bound_endpoint_id = test_case.get("bound_api_endpoint_id")
+
+            bound_endpoint = None
+
+            if bound_endpoint_id:
+
+                bound_endpoint = next(
+                    (
+                        endpoint for endpoint in candidates
+                        if endpoint.get("id") == bound_endpoint_id
+                    ),
+                    None,
+                )
+
+            if bound_endpoint:
+
+                endpoint_bound_detail = ""
+
+            elif not candidates:
+
+                endpoint_bound_detail = (
                     "No imported API Collection endpoint matches this "
                     "test case's Domain / Module / Knowledge Name — "
                     "import a Postman Collection for this scope first."
-                ),
-            )
+                )
+
+            elif len(candidates) == 1:
+
+                endpoint_bound_detail = (
+                    "One matching endpoint was found but is not yet "
+                    "bound — bind it (or use Execute, which will "
+                    "auto-bind it)."
+                )
+
+            else:
+
+                endpoint_bound_detail = (
+                    f"{len(candidates)} matching endpoints were found "
+                    f"— select and bind exactly one before this test "
+                    f"case can be considered ready."
+                )
+
+            add("endpoint_bound", bool(bound_endpoint), endpoint_bound_detail)
+
+            if bound_endpoint:
+
+                runner = ApiAutomationRunner()
+
+                config = manager.environment_config.load()
+
+                request_spec = None
+
+                try:
+
+                    request_spec = runner.build_request(
+                        bound_endpoint, config, request_config
+                    )
+
+                    request_config_valid = True
+
+                    request_config_detail = ""
+
+                except Exception as error:
+
+                    request_config_valid = False
+
+                    request_config_detail = (
+                        f"The bound endpoint's request (including its "
+                        f"Params/Headers/Auth/Body overrides) could "
+                        f"not be built: {error}"
+                    )
+
+                add(
+                    "request_config_valid", request_config_valid,
+                    request_config_detail,
+                )
+
+                # Section I: "URL/path resolvable" — the endpoint's own
+                # URL is either already absolute, or becomes absolute
+                # once Test Environment Settings' base URL override is
+                # applied (see build_request()'s
+                # _apply_base_url_override()). Only meaningful once
+                # request_spec itself built successfully above.
+                resolved_url = str((request_spec or {}).get("url") or "")
+
+                environment_valid = bool(request_spec) and resolved_url.lower().startswith(
+                    ("http://", "https://")
+                )
+
+                add(
+                    "environment_valid", environment_valid,
+                    "" if environment_valid else (
+                        "The resolved request URL is not a valid "
+                        "absolute http(s) URL — set a Base URL "
+                        "override in Test Environment Settings, or fix "
+                        "the endpoint's own imported URL."
+                    ),
+                )
+
+                # Section 10: "method valid" — the resolved method
+                # (per-Test-Case override, else the bound endpoint's
+                # own imported method) must be one this runner can
+                # actually issue.
+                resolved_method = str((request_spec or {}).get("method") or "").upper()
+
+                method_valid = resolved_method in self._API_ALLOWED_METHODS
+
+                add(
+                    "method_valid", method_valid,
+                    "" if method_valid else (
+                        f"HTTP method '{resolved_method or '(none)'}' is "
+                        f"not supported — use one of: "
+                        + ", ".join(self._API_ALLOWED_METHODS)
+                    ),
+                )
+
+                # Section 10: "JSON body valid when applicable" — only
+                # meaningful once the request actually resolved to a
+                # JSON body (Raw JSON body mode, or an imported/legacy
+                # body whose Content-Type was guessed as JSON).
+                body_valid = True
+
+                body_valid_detail = ""
+
+                if request_spec is not None:
+
+                    resolved_content_type = str(
+                        (request_spec.get("headers") or {}).get(
+                            "Content-Type", ""
+                        )
+                    ).lower()
+
+                    resolved_body_bytes = request_spec.get("data")
+
+                    if "json" in resolved_content_type and resolved_body_bytes:
+
+                        try:
+
+                            json.loads(resolved_body_bytes.decode("utf-8"))
+
+                        except Exception as body_error:
+
+                            body_valid = False
+
+                            body_valid_detail = (
+                                f"Request body is not valid JSON: "
+                                f"{body_error}"
+                            )
+
+                add("body_valid", body_valid, body_valid_detail)
+
+                if request_spec is not None:
+
+                    body_text_for_preview = ""
+
+                    if request_spec.get("data"):
+
+                        try:
+
+                            body_text_for_preview = request_spec["data"].decode(
+                                "utf-8"
+                            )
+
+                        except Exception:
+
+                            body_text_for_preview = "<binary body — not shown>"
+
+                    request_preview = {
+                        "method": request_spec.get("method"),
+                        "url": request_spec.get("url"),
+                        "headers": ApiAutomationRunner._mask_headers(
+                            request_spec.get("headers")
+                        ),
+                        "body": ApiAutomationRunner._mask_body_text(
+                            body_text_for_preview
+                        ),
+                    }
+
+                missing_variables = runner.find_missing_variables(
+                    bound_endpoint, config, request_config
+                )
+
+                add(
+                    "variables_available", not missing_variables,
+                    "" if not missing_variables else (
+                        "Missing values for required variable(s): "
+                        + ", ".join(missing_variables)
+                        + " — set them in Test Environment Settings."
+                    ),
+                )
+
+                # Section I: "authentication configuration valid" —
+                # narrower than variables_available above: scoped ONLY
+                # to the auth-credential override fields (Bearer token
+                # / API Key header value / Basic username+password),
+                # so an operator sees immediately whether the PROBLEM
+                # is specifically their auth setup vs. some unrelated
+                # header/body variable.
+                missing_secret_variables = runner.find_missing_secret_variables(
+                    bound_endpoint, config, request_config
+                )
+
+                add(
+                    "secret_references_valid", not missing_secret_variables,
+                    "" if not missing_secret_variables else (
+                        "Missing value(s) for auth credential "
+                        "variable(s): "
+                        + ", ".join(missing_secret_variables)
+                        + " — set them in Test Environment Settings."
+                    ),
+                )
+
+                # Section F/I: an assertion is configured either the
+                # legacy way (an explicit expected status override, or
+                # the bound endpoint's own recorded example status) OR
+                # via the structured Assertions list (section F) —
+                # either is sufficient; Execute (execute_api()) prefers
+                # the structured list when present, falling back to
+                # the legacy expected-status comparison otherwise (see
+                # ApiAutomationRunner.send()'s `assertions` parameter).
+                has_assertion = bool(
+                    test_case.get("api_expected_status_code")
+                    or bound_endpoint.get("example_response_status")
+                    or structured_assertions
+                )
+
+                if invalid_assertion_types:
+
+                    assertion_detail = (
+                        "Unrecognized assertion type(s): "
+                        + ", ".join(sorted(set(invalid_assertion_types)))
+                        + " — fix or remove these assertions."
+                    )
+
+                elif not has_assertion:
+
+                    assertion_detail = (
+                        "No expected HTTP status or assertion is "
+                        "configured — set an explicit expected status "
+                        "(required for negative tests), add an "
+                        "Assertion, or import an endpoint whose "
+                        "example response has a status."
+                    )
+
+                else:
+
+                    assertion_detail = ""
+
+                add(
+                    "assertion_configured",
+                    has_assertion and not invalid_assertion_types,
+                    assertion_detail,
+                )
+
+                # REMOVE-SCRIPT-LIFECYCLE item 5: "extraction
+                # configuration" is one of the things Validate must
+                # actually check (endpoint/binding, method, URL,
+                # params, headers, auth, body, variables/secrets,
+                # assertions, AND extraction). Extraction itself is
+                # optional — an empty list is valid — but any rule
+                # that IS configured must have both a Path/Header
+                # locator and a Save-as Variable name, or it can never
+                # actually extract anything at Execute time.
+                extraction_rules = request_config.get("extraction_rules") or []
+
+                incomplete_extraction_rules = []
+
+                for rule in extraction_rules:
+
+                    rule = rule or {}
+
+                    variable_name = str(rule.get("variable") or "").strip()
+
+                    rule_type = str(rule.get("type") or "json_path").strip()
+
+                    locator = str(
+                        (
+                            rule.get("header") if rule_type == "header"
+                            else rule.get("path")
+                        ) or ""
+                    ).strip()
+
+                    if not variable_name or not locator:
+
+                        incomplete_extraction_rules.append(
+                            variable_name or locator or "<blank rule>"
+                        )
+
+                add(
+                    "extraction_valid",
+                    not incomplete_extraction_rules,
+                    "" if not incomplete_extraction_rules else (
+                        "Incomplete extraction rule(s) — every rule needs "
+                        "both a Path/Header and a Save-as Variable name: "
+                        + ", ".join(incomplete_extraction_rules)
+                    ),
+                )
+
+                add("runner_available", True, "")
+
+            else:
+
+                add(
+                    "request_config_valid", False,
+                    "Bind a real endpoint before the request config "
+                    "can be checked.",
+                )
+
+                add(
+                    "variables_available", False,
+                    "Bind a real endpoint before required variables "
+                    "can be checked.",
+                )
+
+                add(
+                    "assertion_configured", False,
+                    "Bind a real endpoint before an assertion can be "
+                    "checked.",
+                )
 
         elif automation_type == "SQL":
 
@@ -906,7 +1413,22 @@ class TestCasesWeb:
 
         ready = all(check["ok"] for check in checks)
 
-        return {"ready": ready, "checks": checks}
+        if validating_selected_source and ready:
+            # REMOVE-SCRIPT-LIFECYCLE item 7: API Automation has no Set
+            # Active step — a successful Validate must, by itself,
+            # mark the saved Request Configuration Ready to Execute
+            # (keep_active=True promotes status straight to
+            # "Automated", same as an already-Active Playwright/SQL
+            # script surviving a re-validate — see
+            # TestCaseRepository.mark_script_validated()). Playwright/
+            # SQL are unaffected: keep_active stays False there, so
+            # Validate alone still never activates a script that
+            # wasn't already Active — Set Active remains required.
+            self.repository.mark_script_validated(
+                test_case_id, source, keep_active=(automation_type == "API")
+            )
+
+        return {"ready": ready, "checks": checks, "request_preview": request_preview}
 
     # --------------------------------------------------
     # Execute — Playwright, background job (persisted)
@@ -919,6 +1441,9 @@ class TestCasesWeb:
             and test_case.get("execution_type") == "Automatable"
             and test_case.get("execution_tool") == "Playwright"
             and test_case.get("status") == "Automated"
+            and self.repository.is_script_source_validated(
+                test_case, test_case.get("active_script_source") or "AUTO"
+            )
             and bool(TestExecutionManager.get_active_script(test_case))
         )
 
@@ -1081,6 +1606,372 @@ class TestCasesWeb:
         return resolved
 
     # --------------------------------------------------
+    # API endpoint binding — explicit, "never silently guess"
+    # resolution shared between Execute (which may auto-bind the
+    # single-candidate case) and the Bind API Endpoint UI (which
+    # always persists exactly what the operator chose).
+    # --------------------------------------------------
+
+    def list_api_endpoint_candidates(self, test_case_id):
+        """
+        Every real, imported endpoint matching this test case's
+        scope (Domain/Module/Knowledge Name), plus which one (if
+        any) is currently bound — powers the Bind API Endpoint
+        picker. Never narrows or ranks; the operator must see every
+        real option.
+
+        initialize_automation=False (section D/E fix): this is a
+        read-only lookup — it never needs AutomationGenerator/
+        LLMEngine/PlaywrightRunner/TestEnvironmentConfig, all of
+        which the default TestExecutionManager() constructor builds
+        eagerly. Building them here was the actual cause of "Could
+        not load endpoints." (a slow/failing eager init unrelated to
+        endpoint listing) surfacing on this read-only picker.
+        """
+
+        manager = TestExecutionManager(initialize_automation=False)
+
+        test_case = manager.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        candidates = manager.list_api_endpoints_for_test_case(test_case)
+
+        return {
+            "bound_endpoint_id": test_case.get("bound_api_endpoint_id"),
+            "endpoints": [
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "method": item.get("method"),
+                    "url": item.get("url_resolved") or item.get("url_raw"),
+                }
+                for item in candidates
+            ],
+        }
+
+    def bind_api_endpoint(self, test_case_id, endpoint_id):
+        """
+        Explicitly persists (or, with endpoint_id=None, clears)
+        which real, imported endpoint this API test case's
+        execution should use. Rejects an endpoint_id that doesn't
+        belong to this test case's own scope, so the UI can never
+        bind an unrelated endpoint.
+
+        initialize_automation=False (section D/E fix, same rationale
+        as list_api_endpoint_candidates() above): binding is a
+        read-only-scope-check-then-persist operation, never needs the
+        eagerly-built AutomationGenerator/LLMEngine/PlaywrightRunner/
+        TestEnvironmentConfig.
+        """
+
+        manager = TestExecutionManager(initialize_automation=False)
+
+        test_case = manager.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        if endpoint_id is not None:
+
+            candidates = manager.list_api_endpoints_for_test_case(test_case)
+
+            if not any(item.get("id") == endpoint_id for item in candidates):
+
+                raise ValueError(
+                    "The selected endpoint does not belong to this "
+                    "test case's scope."
+                )
+
+        self.repository.set_bound_api_endpoint(test_case_id, endpoint_id)
+
+        return self.repository.get_test_case(test_case_id)
+
+    def set_api_expected_status(self, test_case_id, expected_status_code):
+        """
+        Persists the explicit assertion override that makes negative
+        testing possible (see ApiAutomationRunner.send()'s
+        docstring): an expected HTTP status that overrides the bound
+        endpoint's own recorded example_response_status.
+        expected_status_code=None clears the override.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        if expected_status_code is not None:
+
+            try:
+
+                expected_status_code = int(expected_status_code)
+
+            except (TypeError, ValueError):
+
+                raise ValueError(
+                    "Expected HTTP status must be a whole number."
+                )
+
+            if not (100 <= expected_status_code <= 599):
+
+                raise ValueError(
+                    "Expected HTTP status must be between 100 and 599."
+                )
+
+        self.repository.set_api_expected_status_code(
+            test_case_id, expected_status_code
+        )
+
+        return self.repository.get_test_case(test_case_id)
+
+    # --------------------------------------------------
+    # Per-Test-Case API Request Configuration (section F) — Params/
+    # Headers/Auth/Body/Assertions/Extraction layered on TOP of the
+    # bound endpoint's own imported values and Test Environment
+    # Settings (see Core/api_automation_runner.py's build_request()
+    # `request_overrides` parameter — this is exactly the JSON it
+    # consumes). Stored on the Test Case itself
+    # (TestCaseRepository.api_request_config_json), never on the
+    # shared ApiCollections endpoint record, since two different Test
+    # Cases bound to the SAME endpoint may legitimately want
+    # different params/body/assertions for that endpoint.
+    # --------------------------------------------------
+
+    _API_REQUEST_CONFIG_KEYS = (
+        "method", "url", "query_params", "path_params", "headers",
+        "auth", "body", "body_mode", "body_params", "assertions",
+        "extraction_rules",
+    )
+
+    # POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION section 1: the
+    # editable request bar's Method dropdown — the same set
+    # ApiAutomationRunner.build_request()/send() actually issue via
+    # `requests`.
+    _API_ALLOWED_METHODS = (
+        "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+    )
+
+    # Section G/P: these auth-override sub-fields are secrets — never
+    # returned in plain text by get_api_request_config() (mirrors the
+    # already-established EnvironmentConfigWeb masked-on-read /
+    # blank-preserves-on-write pattern below).
+    _API_REQUEST_AUTH_SECRET_FIELDS = ("token", "password", "header_value")
+
+    def _parsed_api_request_config(self, test_case):
+        """
+        The RAW, unmasked stored config — every secret field intact.
+        Only ever used internally (by set_api_request_config()'s
+        merge-on-write below, and by execute_api() to build the REAL
+        outgoing request) — never returned directly to a caller
+        outside this class. get_api_request_config() is the
+        masked-for-display counterpart callers outside this class
+        should use instead.
+        """
+
+        try:
+
+            return json.loads(
+                test_case.get("api_request_config_json") or "{}"
+            ) or {}
+
+        except (TypeError, ValueError):
+
+            return {}
+
+    def get_api_request_config(self, test_case_id):
+        """
+        The masked-for-display config — powers the Request
+        Configuration UI (section F). Every secret auth field
+        (token/password/header_value) comes back blank, with a
+        companion "<field>_is_set" boolean so the UI can show
+        "Bearer ********" / a "configured" indicator without ever
+        receiving the real value — mirrors
+        EnvironmentConfigWeb.get()'s established masked-on-read
+        pattern exactly.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        config = self._parsed_api_request_config(test_case)
+
+        auth = dict(config.get("auth") or {})
+
+        for field in self._API_REQUEST_AUTH_SECRET_FIELDS:
+
+            auth[f"{field}_is_set"] = bool(auth.get(field))
+
+            auth[field] = ""
+
+        config["auth"] = auth
+
+        return config
+
+    def set_api_request_config(self, test_case_id, request_config):
+        """
+        Persists ONLY the parts of the request config the caller
+        actually sent — a key absent from `request_config` leaves
+        that part of the stored config untouched (so, e.g., saving
+        just an edited Header list never wipes out an already-saved
+        Body). Mirrors EnvironmentConfigWeb.update()'s established
+        "blank/absent secret preserves the existing value" rule for
+        the nested auth sub-fields specifically: a blank
+        token/password/header_value in the incoming payload means
+        "the operator didn't change this secret" (see
+        get_api_request_config() above — the UI never gets the real
+        value back to re-submit), NOT "clear it".
+
+        Persisting any part of this config demotes an AUTO-active
+        Test Case back to Draft and clears its validated-config
+        fingerprint (see TestCaseRepository._update_api_config_field(),
+        the same shared helper set_bound_api_endpoint()/
+        set_api_expected_status_code() already use) — a changed
+        request definition invalidates whatever was previously
+        Validated/Set Active, exactly like changing the bound
+        endpoint or the expected status already does.
+        """
+
+        test_case = self.repository.get_test_case(test_case_id)
+
+        if not test_case:
+
+            raise ValueError(f"Test case {test_case_id} not found.")
+
+        existing = self._parsed_api_request_config(test_case)
+
+        request_config = request_config or {}
+
+        merged = dict(existing)
+
+        for key in self._API_REQUEST_CONFIG_KEYS:
+
+            if key not in request_config:
+
+                continue
+
+            if key == "auth":
+
+                new_auth = dict(request_config.get("auth") or {})
+
+                existing_auth = dict(existing.get("auth") or {})
+
+                for field in self._API_REQUEST_AUTH_SECRET_FIELDS:
+
+                    if not new_auth.get(field):
+
+                        new_auth[field] = existing_auth.get(field, "")
+
+                merged["auth"] = new_auth
+
+            elif key == "method":
+
+                # POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION section 1:
+                # an explicit, blank method clears the override (falls
+                # back to the bound endpoint's own method); a non-blank
+                # value must be one of the methods the runner actually
+                # supports — validated here rather than left to fail
+                # confusingly deep inside build_request()/requests.
+                raw_method = str(request_config.get("method") or "").strip().upper()
+
+                if raw_method and raw_method not in self._API_ALLOWED_METHODS:
+
+                    raise ValueError(
+                        f"'{raw_method}' is not a supported HTTP method "
+                        f"— use one of: {', '.join(self._API_ALLOWED_METHODS)}."
+                    )
+
+                merged["method"] = raw_method
+
+            else:
+
+                merged[key] = request_config[key]
+
+        self.repository.set_api_request_config(
+            test_case_id, json.dumps(merged)
+        )
+
+        return self.get_api_request_config(test_case_id)
+
+    def _resolve_bound_endpoint(
+        self, test_case, manager, explicit_endpoint_id=None
+    ):
+        """
+        The single "never silently guess" endpoint-resolution rule.
+
+        - explicit_endpoint_id given: must belong to this test
+          case's scope; persisted as the new binding and returned.
+        - else, an already-bound endpoint that's still a valid
+          candidate for this scope: reused as-is, no re-prompt.
+        - else, exactly ONE real candidate exists for this scope:
+          auto-bound (persisted) and returned — the one case where
+          the app may choose without asking, since there is
+          genuinely only one possible answer.
+        - else (zero candidates, or 2+ with none currently bound):
+          returns (None, candidates) — caller must have the operator
+          choose explicitly.
+
+        Returns (endpoint_or_None, candidates_list).
+        """
+
+        candidates = manager.list_api_endpoints_for_test_case(test_case)
+
+        if explicit_endpoint_id is not None:
+
+            endpoint = next(
+                (
+                    item for item in candidates
+                    if item.get("id") == explicit_endpoint_id
+                ),
+                None,
+            )
+
+            if endpoint is None:
+
+                raise ValueError(
+                    "The selected endpoint does not belong to this "
+                    "test case's scope."
+                )
+
+            self.repository.set_bound_api_endpoint(
+                test_case["id"], endpoint["id"]
+            )
+
+            return endpoint, candidates
+
+        bound_id = test_case.get("bound_api_endpoint_id")
+
+        if bound_id:
+
+            endpoint = next(
+                (item for item in candidates if item.get("id") == bound_id),
+                None,
+            )
+
+            if endpoint is not None:
+
+                return endpoint, candidates
+
+        if len(candidates) == 1:
+
+            endpoint = candidates[0]
+
+            self.repository.set_bound_api_endpoint(
+                test_case["id"], endpoint["id"]
+            )
+
+            return endpoint, candidates
+
+        return None, candidates
+
+    # --------------------------------------------------
     # Execute — API, real HTTP request against the real,
     # imported endpoint (never the AI-generated script text — see
     # Core/api_automation_runner.py's module docstring for why).
@@ -1121,36 +2012,21 @@ class TestCasesWeb:
                 "activate it before execution."
             )
 
-        endpoints = manager.get_relevant_endpoints_for_test_case(test_case)
+        endpoint, endpoints = self._resolve_bound_endpoint(
+            test_case, manager, explicit_endpoint_id=endpoint_id
+        )
 
-        if not endpoints:
+        if endpoint is None:
 
-            raise ValueError(
-                "No imported API Collection endpoint matches this "
-                "test case's Domain / Module / Knowledge Name — "
-                "import a Postman Collection for this scope first "
-                "(Knowledge Hub -> Upload -> Source Type: API "
-                "Collection)."
-            )
-
-        if endpoint_id is not None:
-
-            endpoint = next(
-                (item for item in endpoints if item.get("id") == endpoint_id),
-                None,
-            )
-
-            if endpoint is None:
+            if not endpoints:
 
                 raise ValueError(
-                    "The selected endpoint does not belong to this Test Case scope."
+                    "No imported API Collection endpoint matches this "
+                    "test case's Domain / Module / Knowledge Name — "
+                    "import a Postman Collection for this scope first "
+                    "(Knowledge Hub -> Upload -> Source Type: API "
+                    "Collection)."
                 )
-
-        elif len(endpoints) == 1:
-
-            endpoint = endpoints[0]
-
-        else:
 
             return {
                 "executed": False,
@@ -1170,7 +2046,16 @@ class TestCasesWeb:
 
         runner = ApiAutomationRunner()
 
-        missing = runner.find_missing_variables(endpoint, config)
+        # Section F: the per-Test-Case Params/Headers/Auth/Body/
+        # Assertions/Extraction definition — the RAW, unmasked config
+        # (never get_api_request_config()'s masked-for-display
+        # version, which blanks the secret auth fields) since this is
+        # what actually builds and sends the real outgoing request.
+        request_config = self._parsed_api_request_config(test_case)
+
+        missing = runner.find_missing_variables(
+            endpoint, config, request_config
+        )
 
         endpoint_summary = {
             "id": endpoint.get("id"),
@@ -1193,7 +2078,101 @@ class TestCasesWeb:
 
         self.runs.mark_running(run["run_uuid"])
 
-        result = runner.send(endpoint, config)
+        # Section I/J: the structured Assertions list (section F), when
+        # configured, is what actually decides Pass/Fail (an expected
+        # JSON field mismatch FAILS even on HTTP 200) — send() falls
+        # back to the legacy single expected-status comparison when no
+        # structured assertions exist for this test case.
+        structured_assertions = request_config.get("assertions") or []
+
+        result = runner.send(
+            endpoint, config,
+            expected_status_override=test_case.get(
+                "api_expected_status_code"
+            ),
+            request_overrides=request_config,
+            assertions=structured_assertions or None,
+        )
+
+        # Section I/J: exactly ONE request has already been sent, above
+        # — everything below only interprets/persists that single
+        # result; extraction/history never triggers a second request.
+
+        extracted_variables = {}
+
+        if not result.get("error"):
+
+            extraction_rules = request_config.get("extraction_rules") or []
+
+            if extraction_rules:
+
+                extracted_variables = runner.extract_variables(
+                    extraction_rules, result
+                )
+
+                # Section J: "extracted variable reuse in subsequent
+                # request" — remembered into Test Environment Settings'
+                # api_variables via the SAME dialog-facing method an
+                # operator's own variable-prompt answer already uses,
+                # so a later run's {{variable}} resolves to this run's
+                # extracted value automatically. A remember failure
+                # must never invalidate an otherwise-completed
+                # execution — the run's own result still carries the
+                # extracted value either way.
+                for variable_name, variable_value in extracted_variables.items():
+
+                    try:
+
+                        TestEnvironmentConfig().remember_api_variable(
+                            variable_name, variable_value
+                        )
+
+                    except Exception:
+
+                        pass
+
+            # REMOVE-SCRIPT-LIFECYCLE item 13: `extracted_variables`
+            # above holds the REAL extracted value (e.g. a real
+            # access_token) — it was only ever needed to remember it
+            # into Environment Settings, just above. From this point
+            # on this function must never let a real extracted value
+            # escape again: not in the HTTP response returned to the
+            # browser, and not in the run history `stdout` blob
+            # persisted below (both used to embed the raw dict
+            # directly). Keep the real NAMES (still useful — see
+            # extracted_variable_names use in Assertions/Extraction UI
+            # and the "chained variable reuse" story) but replace every
+            # value with a fixed mask; the real value now lives only in
+            # Environment Settings (Section G's existing masked-on-read
+            # secret handling already covers that).
+            masked_extracted_variables = {
+                name: "******" for name in sorted(extracted_variables.keys())
+            }
+
+            result["extracted_variables"] = masked_extracted_variables
+
+        else:
+
+            masked_extracted_variables = {}
+
+        # Section P: the RAW response (headers + body) that send()
+        # returns is intentionally unmasked up to this point — both
+        # assertion evaluation (already done, inside send()) and
+        # variable extraction (just above) need the real values (e.g.
+        # to actually read out a real access_token). But a login-style
+        # response body routinely echoes back the very secret this
+        # test case's config never let onto the wire unmasked (its
+        # own request side is already masked at result["request"] by
+        # send() itself) — so response_headers/response_body_text
+        # must be masked here, AFTER extraction, before this result
+        # is persisted to history or returned to Run Details/the UI.
+        result["response_headers"] = ApiAutomationRunner._mask_headers(
+            result.get("response_headers")
+        )
+
+        result["response_body_text"] = ApiAutomationRunner._mask_body_text(
+            result.get("response_body_text")
+        )
 
         if result.get("error"):
 
@@ -1212,28 +2191,62 @@ class TestCasesWeb:
                     "endpoint": endpoint_summary,
                     "status_code": result.get("status_code"),
                     "expected_status": result.get("expected_status"),
+                    "assertions": result.get("assertions") or [],
+                    "extracted_variables": masked_extracted_variables,
                 }),
             })
 
             self.repository.update_result(test_case_id, "Pass")
 
-        elif result.get("expected_status"):
+        elif result.get("auto_verdict") == "Fail":
+
+            # Section J's explicit examples: expected 400 + actual
+            # 200 -> FAIL; an expected JSON field value mismatch ->
+            # FAIL even on HTTP 200 — both now arrive here as an
+            # explicit "Fail" auto_verdict from send()/
+            # evaluate_assertions(), rather than being inferred from
+            # "some expected_status happened to be set".
+            failed_assertions = [
+                item for item in (result.get("assertions") or [])
+                if not item.get("passed")
+            ]
+
+            if failed_assertions:
+
+                failure_detail = "; ".join(
+                    f"{item.get('label') or item.get('type')}: "
+                    f"{item.get('message')}"
+                    for item in failed_assertions
+                )
+
+            else:
+
+                failure_detail = (
+                    f"Expected HTTP {result.get('expected_status')}; "
+                    f"received {result.get('status_code')}."
+                )
 
             finished = self.runs.mark_finished(run["run_uuid"], {
                 "success": False,
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
-                "stderr": f"Expected HTTP {result.get('expected_status')}; "
-                f"received {result.get('status_code')}.",
+                "stderr": failure_detail,
+                "stdout": json.dumps({
+                    "endpoint": endpoint_summary,
+                    "status_code": result.get("status_code"),
+                    "expected_status": result.get("expected_status"),
+                    "assertions": result.get("assertions") or [],
+                    "extracted_variables": masked_extracted_variables,
+                }),
             })
-
 
             self.repository.update_result(test_case_id, "Fail")
 
         else:
 
             finished = self.runs.mark_finished(run["run_uuid"], {
-                "error": "Blocked: no expected HTTP status is stored; "
-                "the result cannot be judged Pass or Fail.",
+                "error": "Blocked: no expected HTTP status or assertion "
+                "is configured; the result cannot be judged Pass or "
+                "Fail.",
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
             })
 
@@ -1377,6 +2390,55 @@ class SqlAutomationWeb:
             f"Expected Result: {test_case.get('expected_result') or ''}"
         )
 
+        # API-SQL-AUTOMATION-END-TO-END: the frontend always POSTs
+        # database_schema as {} (never a real schema string), so
+        # without this, AI Generate SQL had no real schema to ground
+        # itself in and would either invent table/column names or
+        # (correctly, but uselessly) always refuse. Auto-introspect
+        # the operator's configured SQL Environment connection
+        # instead — real, read-only (SqlAutomationRunner.describe_schema()
+        # only ever runs sqlite_master/information_schema/
+        # INFORMATION_SCHEMA introspection queries, never touches
+        # data) — so generation is grounded in the REAL target schema
+        # whenever a connection is configured, and still safely
+        # refuses (via SQLGenerator's own "no schema" handling) when
+        # it isn't.
+        if not (database_schema or "").strip():
+
+            profile = self.env.load()
+
+            if SqlEnvironmentConfig._is_ready(profile):
+
+                try:
+
+                    database_schema = self.runner.describe_schema(profile)
+
+                except Exception as error:
+
+                    return {
+                        "test_case": test_case,
+                        "sql": "",
+                        "raw_answer": "",
+                        "needs_review": True,
+                        "validation_error": (
+                            f"Could not read the configured database's "
+                            f"schema: {error}"
+                        ),
+                    }
+
+                if not database_schema:
+
+                    return {
+                        "test_case": test_case,
+                        "sql": "",
+                        "raw_answer": "",
+                        "needs_review": True,
+                        "validation_error": (
+                            "The configured database has no readable "
+                            "tables — nothing to generate SQL against."
+                        ),
+                    }
+
         generator = SQLGenerator()
 
         result = generator.generate(
@@ -1412,25 +2474,32 @@ class SqlAutomationWeb:
 
         # Whether this looks safe/executable is decided by the SAME
         # gate a manual save/execute goes through — never a
-        # relaxed/AI-only check. If the schema was unavailable,
-        # SQLGenerator already deliberately did not produce
-        # executable SQL (see its _build_prompt()/_validate_output()),
-        # so this will legitimately fail validation and the draft is
-        # saved as needs-review rather than becoming Active.
-        needs_review = True
-        validation_error = None
-
+        # relaxed/AI-only check. AI Generate SQL must validate as
+        # read-only BEFORE placing anything into the editor — an
+        # invalid/non-SQL AI result must show a clear error and must
+        # NOT populate the editor (i.e. must NOT be persisted into
+        # automation_script at all), per the explicit spec. If the
+        # schema was unavailable, SQLGenerator already deliberately
+        # did not produce executable SQL (see its
+        # _build_prompt()/_validate_output()), so this will
+        # legitimately fail validation here too.
         try:
 
             from Core.sql_automation_runner import validate_readonly_sql
 
             validate_readonly_sql(sql_text)
 
-            needs_review = False
+        except SqlValidationError:
 
-        except SqlValidationError as ex:
-
-            validation_error = str(ex)
+            return {
+                "test_case": test_case,
+                "sql": "",
+                "raw_answer": answer,
+                "needs_review": True,
+                "validation_error": (
+                    "AI did not return a valid read-only SQL query."
+                ),
+            }
 
         script_json = self._pack_script(
             sql_text, "row_exists", None, None
@@ -1438,22 +2507,70 @@ class SqlAutomationWeb:
 
         self.repository.update_automation(test_case_id, "SQL", script_json)
 
-        # A Draft (needs review) is deliberately NOT marked Automated
-        # by this same call — set_active_script()/validate_sql() is
-        # the only path that flips status, exactly like the
+        # A generated-and-valid draft is deliberately NOT marked
+        # Automated by this same call — set_active()/validate_sql()
+        # is the only path that flips status, exactly like the
         # Playwright/API AI-generation flow's own "generated text
         # exists" vs "status says Automated" distinction.
         return {
             "test_case": self.repository.get_test_case(test_case_id),
             "sql": sql_text,
             "raw_answer": answer,
-            "needs_review": needs_review,
-            "validation_error": validation_error,
+            "needs_review": False,
+            "validation_error": None,
         }
 
     # --------------------------------------------------
     # Save / validate
     # --------------------------------------------------
+
+    # API-SQL-AUTOMATION-END-TO-END: which assertion types require a
+    # Column and/or an Expected Value, enforced by
+    # _validate_assertion_config() before Set Active — matches the
+    # explicit spec: row_exists/no_rows need neither; row_count_equals
+    # /first_value_equals (scalar_equals) need only Expected Value;
+    # column_value_equals (value_equals) needs both.
+    _ASSERTION_REQUIREMENTS = {
+        "row_exists": {"column": False, "value": False},
+        "no_rows": {"column": False, "value": False},
+        "row_count_equals": {"column": False, "value": True},
+        "scalar_equals": {"column": False, "value": True},
+        "value_equals": {"column": True, "value": True},
+    }
+
+    @classmethod
+    def _validate_assertion_config(
+        cls, assertion_type, assertion_value, assertion_column
+    ):
+
+        assertion_type = assertion_type or "row_exists"
+
+        requirements = cls._ASSERTION_REQUIREMENTS.get(assertion_type)
+
+        if requirements is None:
+
+            raise SqlValidationError(
+                f"Unknown assertion type: {assertion_type}"
+            )
+
+        has_value = assertion_value is not None and str(assertion_value).strip() != ""
+
+        has_column = assertion_column is not None and str(assertion_column).strip() != ""
+
+        if requirements["value"] and not has_value:
+
+            raise SqlValidationError(
+                f"Assertion type '{assertion_type}' requires an "
+                f"Expected Value."
+            )
+
+        if requirements["column"] and not has_column:
+
+            raise SqlValidationError(
+                f"Assertion type '{assertion_type}' requires a Column."
+            )
+
+        return True
 
     def save_script(self, test_case_id, sql, assertion_type,
                      assertion_value, assertion_column):
@@ -1463,6 +2580,20 @@ class SqlAutomationWeb:
         if not test_case:
 
             raise ValueError(f"Test case {test_case_id} not found.")
+
+        # API-SQL-AUTOMATION-END-TO-END: reject obviously non-SQL
+        # content (Python/Selenium/Playwright/HTTP code pasted into
+        # the wrong slot) at Save time already — deliberately looser
+        # than validate_readonly_sql() (still the full gate at
+        # Validate/Set Active), so an imperfect/in-progress SQL draft
+        # can still be saved and iterated on.
+        if sql and _NON_SQL_CONTENT_PATTERN.search(sql):
+
+            raise SqlValidationError(
+                "This does not look like SQL — Python, Selenium, "
+                "Playwright, or HTTP client code cannot be saved as "
+                "a SQL Automation script."
+            )
 
         script_json = self._pack_script(
             sql, assertion_type, assertion_value, assertion_column
@@ -1474,9 +2605,10 @@ class SqlAutomationWeb:
 
     def validate_sql(self, test_case_id):
         """
-        Read-only safety + syntax gate — the ONLY thing that decides
-        whether this test case's saved SQL is allowed to become
-        Active for execution (see set_active()). A query that fails
+        Read-only safety + syntax gate, AND assertion-config gate —
+        together the ONLY thing that decides whether this test
+        case's saved SQL is allowed to become Active for execution
+        (see set_active()). A query (or assertion config) that fails
         here can stay saved as a Draft, exactly per this task's
         "Invalid scripts may be retained as Draft/Validation Failed
         but must NOT be Active for Execution" rule.
@@ -1495,6 +2627,12 @@ class SqlAutomationWeb:
             from Core.sql_automation_runner import validate_readonly_sql
 
             cleaned = validate_readonly_sql(script.get("sql"))
+
+            self._validate_assertion_config(
+                script.get("assertion_type"),
+                script.get("assertion_value"),
+                script.get("assertion_column"),
+            )
 
             return {"valid": True, "cleaned_sql": cleaned, "error": None}
 

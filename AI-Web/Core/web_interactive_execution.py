@@ -76,6 +76,7 @@ comments in playwright_runner.py.
 
 import queue
 import threading
+from datetime import datetime
 
 from Core.automation_execution_repository import AutomationExecutionRepository
 from Core.logger import Logger
@@ -134,6 +135,16 @@ class WebInteractiveExecutionSession:
         self._pending_failure_event = None
 
         self._thread = None
+        self._persisted_repairs = 0
+        self._runtime_activity = []
+        self._stopped_by_user = False
+
+    def _remember_activity(self, event_type, payload=None):
+        self._runtime_activity.append({
+            "timestamp": datetime.now().isoformat(),
+            "type": event_type,
+            "event": payload or {},
+        })
 
     # ------------------------------------------------------------
     # Single global "one real browser window at a time" lock — shared
@@ -215,8 +226,16 @@ class WebInteractiveExecutionSession:
                 on_step_failed=self._on_step_failed,
                 on_repaired=self._on_repaired,
                 on_locator_verified=self._on_locator_verified,
+                on_element_selected=self._on_element_selected,
+                on_runtime_event=self._on_runtime_event,
                 max_repair_rounds=3,
             )
+            if result.get("repairs"):
+                result["repairs_persisted"] = (
+                    self._persisted_repairs == len(result["repairs"])
+                )
+            result["runtime_activity"] = self._runtime_activity
+            result["stopped"] = self._stopped_by_user
 
             if not result.get("interactive_supported"):
 
@@ -250,6 +269,9 @@ class WebInteractiveExecutionSession:
 
             result = {"error": str(ex)}
 
+        result.setdefault("runtime_activity", self._runtime_activity)
+        result.setdefault("stopped", self._stopped_by_user)
+
         self.runs.mark_finished(self.run_uuid, result)
 
         self._out_queue.put({
@@ -271,14 +293,31 @@ class WebInteractiveExecutionSession:
         """
 
         self._pending_failure_event = event
+        logger.info("[repair] selection available step=%s total=%s", event.get("step"), event.get("total_steps"))
+
+        self._remember_activity("step_failed", event)
 
         self._out_queue.put({"type": "step_failed", "event": event})
 
         return self._decision_queue.get()
 
     def _on_repaired(self, repair):
-
-        self._out_queue.put({"type": "step_repaired", "repair": repair})
+        self._pending_failure_event = None
+        try:
+            self._remember_activity("step_repaired", repair)
+            self.manager.apply_script_repairs(self.test_case_id, [repair])
+            logger.info("[repair] patch persisted step=%s", repair.get("step"))
+            self._persisted_repairs += 1
+            self._out_queue.put({
+                "type": "step_repaired", "repair": repair,
+                "persisted": True,
+            })
+        except Exception as ex:
+            logger.exception("[web-interactive-execute] repair persistence failed")
+            self._out_queue.put({
+                "type": "step_repaired", "repair": repair,
+                "persisted": False, "persistence_error": str(ex),
+            })
 
     def _on_locator_verified(self, event):
         """
@@ -298,6 +337,17 @@ class WebInteractiveExecutionSession:
 
         return self._decision_queue.get()
 
+    def _on_element_selected(self, event):
+        selected = event.get("selected_candidate") or {}
+        logger.info("[repair] session received element_selected step=%s candidate=%s", event.get("step"), event.get("locator") or selected.get("expression"))
+        self._remember_activity("element_selected", event)
+        self._out_queue.put({"type": "element_selected", "event": event})
+
+    def _on_runtime_event(self, event):
+        if event.get("event") != "step_started":
+            self._remember_activity(event.get("event"), event)
+        self._out_queue.put({"type": event.get("event"), "event": event})
+
     def next_event(self):
         """
         Blocking — the router calls this via an executor
@@ -314,7 +364,11 @@ class WebInteractiveExecutionSession:
         # wrongly report "No failure is currently awaiting a fix."
         # while the operator is still mid-verification on the exact
         # same paused step.
-        if (decision or {}).get("action") not in ("verify_locator", "verify_code"):
+        if (decision or {}).get("action") == "select_element":
+            logger.info("[repair] selection requested step=%s", (self._pending_failure_event or {}).get("step"))
+        if (decision or {}).get("action") not in (
+            "verify_locator", "verify_code", "select_element",
+        ):
 
             self._pending_failure_event = None
 
@@ -354,7 +408,22 @@ class WebInteractiveExecutionSession:
         submit_decision() so the harness itself exits cleanly.
         """
 
+        self._decision_queue.put({"action": "cancel"})
+        self._pending_failure_event = None
         self.manager.cancel_interactive_run()
+
+    def stop_run(self):
+        self._stopped_by_user = True
+        self._remember_activity("stop_requested", {"message": "Stop requested by user."})
+        self.cancel_run()
+
+    def cancel_selection(self):
+        self.manager.cancel_interactive_selection()
+
+    def wait_for_completion(self, timeout=12):
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout)
+        return not (self._thread and self._thread.is_alive())
 
     def apply_repairs(self, repairs):
         """

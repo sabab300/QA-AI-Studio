@@ -3,7 +3,7 @@
   "username": "un-00-0453600",
   "password": "Test@1234",
   "notes": "",
-  "slow_mo_ms": "300",
+  "slow_mo_ms": "700",
   "default_timeout_ms": "45000",
   "api_auth_type": "None",
   "api_auth_token": "",

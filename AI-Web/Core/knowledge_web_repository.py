@@ -132,6 +132,7 @@ class KnowledgeRepository:
                         item["api_collections"].append({
                             "id": collection["id"],
                             "name": collection.get("name"),
+                            "source_file_name": collection.get("source_file_name"),
                             "endpoints": [
                                 {
                                     "id": endpoint["id"],

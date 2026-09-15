@@ -33,7 +33,8 @@ class AutomationGenerator:
         domain=None,
         module=None,
         knowledge_name=None,
-        version=None
+        version=None,
+        automation_type=None,
     ):
 
         try:
@@ -63,7 +64,9 @@ class AutomationGenerator:
                 context=rag.get(
                     "context",
                     ""
-                )
+                ),
+
+                automation_type=automation_type,
 
             )
 

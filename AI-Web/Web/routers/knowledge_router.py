@@ -486,6 +486,7 @@ def import_api_collection(
     module: Optional[str] = Form(None),
     knowledge_name: Optional[str] = Form(None),
     version: Optional[str] = Form("1.0"),
+    document_type: Optional[str] = Form(None),
     current_user=Depends(require_permission("knowledge", "create")),
 ):
     if Path(file.filename or "").suffix.lower() != ".json":
@@ -497,7 +498,7 @@ def import_api_collection(
         if not temp_path.stat().st_size:
             raise HTTPException(status_code=400, detail="The uploaded collection is empty.")
         result = ApiCollectionRepository().import_postman_collection(
-            str(temp_path), domain, module, knowledge_name, version
+            str(temp_path), domain, module, knowledge_name, version, document_type
         )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

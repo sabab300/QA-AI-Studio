@@ -67,6 +67,44 @@ class QaEngineeringWeb:
             item["display_name"] = self._source_display_name(item)
         return items
 
+    @staticmethod
+    def _resolve_source_file_names(scope_items, source_ids):
+        """
+        Resolve the selected knowledge item(s) into the exact
+        `file_name` values RAGEngine.get_context() filters vector
+        metadata against (see rag_engine.py's source_file_names
+        matching on metadata["file_name"]).
+
+        QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
+        item 3/4 root cause: an API Collection's linked knowledge_items
+        row is a placeholder with file_name="(imported API collection)"
+        — that literal was never what got embedded. The REAL embedded
+        chunks (ApiCollectionRepository._index_collection_for_search)
+        are tagged with each collection's own uploaded file name
+        (source_file_name). Using the placeholder here made the RAG
+        filter match zero chunks for every API Collection scope,
+        which QA Engineering surfaced as "No knowledge found." even
+        though Manage Knowledge and API Automation both showed real,
+        imported endpoints. For an API_COLLECTION item this now
+        expands to every one of its linked collections' real source
+        file names instead of the placeholder.
+        """
+
+        selected_ids = set(source_ids or [])
+        selected = [item for item in scope_items if item.get("id") in selected_ids]
+        names = []
+        for item in selected:
+            if item.get("source_type") == "API_COLLECTION" and item.get("api_collections"):
+                for collection in item["api_collections"]:
+                    name = collection.get("source_file_name")
+                    if name:
+                        names.append(name)
+                continue
+            name = item.get("file_name")
+            if name:
+                names.append(name)
+        return names
+
     def _source_display_name(self, item):
         """Return the best real persisted source name without inventing labels."""
         candidates = [
@@ -173,10 +211,9 @@ class QaEngineeringWeb:
             provider = model = None
             generator = TestCaseGenerator()
             source_ids = payload.get("knowledge_source_ids") or []
-            source_names = [
-                item.get("file_name") for item in self.list_scope(payload.get("domain"), payload.get("module"))
-                if item.get("id") in set(source_ids)
-            ]
+            source_names = self._resolve_source_file_names(
+                self.list_scope(payload.get("domain"), payload.get("module")), source_ids
+            )
             self._append_log(
                 job_id, "Source Scope",
                 f"Document Type: {payload.get('document_type')}; selected sources: "

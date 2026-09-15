@@ -41,10 +41,13 @@ from Core.automation_web_repository import (
     TestCasesWeb,
     SqlAutomationWeb,
 )
+from Core.sql_automation_runner import SqlValidationError
 from Core.user_repository import UserRepository
+from Core.logger import Logger
 from Web.deps import require_permission
 
 router = APIRouter(prefix="/api/automation", tags=["automation"])
+logger = Logger.get_logger()
 
 
 def _audit(current_user, action, detail):
@@ -65,7 +68,6 @@ def _value_error_to_400(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
     except ValueError as error:
-
         raise HTTPException(status_code=400, detail=str(error))
 
 
@@ -91,6 +93,7 @@ def import_api_collection(
     module: Optional[str] = Form(None),
     knowledge_name: Optional[str] = Form(None),
     version: Optional[str] = Form(None),
+    document_type: Optional[str] = Form(None),
     current_user=Depends(require_permission("automation", "create")),
 ):
 
@@ -101,11 +104,10 @@ def import_api_collection(
         result = ApiCollectionsWeb().import_collection(
             file_bytes=file_bytes, original_filename=file.filename,
             domain=domain, module=module, knowledge_name=knowledge_name,
-            version=version,
+            version=version, document_type=document_type,
         )
 
     except ValueError as error:
-
         raise HTTPException(status_code=400, detail=str(error))
 
     _audit(current_user, "IMPORT_API_COLLECTION", f"Imported '{file.filename}' ({result.get('endpoints_saved', 0)} endpoints)")
@@ -313,6 +315,25 @@ class ExecuteApiRequest(BaseModel):
     endpoint_id: Optional[int] = None
 
 
+class BindApiEndpointRequest(BaseModel):
+    endpoint_id: Optional[int] = None
+
+
+class SetApiAssertionRequest(BaseModel):
+    expected_status_code: Optional[int] = None
+
+
+class ApiRequestConfigRequest(BaseModel):
+    # POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION: matches
+    # TestCasesWeb._API_REQUEST_CONFIG_KEYS exactly — every field is
+    # optional because set_api_request_config() only persists the
+    # keys the caller actually sent, leaving the rest of the stored
+    # config untouched. `dict`/`list` bodies are passed through as
+    # plain JSON-compatible data; the repository does its own
+    # structural validation.
+    request_config: dict
+
+
 @router.get("/test-cases")
 def list_test_cases(
     domain: str, module: str, knowledge_name: str, automation_type: Optional[str] = None,
@@ -341,34 +362,22 @@ def sample_template(current_user=Depends(require_permission("automation", "view"
 
     from openpyxl import Workbook
 
-    from Core.test_execution_manager import TestExecutionManager
-
-    aliases = TestExecutionManager._IMPORT_FIELD_ALIASES
-
-    header_labels = {
-        "scenario": "Scenario",
-        "importance": "Importance",
-        "test_type": "Test Type",
-        "test_case": "Test Case",
-        "pre_conditions": "Pre-Conditions",
-        "steps": "Steps",
-        "expected_result": "Expected Result",
-        "execution_type": "Execution Type",
-        "execution_tool": "Execution Tool",
-    }
-
-    headers = [header_labels[field] for field in aliases.keys()]
+    headers = [
+        "TC No.", "Requirement/Scenario", "Test Type", "Important",
+        "Test Case", "Pre-Conditions", "Steps", "Expected result",
+        "Actual Result", "Status", "Bug ID", "Comments",
+    ]
 
     example_row = [
+        "TC-001",
         "Login with valid credentials",
-        "High",
         "Functional",
+        "High",
         "Verify a user can log in with a valid username and password",
         "User account exists and is active",
         "1. Open the login page\n2. Enter valid username/password\n3. Click Login",
         "User is redirected to the dashboard and sees their name in the header",
-        "Automatable",
-        "Playwright",
+        "", "Draft", "", "Sample row",
     ]
 
     workbook = Workbook()
@@ -435,6 +444,7 @@ def import_test_cases(
     version: Optional[str] = Form(None),
     document_type: str = Form(...),
     source_knowledge_ids: List[int] = Form(...),
+    automation_type: str = Form("Playwright"),
     current_user=Depends(require_permission("automation", "create")),
 ):
 
@@ -444,11 +454,15 @@ def import_test_cases(
 
         result = TestCasesWeb().import_from_excel(
             file_bytes, file.filename, domain, module, knowledge_name, version,
-            document_type, source_knowledge_ids,
+            document_type, source_knowledge_ids, automation_type,
         )
 
     except ValueError as error:
-
+        logger.warning(
+            "Test Case import rejected: file=%s scope=%s/%s/%s/%s/%s detail=%s",
+            file.filename, domain, module, knowledge_name, version,
+            document_type, str(error),
+        )
         raise HTTPException(status_code=400, detail=str(error))
 
     _audit(current_user, "IMPORT_TEST_CASES", f"Imported {result.get('imported', 0)} test case(s) from '{file.filename}'")
@@ -654,6 +668,104 @@ def start_execution(test_case_id: int, current_user=Depends(require_permission("
     _audit(current_user, "EXECUTE_TEST_CASE", f"Started execution job {job['job_id']} for test_case_id={test_case_id}")
 
     return job
+
+
+@router.get("/test-cases/{test_case_id}/api-endpoint-candidates")
+def api_endpoint_candidates(
+    test_case_id: int,
+    current_user=Depends(require_permission("automation", "view")),
+):
+
+    try:
+
+        return TestCasesWeb().list_api_endpoint_candidates(test_case_id)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.patch("/test-cases/{test_case_id}/bind-api-endpoint")
+def bind_api_endpoint(
+    test_case_id: int, payload: BindApiEndpointRequest,
+    current_user=Depends(require_permission("automation", "create")),
+):
+
+    result = _value_error_to_400(
+        TestCasesWeb().bind_api_endpoint, test_case_id, payload.endpoint_id
+    )
+
+    _audit(
+        current_user, "BIND_API_ENDPOINT",
+        f"test_case_id={test_case_id}, endpoint_id={payload.endpoint_id}",
+    )
+
+    return result
+
+
+@router.patch("/test-cases/{test_case_id}/api-assertion")
+def set_api_assertion(
+    test_case_id: int, payload: SetApiAssertionRequest,
+    current_user=Depends(require_permission("automation", "create")),
+):
+
+    result = _value_error_to_400(
+        TestCasesWeb().set_api_expected_status,
+        test_case_id, payload.expected_status_code,
+    )
+
+    _audit(
+        current_user, "SET_API_ASSERTION",
+        f"test_case_id={test_case_id}, "
+        f"expected_status_code={payload.expected_status_code}",
+    )
+
+    return result
+
+
+@router.get("/test-cases/{test_case_id}/api-request-config")
+def get_api_request_config(
+    test_case_id: int,
+    current_user=Depends(require_permission("automation", "view")),
+):
+    """
+    POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION root cause: this route
+    (and the PATCH below) never existed — TestCasesWeb.
+    get_api_request_config()/set_api_request_config() (section F
+    backend) were fully implemented, and Frontend/index.html's
+    Request Configuration UI has been calling
+    "/api/automation/test-cases/{id}/api-request-config" since it was
+    built, but with no matching route the call always 404'd. Added
+    here, never touching the already-correct repository methods.
+    """
+
+    try:
+
+        return TestCasesWeb().get_api_request_config(test_case_id)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.patch("/test-cases/{test_case_id}/api-request-config")
+def set_api_request_config(
+    test_case_id: int, payload: ApiRequestConfigRequest,
+    current_user=Depends(require_permission("automation", "create")),
+):
+
+    result = _value_error_to_400(
+        TestCasesWeb().set_api_request_config,
+        test_case_id, payload.request_config,
+    )
+
+    _audit(
+        current_user, "SET_API_REQUEST_CONFIG",
+        f"test_case_id={test_case_id}, "
+        f"keys={sorted((payload.request_config or {}).keys())}",
+    )
+
+    return result
 
 
 @router.post("/test-cases/{test_case_id}/execute-api")
@@ -1045,6 +1157,10 @@ def save_sql_script(
             test_case_id, payload.sql, payload.assertion_type,
             payload.assertion_value, payload.assertion_column,
         )
+
+    except SqlValidationError as error:
+
+        raise HTTPException(status_code=422, detail=str(error))
 
     except ValueError as error:
 
