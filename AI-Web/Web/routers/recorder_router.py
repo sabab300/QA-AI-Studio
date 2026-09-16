@@ -138,12 +138,24 @@ async def record_ws(websocket: WebSocket, test_case_id: int):
     )
 
     watchdog_task = None
+    terminal_sent = False
+    connection_open = True
 
     async def send_json(payload):
+        nonlocal connection_open
+        if not connection_open:
+            return False
         try:
             await websocket.send_json(payload)
+            return True
+        except WebSocketDisconnect:
+            connection_open = False
+            _logger.info("[web-recorder] client connection closed")
+            return False
         except Exception:
+            connection_open = False
             _logger.exception("[web-recorder] send_json failed")
+            return False
 
     async def watchdog():
         # Hard ceiling so an operator who closes their laptop mid
@@ -184,14 +196,16 @@ async def record_ws(websocket: WebSocket, test_case_id: int):
             if msg_type == "stop":
                 await send_json({"type": "activity", "text": "Stopping recorder..."})
                 script = await session.finish(save=True)
-                await send_json({"type": "stopped", "script": script})
+                terminal_sent = await send_json({"type": "stopped", "script": script})
                 break
             elif msg_type == "cancel":
                 await session.finish(save=False)
-                await send_json({"type": "cancelled"})
+                terminal_sent = await send_json({"type": "cancelled"})
                 break
 
     except WebSocketDisconnect:
+
+        connection_open = False
 
         # Operator's QA AI Studio tab closed / lost connection
         # mid-recording. The real recorder browser window is a
@@ -206,7 +220,8 @@ async def record_ws(websocket: WebSocket, test_case_id: int):
         # an-in-progress-recording mechanism. Matches item 25's
         # cleanup requirement; the reconnect gap is called out in the
         # final report's Remaining Gaps section.
-        await session.finish(save=False)
+        if not terminal_sent:
+            await session.finish(save=False)
 
     except Exception as ex:
 

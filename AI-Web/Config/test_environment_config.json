@@ -16,6 +16,11 @@
   "api_verify_ssl": true,
   "api_base_url_override": "",
   "api_variables": {
-    "Test01": "123"
+    "X-Channel-Id": "PITB-001",
+    "X-Operation": "PITB_REPORTS",
+    "X-Token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjBEOUY0RjI5MTg3MjlCMDk1RTZGNjkyQUZFOTIxQkVGMEJCQTVFMjJSUzI1NiIsInR5cCI6ImF0K2p3dCIsIng1dCI6IkRaOVBLUmh5bXdsZWIya3FfcEliN3d1NlhpSSJ9.eyJuYmYiOjE3ODk1MzMyMzYsImV4cCI6MTc4OTUzNjgzNiwiaXNzIjoiaHR0cDovL3FhLnBzdy5nb3YucGsvYXV0aCIsImF1ZCI6WyJhdXRoIiwidXBzIl0sImNsaWVudF9pZCI6InBzdy5pbnQucGl0YiIsImNsaWVudF9jb2RlIjoiUElUQiIsImp0aSI6IjE4NDk2MUMzNDEzQ0E2Rjc3MDRDNTEwMEQ3NUE2NzAyIiwiaWF0IjoxNzg5NTMzMjM2LCJzY29wZSI6WyJhdXRoU2NvcGUiLCJ1cHNTY29wZSJdfQ.s0lnFiczm_Mqhvgm7M93WVZfdkgrkECNk_01Kq0_sbx-ILmDcKG3Pd9YEsiTyDCoVVbSE5soOtyTZ8CU1soavPKSW7sye_vdU9fY61jNHIT05UImxMV3oCXym6yPvIwfveC7U2IK7FEmggIdmkK-P8MBre01ImM6bzsb3b_L45eOIHusUvH55N6wFUWHuvHcRaNlEY1q_HfOoqF97vlYZHCe0Rp3uttQ6NyoU_1btPIpZGDnc-r1Nj5CGaDxnsyl141DIFD4mT6ksEg_Ya9wXzhsfSe9cW2WixJpaUuMP3E5MCivw50j1Ai9Makd5P8Lb2xFpICE336j6qMp6PGW1g"
+  },
+  "api_variable_secrets": {
+    "X-Token": false
   }
 }

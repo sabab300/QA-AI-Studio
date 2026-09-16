@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 
 from Core.logger import Logger
+from Core.secret_masking import is_sensitive_key
 
 
 # BUGFIX (shared Core defect, also present on Desktop): same
@@ -84,6 +85,16 @@ DEFAULT_CONFIG = {
     # remember_api_variable() to update just this, without touching
     # anything else in the config.
     "api_variables": {},
+    # FINAL-END-TO-END-WORKSPACE-V2 section 10/19: which remembered
+    # {{variable}} names are secrets (masked on read everywhere) —
+    # keyed the same as api_variables. A name absent here falls back
+    # to Core.secret_masking.is_sensitive_key(name) (the same
+    # heuristic already trusted for header/body masking), so every
+    # config file saved before this column existed keeps behaving
+    # sensibly with zero migration. Explicit True/False here always
+    # wins over the heuristic once a variable has been touched through
+    # the CRUD UI (see EnvironmentConfigWeb below).
+    "api_variable_secrets": {},
 }
 
 
@@ -152,6 +163,7 @@ class TestEnvironmentConfig:
         api_verify_ssl=None,
         api_base_url_override=None,
         api_variables=None,
+        api_variable_secrets=None,
     ):
         """
         The original 6 params (base_url ... default_timeout_ms) are
@@ -206,6 +218,9 @@ class TestEnvironmentConfig:
             "api_variables": _keep_if_none(
                 api_variables, "api_variables"
             ),
+            "api_variable_secrets": _keep_if_none(
+                api_variable_secrets, "api_variable_secrets"
+            ),
         }
 
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -220,15 +235,25 @@ class TestEnvironmentConfig:
 
     # --------------------------------------------------
 
-    def remember_api_variable(self, name, value):
+    def remember_api_variable(self, name, value, secret=None):
         """
         Saves ONE resolved {{variable}} value — called right after
         the operator answers a variable prompt during a real API
         run (see ApiVariablePromptDialog /
-        ApiAutomationRunner.find_missing_variables()) — without
-        touching anything else in the config, so this can be called
-        from a completely different, lightweight dialog than the
-        main Test Environment Settings one.
+        ApiAutomationRunner.find_missing_variables()), by the Common
+        Variables CRUD grid (section 10), and by a successful Token
+        Request's extraction step — without touching anything else in
+        the config, so this can be called from a completely different,
+        lightweight dialog than the main Test Environment Settings
+        one.
+
+        `secret` (section 10/19): True/False explicitly marks this
+        variable as a secret (masked on every read) or not; None (the
+        default) preserves whatever was already recorded for this
+        name, or — for a brand-new name — infers it from
+        Core.secret_masking.is_sensitive_key(name), so a variable
+        named e.g. "client_secret" or "X-Token" starts out masked
+        without the caller having to know that ahead of time.
         """
 
         existing = self.load()
@@ -236,6 +261,16 @@ class TestEnvironmentConfig:
         variables = dict(existing.get("api_variables") or {})
 
         variables[name] = value
+
+        secret_flags = dict(existing.get("api_variable_secrets") or {})
+
+        if secret is None:
+
+            secret_flags[name] = secret_flags.get(name, is_sensitive_key(name))
+
+        else:
+
+            secret_flags[name] = bool(secret)
 
         return self.save(
             base_url=existing.get("base_url", ""),
@@ -245,6 +280,36 @@ class TestEnvironmentConfig:
             slow_mo_ms=existing.get("slow_mo_ms", ""),
             default_timeout_ms=existing.get("default_timeout_ms", ""),
             api_variables=variables,
+            api_variable_secrets=secret_flags,
+        )
+
+    def forget_api_variable(self, name):
+        """
+        Deletes one remembered {{variable}} (section 10's CRUD grid
+        "Delete") — both its value and its secret flag. A name that
+        was never remembered is a harmless no-op, matching the rest
+        of this module's "caller doesn't have to check first" style.
+        """
+
+        existing = self.load()
+
+        variables = dict(existing.get("api_variables") or {})
+
+        variables.pop(name, None)
+
+        secret_flags = dict(existing.get("api_variable_secrets") or {})
+
+        secret_flags.pop(name, None)
+
+        return self.save(
+            base_url=existing.get("base_url", ""),
+            username=existing.get("username", ""),
+            password=existing.get("password", ""),
+            notes=existing.get("notes", ""),
+            slow_mo_ms=existing.get("slow_mo_ms", ""),
+            default_timeout_ms=existing.get("default_timeout_ms", ""),
+            api_variables=variables,
+            api_variable_secrets=secret_flags,
         )
 
     # --------------------------------------------------

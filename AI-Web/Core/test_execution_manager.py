@@ -33,10 +33,12 @@ from Core.test_case_repository import TestCaseRepository
 from Core.automation_generator import AutomationGenerator
 from Core.llm_engine import LLMEngine
 from Core.playwright_runner import PlaywrightRunner
+from Core.playwright_semantics import semantic_name_compatible
 from Core.playwright_step_metadata import metadata_comment
 from Core.test_environment_config import TestEnvironmentConfig
 from Core.logger import Logger
 import json
+import hashlib
 import re
 import ast
 import subprocess
@@ -104,11 +106,11 @@ class TestExecutionManager:
     _IMPORT_FIELD_ALIASES = {
         "scenario": (
             "namescenariorequirement", "scenario", "requirement",
-            "name", "namescenarioreq",
+            "name", "namescenarioreq", "requirementscenario",
         ),
         "importance": (
             "importancehighmediumlow", "importance", "priority",
-            "priorityhighmediumlow",
+            "priorityhighmediumlow", "important",
         ),
         "test_type": ("testtype", "type", "testtypepositivenegative"),
         "test_case": ("testcase", "testcasetitle", "title"),
@@ -1745,6 +1747,9 @@ class TestExecutionManager:
         return {
             "field_type": field_type, "field_name": field_name,
             "action_type": action_type, "primary_locator": locator,
+            "control_role": "", "control_context": "",
+            "parent_locator": "-", "popup_locator": "-",
+            "expected_value": "", "expected_post_state": "",
             "fallback_locators": "-", "xpath": xpath,
             "is_sensitive": "true" if sensitive else "false", "source": source,
         }
@@ -1757,6 +1762,12 @@ class TestExecutionManager:
             metadata_comment("FIELD_TYPE", metadata["field_type"]),
             metadata_comment("FIELD_NAME", metadata["field_name"]),
             metadata_comment("ACTION_TYPE", metadata["action_type"]),
+            metadata_comment("CONTROL_ROLE", metadata["control_role"]),
+            metadata_comment("CONTROL_CONTEXT", metadata["control_context"]),
+            metadata_comment("PARENT_LOCATOR", metadata["parent_locator"]),
+            metadata_comment("POPUP_LOCATOR", metadata["popup_locator"]),
+            metadata_comment("EXPECTED_VALUE", metadata["expected_value"]),
+            metadata_comment("EXPECTED_POST_STATE", metadata["expected_post_state"]),
             metadata_comment("PRIMARY_LOCATOR", metadata["primary_locator"]),
             metadata_comment("FALLBACK_LOCATORS", metadata["fallback_locators"]),
             metadata_comment("XPATH", metadata["xpath"]),
@@ -1869,7 +1880,120 @@ class TestExecutionManager:
 
         valid, error = self._validate_python_syntax(script_text)
 
-        return None if valid else error
+        if not valid:
+            return error
+        return None
+
+    @staticmethod
+    def assess_playwright_script_quality(script_text):
+        """Assess locator structure and semantics without conflating Python syntax."""
+        results = []
+        current_step = 0
+        metadata = {}
+        last_dynamic_locator = ""
+        transaction_openers = {}
+        metadata_pattern = re.compile(
+            r"#\s*(FIELD_NAME|FIELD_TYPE|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|"
+            r"CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|"
+            r"OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|PRIMARY_LOCATOR|FALLBACK_LOCATORS|XPATH):\s*(.*)",
+            re.I,
+        )
+        for line_number, raw in enumerate((script_text or "").splitlines(), 1):
+            line = raw.strip()
+            marker = re.match(r"#\s*QA_STEP:\s*0*(\d+)", line, re.I)
+            if marker:
+                current_step = int(marker.group(1))
+                metadata = {}
+                continue
+            metadata_match = metadata_pattern.match(line)
+            if metadata_match:
+                metadata[metadata_match.group(1).lower()] = metadata_match.group(2).strip()
+                continue
+            if not line or line.startswith("#") or not re.search(r"\.(?:click|fill|type|press|check|uncheck|select_option|hover)\(", line):
+                continue
+            field_name = metadata.get("field_name", "")
+            field_type = metadata.get("field_type", "").lower()
+            action_type = metadata.get("action_type", "").lower()
+            primary = metadata.get("primary_locator", "")
+            locator_text = primary if primary and primary != "-" else line
+            reason = ""
+            stable_pattern = r"(?:data-testid|data-test|data-qa|data-cy|get_by_role|get_by_label|\[name=|name=|#[A-Za-z_])"
+            classification = "Stable" if re.search(stable_pattern, locator_text, re.I) else "Acceptable"
+            if re.search(r"(?i)(?:xpath=)?//(?:span|div|button)\s*(?:$|['\"]\s*\))|\.k-(?:icon|select|header)(?:\b|[.\s\"'])|k-header|k-(?:dialog|popup|calendar)-?wrapper", locator_text):
+                classification, reason = "Invalid", "generic element/framework locator"
+            elif re.search(r"(?i)(?:^|xpath=)/html", locator_text) or locator_text.count(":nth-of-type(") > 1 or locator_text.count(":nth-child(") > 1:
+                classification, reason = "Invalid", "absolute or excessively positional locator"
+            elif field_type not in {"option", "date"} and re.search(
+                r"(?i)(?:xpath=)?//div|(?:^|>\s*)div(?:[.#:\[][^>]*)?$",
+                locator_text,
+            ) and action_type in {"fill", "type", "click"}:
+                classification, reason = "Invalid", "layout container is not an actionable control"
+            elif re.search(r":nth-(?:of-type|child)\(", locator_text) or len(locator_text) > 220:
+                classification, reason = "High Risk", "positional or unusually long locator requires review"
+
+            evidence_text = " ; ".join([
+                primary, metadata.get("fallback_locators", ""), metadata.get("xpath", ""), line,
+            ])
+            evidence = []
+            for pattern in (
+                r"(?:name|placeholder|label|title|aria-label)=([^;|]+)",
+                r"get_by_(?:text|label|placeholder|title)\(\s*['\"]([^'\"]+)",
+                r"get_by_role\([^\n]*?name\s*=\s*['\"]([^'\"]+)",
+                r"\[name=['\"]([^'\"]+)['\"]\]",
+                r"@(?:name|placeholder|aria-label)=['\"]([^'\"]+)['\"]",
+            ):
+                evidence.extend(re.findall(pattern, evidence_text, re.I))
+            generic_field = field_name.lower() in {"", "action", "field", "selection", "element", "button"}
+            semantic_valid = generic_field or not evidence or semantic_name_compatible(field_name, evidence)
+            semantic_reason = "semantic evidence matches the recorded field"
+            if not semantic_valid:
+                semantic_reason = f"locator evidence {evidence[:3]!r} conflicts with field '{field_name}'"
+
+            parent_valid = True
+            parent_reason = "parent/popup metadata is consistent"
+            parent_locator = metadata.get("parent_locator", "")
+            transaction_id = metadata.get("control_transaction", "")
+            if field_type in {"option", "date"} or action_type in {"select_option", "select_date"}:
+                persisted_opener = metadata.get("transaction_opener", "")
+                persisted_popup = metadata.get("transaction_popup", "")
+                ownership_evidence = metadata.get("ownership_evidence", "")
+                ownership_accepted = metadata.get("ownership_accepted", "").lower() == "true"
+                expected_parent = transaction_openers.get(transaction_id) if transaction_id else last_dynamic_locator
+                if transaction_id and not expected_parent and ownership_accepted and persisted_opener not in {"", "-"}:
+                    if ownership_evidence not in {"", "-"} and persisted_popup not in {"", "-"}:
+                        transaction_openers[transaction_id] = persisted_opener
+                        expected_parent = persisted_opener
+                if parent_locator not in {"", "-"} and parent_locator != expected_parent:
+                    parent_valid = False
+                    parent_reason = (
+                        f"parent '{parent_locator}' does not match the current opener "
+                        f"'{expected_parent or 'none'}'"
+                    )
+            if field_type in {"dropdown", "autocomplete", "calendar"} or action_type in {"open_dropdown", "open_calendar"}:
+                last_dynamic_locator = primary
+                if transaction_id and transaction_id not in transaction_openers:
+                    transaction_openers[transaction_id] = primary
+            elif not transaction_id and action_type not in {"select_option", "select_date", "fill", "type"}:
+                last_dynamic_locator = ""
+
+            action_valid = True
+            action_reason = "action is compatible with the recorded control"
+            if action_type in {"fill", "type"} and re.search(r"(?i)(?:xpath=)?//div|(?:^|[ >])div(?:[.#:\[]|$)", locator_text):
+                action_valid, action_reason = False, "text entry targets a non-input layout element"
+            if classification == "Invalid":
+                action_valid = action_valid and "layout container" not in reason
+                if not action_valid and "layout container" in reason:
+                    action_reason = "action targets a non-actionable layout container"
+
+            results.append({
+                "step": current_step or line_number, "line": line_number,
+                "classification": classification,
+                "reason": reason or "locator passed static quality checks",
+                "semantic_valid": semantic_valid, "semantic_reason": semantic_reason,
+                "parent_valid": parent_valid, "parent_reason": parent_reason,
+                "action_valid": action_valid, "action_reason": action_reason,
+            })
+        return results
 
 
     def _repair_script(self, broken_script, error_description):
@@ -2286,6 +2410,22 @@ class TestExecutionManager:
                 "Manually first."
             )
 
+        active_source = (
+            test_case.get("active_script_source") or "AUTO"
+        ).upper()
+        script_fingerprint = hashlib.sha256(
+            script.encode("utf-8")
+        ).hexdigest()[:16]
+        self.logger.info(
+            "Interactive replay source resolved: test_case_id=%s "
+            "tc_number=%s source=%s fingerprint=%s length=%s mode=interactive",
+            test_case_id,
+            test_case.get("tc_number") or "",
+            active_source,
+            script_fingerprint,
+            len(script),
+        )
+
         valid, validation_error = self._validate_python_syntax(script)
         if not valid:
             return {
@@ -2304,6 +2444,10 @@ class TestExecutionManager:
             on_runtime_event=on_runtime_event,
             max_repair_rounds=max_repair_rounds,
         )
+        result.setdefault("script_source", active_source)
+        result.setdefault("script_fingerprint", script_fingerprint)
+        result.setdefault("script_length", len(script))
+        result.setdefault("execution_mode", "interactive")
 
         if not result.get("interactive_supported"):
 
@@ -2382,6 +2526,8 @@ class TestExecutionManager:
                 continue
 
             step_number = repair.get("step")
+            line_separator = "\r\n" if "\r\n" in script else "\n"
+            had_trailing_newline = script.endswith(("\r\n", "\n"))
             lines = script.splitlines()
             marker_index = next((
                 index for index, line in enumerate(lines)
@@ -2434,7 +2580,7 @@ class TestExecutionManager:
                                 if re.match(r"^\s*#\s*SOURCE:", lines[meta_index]):
                                     lines[meta_index] = indent + metadata_comment("SOURCE", "repaired/user-selected")
                         break
-                script = "\n".join(lines) + ("\n" if script.endswith("\n") else "")
+                script = line_separator.join(lines) + (line_separator if had_trailing_newline else "")
             if not replaced:
                 script = script.replace(original, corrected, 1)
 

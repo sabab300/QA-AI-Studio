@@ -203,6 +203,11 @@ class RememberVariablesRequest(BaseModel):
     variables: Dict[str, str]
 
 
+class UpsertVariableRequest(BaseModel):
+    value: Optional[str] = ""
+    secret: Optional[bool] = None
+
+
 @router.get("/environment")
 def get_environment(current_user=Depends(require_permission("automation", "view"))):
 
@@ -229,8 +234,52 @@ def remember_variables(
     payload: RememberVariablesRequest,
     current_user=Depends(require_permission("automation", "edit")),
 ):
+    """
+    Bulk upsert, kept for flows that remember several values at once
+    (e.g. answering a real-run's missing-{{variable}} prompt) — each
+    name's secret flag is inferred, not settable here. The CRUD grid
+    (section 10) uses the single-variable PUT/DELETE endpoints below
+    instead, since it needs to set/clear the secret flag per row.
+    """
 
     return EnvironmentConfigWeb().remember_variables(payload.variables)
+
+
+@router.put("/environment/variables/{name}")
+def upsert_variable(
+    name: str,
+    payload: UpsertVariableRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    """Add-or-edit ONE remembered {{variable}} — the CRUD grid's Save row."""
+
+    try:
+
+        result = EnvironmentConfigWeb().upsert_variable(
+            name, payload.value, secret=payload.secret
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _audit(current_user, "UPDATE_TEST_ENVIRONMENT", f"Saved environment variable '{name}'")
+
+    return result
+
+
+@router.delete("/environment/variables/{name}")
+def delete_variable(
+    name: str,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    """Deletes ONE remembered {{variable}} — the CRUD grid's Delete button."""
+
+    result = EnvironmentConfigWeb().delete_variable(name)
+
+    _audit(current_user, "UPDATE_TEST_ENVIRONMENT", f"Deleted environment variable '{name}'")
+
+    return result
 
 
 # ============================================================

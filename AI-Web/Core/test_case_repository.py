@@ -1013,7 +1013,9 @@ class TestCaseRepository:
         return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
 
     @staticmethod
-    def _api_config_text(bound_api_endpoint_id, api_expected_status_code):
+    def _api_config_text(
+        bound_api_endpoint_id, api_expected_status_code, env_fingerprint="",
+    ):
         """
         Canonical "content" for an API Automation asset's readiness
         fingerprint. Per the required architecture ("Selenium/browser
@@ -1026,19 +1028,32 @@ class TestCaseRepository:
         (see mark_script_validated()/is_script_source_validated()
         below) for this second kind of "content" avoids a parallel,
         duplicate validated/active bookkeeping system.
+
+        `env_fingerprint` (FINAL-END-TO-END-WORKSPACE-V2 section 32):
+        an opaque string, computed by the caller (see
+        TestCasesWeb._api_env_fingerprint() in
+        automation_web_repository.py — this module intentionally
+        knows nothing about Test Environment Settings/variable
+        resolution itself), folded into the same fingerprint so a
+        material environment change invalidates readiness exactly
+        like a request-config change already does. Defaults to ""
+        so every non-API caller, and any API caller that hasn't been
+        updated to compute one, keeps the exact prior fingerprint.
         """
         return (
             f"endpoint={bound_api_endpoint_id or ''}"
             f"|expected_status={api_expected_status_code or ''}"
+            f"|env={env_fingerprint or ''}"
         )
 
-    def is_script_source_validated(self, test_case, source):
+    def is_script_source_validated(self, test_case, source, env_fingerprint=""):
         source = str(source or "AUTO").upper()
         is_api = str(test_case.get("automation_type") or "").upper() == "API"
         if is_api and source == "AUTO":
             content = self._api_config_text(
                 test_case.get("bound_api_endpoint_id"),
                 test_case.get("api_expected_status_code"),
+                env_fingerprint,
             )
             return (
                 bool(test_case.get("bound_api_endpoint_id"))
@@ -1059,7 +1074,9 @@ class TestCaseRepository:
             == self.script_fingerprint(test_case.get(script_field))
         )
 
-    def mark_script_validated(self, test_case_id, source, keep_active=False):
+    def mark_script_validated(
+        self, test_case_id, source, keep_active=False, env_fingerprint="",
+    ):
         source = str(source or "AUTO").upper()
         if source not in {"AUTO", "MANUAL"}:
             raise ValueError("source must be 'AUTO' or 'MANUAL'.")
@@ -1086,6 +1103,7 @@ class TestCaseRepository:
                 script = self._api_config_text(
                     row.get("bound_api_endpoint_id"),
                     row.get("api_expected_status_code"),
+                    env_fingerprint,
                 )
             else:
                 script = (
@@ -1138,27 +1156,63 @@ class TestCaseRepository:
         cursor = conn.cursor()
         now = datetime.now().isoformat()
         cursor.execute(
-            f"SELECT {field},status,active_script_source FROM test_cases WHERE id=?",
+            f"""
+            SELECT {field},status,active_script_source,automation_type,
+                   execution_type,execution_tool
+            FROM test_cases WHERE id=?
+            """,
             (test_case_id,),
         )
         current = cursor.fetchone()
         if current is None:
             conn.close()
             return self.get_test_case(test_case_id)
-        current_value, current_status, active_source = current
+        (
+            current_value, current_status, active_source,
+            automation_type, execution_type, execution_tool,
+        ) = current
         changed = (current_value or None) != (value or None)
         active_changed = changed and (active_source or "AUTO").upper() == "AUTO"
         next_status = "Draft" if active_changed else (current_status or "Draft")
+        # REQUEST-CENTRIC-LIFECYCLE-FINAL: a Test Case worked on
+        # purely through the API Request workspace (bind endpoint /
+        # expected status / request config) never used to get its
+        # legacy automation_type column stamped to "API" — the only
+        # code path that ever wrote automation_type was update_automation()
+        # (the now-hidden-for-API "Save Script" flow), so a Request-
+        # only workflow left automation_type stuck at "None" forever,
+        # even once the Central Test Case was already classified
+        # Execution Type=Automatable / Execution Tool=API Automation.
+        # Self-heal here, at the single shared choke point every
+        # Request-workspace write already goes through: once the
+        # operator has classified this Test Case as API Automation,
+        # any Request-workspace save keeps the legacy automation_type
+        # label in sync so Validate/Execute correctly recognize it as
+        # an API test case. This never sets Execution Tool itself —
+        # only mirrors a classification the operator already made —
+        # and never touches Playwright/SQL test cases (execution_tool
+        # for those is never "API Automation").
+        next_automation_type = automation_type
+        if (
+            execution_type == "Automatable"
+            and execution_tool == "API Automation"
+            and (automation_type or "None") != "API"
+        ):
+            next_automation_type = "API"
         cursor.execute(
             f"""
             UPDATE test_cases
             SET {field}=?,
                 status=?,
+                automation_type=?,
                 auto_script_validated_hash=CASE WHEN ? THEN '' ELSE auto_script_validated_hash END,
                 modified_date=?
             WHERE id=?
             """,
-            (value, next_status, 1 if changed else 0, now, test_case_id),
+            (
+                value, next_status, next_automation_type,
+                1 if changed else 0, now, test_case_id,
+            ),
         )
         conn.commit()
         conn.close()

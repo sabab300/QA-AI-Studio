@@ -35,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 from Core.logger import Logger
+from Core.playwright_semantics import semantic_name_compatible
 from Core.test_environment_config import TestEnvironmentConfig
 
 
@@ -63,6 +64,7 @@ from Core.test_environment_config import TestEnvironmentConfig
 # Database/, and Config/ so this folder is never watched. See
 # run_web.py's own module docstring for the full diagnosis.
 OUTPUT_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "AutomationRuns"
+APPLICATION_ROOT = Path(__file__).resolve().parent.parent
 
 # WEB PORT ADDITION: where failure screenshots (see EVIDENCE_SHIM_TEMPLATE
 # below) are written. Same anchoring reasoning as OUTPUT_FOLDER above.
@@ -320,15 +322,74 @@ import re
 import sys
 from pathlib import Path
 
+from Core.playwright_semantics import semantic_name_compatible
 from playwright.sync_api import sync_playwright
 
 _QA_MAX_REPAIR_ROUNDS = __MAX_REPAIR_ROUNDS__
 _QA_SELECTION_TIMEOUT_MS = __SELECTION_TIMEOUT_MS__
+_QA_DISCOVERY_TIMEOUT_MS = __DISCOVERY_TIMEOUT_MS__
 _QA_TOTAL_STEPS = __TOTAL_STEPS__
 
 _QA_REPAIRS = []
 _QA_SELECTIONS = {}
 _QA_LAST_DYNAMIC_CONTROL = None
+_QA_STATE = {
+    "current_step": 0, "last_passed_step": 0, "failed_step": None,
+    "repair_state": "idle", "pending_selection_step": None,
+    "repair_generation": 0,
+}
+
+
+def _qa_state_fields():
+    return dict(_QA_STATE)
+
+
+def _qa_clear_failed_control():
+    try:
+        _qa_active_page().evaluate(r"""() => {
+            document.querySelectorAll('[data-qa-ai-repair-target]').forEach(el => {
+                el.style.outline = el.dataset.qaAiPreviousOutline || '';
+                el.style.backgroundColor = el.dataset.qaAiPreviousBackground || '';
+                delete el.dataset.qaAiPreviousOutline;
+                delete el.dataset.qaAiPreviousBackground;
+                el.removeAttribute('data-qa-ai-repair-target');
+            });
+        }""")
+    except Exception:
+        pass
+
+
+def _qa_mark_failed_control(code_text, metadata=None):
+    """Persistently mark the smallest visible failed control, independently of hover."""
+    _qa_clear_failed_control()
+    try:
+        expression = _qa_locator_expression_from_code(code_text)
+        target = eval(expression, {**globals(), "page": _qa_active_page()}) if expression else None
+        if target is None or not hasattr(target, "count") or target.count() < 1:
+            field_name = str((metadata or {}).get("field_name") or "").strip()
+            if not field_name:
+                return False
+            page_obj = _qa_active_page()
+            alternatives = [page_obj.get_by_label(field_name, exact=True), page_obj.get_by_role("button", name=field_name, exact=True), page_obj.get_by_text(field_name, exact=True)]
+            target = next((item for item in alternatives if item.count() == 1), None)
+            if target is None:
+                return False
+        candidate = next((target.nth(i) for i in range(min(target.count(), 20)) if target.nth(i).is_visible()), None)
+        if candidate is None:
+            return False
+        candidate.evaluate(r"""el => {
+            const composite = el.closest('.k-datepicker,.k-dropdown,.k-combobox,.k-autocomplete,.k-form-field,.form-group,[role=combobox]');
+            const mark = composite || el;
+            mark.dataset.qaAiPreviousOutline = mark.style.outline || '';
+            mark.dataset.qaAiPreviousBackground = mark.style.backgroundColor || '';
+            mark.setAttribute('data-qa-ai-repair-target', 'true');
+            mark.style.outline = '3px solid #f2c200';
+            mark.style.backgroundColor = 'rgba(255, 235, 59, 0.28)';
+            mark.scrollIntoView({block:'center', inline:'nearest', behavior:'instant'});
+        }""")
+        return True
+    except Exception:
+        return False
 
 
 def _qa_safe_action(code_text):
@@ -362,6 +423,13 @@ def _qa_step_details(code_text, metadata=None):
 
 
 def _qa_send_event(event):
+    if event.get("step") is not None:
+        event.setdefault("repair_generation", _QA_STATE["repair_generation"])
+        event.setdefault("current_step", _QA_STATE["current_step"])
+        event.setdefault("last_passed_step", _QA_STATE["last_passed_step"])
+        event.setdefault("failed_step", _QA_STATE["failed_step"])
+        event.setdefault("repair_state", _QA_STATE["repair_state"])
+        event.setdefault("pending_selection_step", _QA_STATE["pending_selection_step"])
     print("QA_EVENT::" + json.dumps(event), flush=True)
 
 
@@ -619,7 +687,7 @@ def _qa_locator_expression_from_code(code_text):
     return code
 
 
-def _qa_verify_code(code_text):
+def _qa_verify_code(code_text, metadata=None):
     result = {"found": False, "count": 0, "visible": False, "actionable": False, "error": ""}
     try:
         expr = _qa_locator_expression_from_code(code_text)
@@ -636,7 +704,7 @@ def _qa_verify_code(code_text):
         result["found"] = count > 0
         if result["found"]:
             try:
-                loc.first.wait_for(state="visible", timeout=1500)
+                loc.first.wait_for(state="visible", timeout=_QA_DISCOVERY_TIMEOUT_MS)
                 result["visible"] = True
                 result["actionable"] = bool(loc.first.evaluate(r"""el => {
                     let actionable = el.closest('button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[tabindex]:not([tabindex="-1"])');
@@ -652,6 +720,34 @@ def _qa_verify_code(code_text):
                 }"""))
             except Exception:
                 result["visible"] = False
+        if result["count"] == 1 and result["visible"]:
+            try:
+                capture = loc.first.evaluate(r"""el => {
+                    const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+                    const label = el.labels && el.labels.length ? clean(el.labels[0].innerText) : '';
+                    return {
+                        accessible_name: clean(el.getAttribute('aria-label') || label || el.innerText || el.value || el.getAttribute('placeholder')),
+                        text: clean(el.innerText || el.textContent),
+                        role: clean(el.getAttribute('role')),
+                        actionable_tag: (el.tagName || '').toLowerCase(),
+                        label: label,
+                        name: clean(el.getAttribute('name')),
+                        id: clean(el.id),
+                        placeholder: clean(el.getAttribute('placeholder')),
+                        title: clean(el.getAttribute('title')),
+                        stable_attributes: {'aria-label': clean(el.getAttribute('aria-label'))},
+                        section: ''
+                    };
+                }""")
+                semantic_ok, semantic_reason = _qa_semantic_compatibility(capture, metadata)
+                result["semantic_compatible"] = semantic_ok
+                result["semantic_reason"] = semantic_reason
+            except Exception as semantic_error:
+                result["semantic_compatible"] = False
+                result["semantic_reason"] = str(semantic_error)
+        else:
+            result["semantic_compatible"] = False
+            result["semantic_reason"] = "Candidate did not resolve to one visible element."
     except Exception as ex:
         result["error"] = str(ex)
     return result
@@ -694,7 +790,70 @@ def _qa_replace_locator_expression(code_text, locator_expression):
     return code_text.replace(current, locator_expression, 1)
 
 
-def _qa_select_element(code_text, step_number):
+def _qa_semantic_compatibility(capture, metadata):
+    expected_name = str((metadata or {}).get("field_name") or "").strip()
+    expected_type = str((metadata or {}).get("field_type") or "").strip().lower()
+    action_type = str((metadata or {}).get("action_type") or "").strip().lower()
+    actual_name = str(capture.get("accessible_name") or capture.get("text") or "").strip()
+    actual_role = str(capture.get("role") or "").lower()
+    actual_tag = str(capture.get("actionable_tag") or "").lower()
+    expected_context = str((metadata or {}).get("control_context") or (metadata or {}).get("section") or "").strip()
+    actual_context = str(capture.get("section") or "").strip()
+    generic_names = {"", "action", "field", "selection", "element", "button"}
+    tokens = lambda value: set(re.findall(r"[a-z0-9]+", value.lower())) - {"the", "a", "an", "field", "control"}
+    expected_tokens, actual_tokens = tokens(expected_name), tokens(actual_name)
+    name_evidence = [
+        actual_name, capture.get("label"), capture.get("name"), capture.get("id"),
+        capture.get("placeholder"), capture.get("title"),
+        (capture.get("stable_attributes") or {}).get("aria-label"),
+    ]
+    normalized_expected = re.sub(r"\s+", " ", expected_name).strip().casefold()
+    normalized_actual = re.sub(r"\s+", " ", actual_name).strip().casefold()
+    complete_semantic_name = bool(
+        normalized_expected
+        and normalized_actual
+        and str((metadata or {}).get("primary_locator") or "").startswith("role=")
+    )
+    name_compatible = (
+        expected_name.lower() in generic_names
+        or (complete_semantic_name and normalized_actual == normalized_expected)
+        or (not complete_semantic_name and semantic_name_compatible(expected_name, name_evidence))
+    )
+    if not name_compatible:
+        return False, f"Selected element belongs to '{actual_name or actual_role or actual_tag}'. Expected '{expected_name}'."
+    if expected_context and actual_context:
+        expected_context_tokens, actual_context_tokens = tokens(expected_context), tokens(actual_context)
+        if expected_context_tokens and actual_context_tokens and not expected_context_tokens.intersection(actual_context_tokens):
+            return False, f"Selected element is in '{actual_context}'. Expected context '{expected_context}'."
+    expected_popup = str((metadata or {}).get("popup_locator") or "").strip()
+    popup_owner = str(capture.get("popup_owner") or "").strip()
+    if expected_popup.startswith("#") and popup_owner and expected_popup[1:] != popup_owner:
+        return False, f"Selected option belongs to popup '{popup_owner}'. Expected '{expected_popup[1:]}'."
+    type_roles = {
+        "dropdown": {"combobox", "button"}, "combobox": {"combobox"},
+        "autocomplete": {"combobox", "textbox"}, "option": {"option"},
+        "date": {"gridcell", "textbox", "button"}, "calendar": {"gridcell", "button"},
+        "checkbox": {"checkbox"}, "radio": {"radio"},
+        "button": {"button", "link"},
+    }
+    effective_role = actual_role or ({"input": "textbox", "select": "combobox", "button": "button", "a": "link"}.get(actual_tag) or actual_tag)
+    allowed = type_roles.get(expected_type)
+    if allowed and effective_role not in allowed:
+        return False, f"Selected {effective_role or actual_tag} cannot perform {action_type or expected_type}; expected {expected_type}."
+    if action_type in {"fill", "type"} and actual_tag not in {"input", "textarea"} and effective_role != "textbox":
+        return False, "Selected element does not accept text input."
+    return True, "Semantic and action context match."
+
+
+def _qa_previous_opener_name():
+    match = re.search(
+        r"get_by_role\([^,]+,\s*name=(['\"])(.*?)\1",
+        _QA_LAST_DYNAMIC_CONTROL or "",
+    )
+    return re.sub(r"\s+", " ", match.group(2)).strip().casefold() if match else ""
+
+
+def _qa_select_element(code_text, step_number, metadata=None):
     """Wait for one operator click and return bounded, live-verified locators."""
     cancel_file = Path(os.environ.get("QA_SELECTION_CANCEL_FILE", ""))
     if cancel_file.name:
@@ -711,7 +870,10 @@ def _qa_select_element(code_text, step_number):
         )
         globals()[binding_key] = True
     try:
-        capture = active_page.evaluate(r"""(selectionTimeout) => new Promise((resolve) => {
+        capture = active_page.evaluate(r"""(selectionArgs) => new Promise((resolve) => {
+            const selectionTimeout = selectionArgs.timeout;
+            const selectingChild = ["select_option", "select_date"].includes(selectionArgs.actionType)
+                || ["option", "date"].includes(selectionArgs.fieldType);
             const MAX_CANDIDATES = 50;
             const MAX_ANCESTORS = 8;
             const clean = (value, limit = 160) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
@@ -744,12 +906,27 @@ def _qa_select_element(code_text, step_number):
                 return "";
             };
             const actionableFor = (leaf) => {
-                const semantic = leaf.closest("button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[tabindex]:not([tabindex='-1'])");
+                const semanticSelector = "button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[role=gridcell],[role=combobox]";
+                if (leaf.matches("label[for]")) {
+                    const associated = document.getElementById(leaf.getAttribute("for"));
+                    if (associated && associated.matches(semanticSelector)) return associated;
+                }
+                const controlledId = leaf.getAttribute("aria-controls") || leaf.getAttribute("aria-owns");
+                if (controlledId) {
+                    const controlled = document.getElementById(controlledId);
+                    const child = controlled && controlled.querySelector(semanticSelector);
+                    if (child) return child;
+                }
+                const semantic = leaf.closest(semanticSelector);
                 if (semantic) return semantic;
+                const descendant = leaf.querySelector && leaf.querySelector(semanticSelector);
+                if (descendant) return descendant;
                 let node = leaf;
                 let depth = 0;
                 while (node && node !== document.body && depth < MAX_ANCESTORS) {
-                    if (getComputedStyle(node).cursor === "pointer") return node;
+                    const genericContainer = /^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(node.tagName)
+                        || /(?:k-window|k-dialog|k-popup|k-calendar|wrapper|container)/i.test(node.className || "");
+                    if (!genericContainer && getComputedStyle(node).cursor === "pointer") return node;
                     node = node.parentElement;
                     depth += 1;
                 }
@@ -809,7 +986,6 @@ def _qa_select_element(code_text, step_number):
             };
             const cleanup = () => {
                 document.removeEventListener("click", onClick, true);
-                document.removeEventListener("mousemove", onMove, true);
                 document.removeEventListener("keydown", onKey, true);
                 clearOutline();
                 document.documentElement.style.cursor = previousCursor;
@@ -835,7 +1011,7 @@ def _qa_select_element(code_text, step_number):
                     const style = getComputedStyle(item);
                     return style.display !== "none" && style.visibility !== "hidden" && item.getClientRects().length > 0;
                 });
-                if (opener && !optionsVisible) {
+                if (opener && !optionsVisible && selectingChild) {
                     document.removeEventListener("click", onClick, true);
                     clearOutline();
                     setTimeout(() => {
@@ -965,20 +1141,11 @@ def _qa_select_element(code_text, step_number):
                     section: section.label,
                     ancestor_context: section.label,
                     ancestor_summaries: section.identities,
+                    popup_owner: ((el.closest('[role="listbox"],.k-list-container,.k-popup,.k-calendar') || {}).id || ''),
                     classes: [...leaf.classList].slice(0, 12),
                     candidates: candidates.slice(0, MAX_CANDIDATES),
                     xpath: "xpath=" + xpath,
                 });
-            };
-            const onMove = (event) => {
-                const next = event.target && event.target.nodeType === 1 ? event.target : null;
-                if (!next || next === outlined) return;
-                clearOutline();
-                outlined = next;
-                previousOutline = next.style.outline;
-                previousBackground = next.style.backgroundColor;
-                next.style.outline = "3px solid #f2c200";
-                next.style.backgroundColor = "rgba(255, 235, 59, 0.28)";
             };
             const onKey = (event) => {
                 if (event.key !== "Escape") return;
@@ -987,7 +1154,6 @@ def _qa_select_element(code_text, step_number):
             };
             document.documentElement.style.cursor = "crosshair";
             document.addEventListener("click", onClick, true);
-            document.addEventListener("mousemove", onMove, true);
             document.addEventListener("keydown", onKey, true);
             cancelPollId = setInterval(async () => {
                 try {
@@ -995,7 +1161,7 @@ def _qa_select_element(code_text, step_number):
                 } catch (_) {}
             }, 150);
             timeoutId = setTimeout(() => finish({timed_out: true, error: "Element selection timed out while waiting for a browser click."}), selectionTimeout);
-        })""", _QA_SELECTION_TIMEOUT_MS)
+        })""", {"timeout": _QA_SELECTION_TIMEOUT_MS, "actionType": str((metadata or {}).get("action_type") or "").lower(), "fieldType": str((metadata or {}).get("field_type") or "").lower()})
     except Exception as ex:
         return {"error": str(ex), "candidates": []}
 
@@ -1006,12 +1172,24 @@ def _qa_select_element(code_text, step_number):
     for candidate in sorted(candidates[:50], key=lambda item: item.get("score", 0), reverse=True):
         check = _qa_verify_code(candidate.get("expression") or "")
         candidate["verification"] = check
+        semantic_ok, semantic_reason = _qa_semantic_compatibility(capture, metadata)
+        selected_name = re.sub(
+            r"\s+", " ", str(capture.get("accessible_name") or capture.get("text") or "")
+        ).strip().casefold()
+        previous_opener = _qa_previous_opener_name()
+        if semantic_ok and previous_opener and selected_name == previous_opener:
+            semantic_ok = False
+            semantic_reason = "Selected element is the preceding dynamic-control opener, not the failed child action."
+        candidate["semantic_compatible"] = semantic_ok
+        candidate["semantic_reason"] = semantic_reason
         if check.get("count") != 1:
             candidate["rejected_reason"] = "not found" if not check.get("count") else f"ambiguous: {check.get('count')} matches"
         elif not check.get("visible"):
             candidate["rejected_reason"] = "not visible"
         elif not check.get("actionable"):
             candidate["rejected_reason"] = "not actionable"
+        elif not semantic_ok:
+            candidate["rejected_reason"] = semantic_reason
         verified.append(candidate)
         if (
             selected is None
@@ -1019,6 +1197,7 @@ def _qa_select_element(code_text, step_number):
             and check.get("visible")
             and check.get("actionable")
             and check.get("count") == 1
+            and semantic_ok
         ):
             selected = candidate
     capture["candidates"] = verified
@@ -1032,6 +1211,9 @@ def _qa_select_element(code_text, step_number):
 
 def _qa_persisted_candidate_codes(code_text, metadata):
     candidates = []
+    primary = _qa_locator_code((metadata or {}).get("primary_locator"))
+    if primary:
+        candidates.append(_qa_replace_locator_expression(code_text, primary))
     raw_fallbacks = (metadata or {}).get("fallback_locators") or ""
     for locator in re.split(r"\s*(?:\|\||;)\s*", raw_fallbacks):
         locator = locator.strip()
@@ -1040,13 +1222,13 @@ def _qa_persisted_candidate_codes(code_text, metadata):
             if locator.startswith("page."):
                 expression = locator
             elif role_match:
-                expression = "page.get_by_role(" + repr(role_match.group(1)) + ", name=" + repr(role_match.group(2)) + ")"
+                expression = "page.get_by_role(" + repr(role_match.group(1)) + ", name=" + repr(role_match.group(2)) + ", exact=True)"
             elif locator.startswith("label="):
-                expression = "page.get_by_label(" + repr(locator[6:]) + ")"
+                expression = "page.get_by_label(" + repr(locator[6:]) + ", exact=True)"
             elif locator.startswith("placeholder="):
-                expression = "page.get_by_placeholder(" + repr(locator[12:]) + ")"
+                expression = "page.get_by_placeholder(" + repr(locator[12:]) + ", exact=True)"
             elif locator.startswith("title="):
-                expression = "page.get_by_title(" + repr(locator[6:]) + ")"
+                expression = "page.get_by_title(" + repr(locator[6:]) + ", exact=True)"
             elif locator.startswith("text="):
                 expression = "page.get_by_text(" + repr(locator[5:]) + ", exact=True)"
             elif locator.startswith("data-testid="):
@@ -1063,7 +1245,62 @@ def _qa_persisted_candidate_codes(code_text, metadata):
         candidates.append(_qa_replace_locator_expression(
             code_text, "page.locator(" + repr(xpath) + ")"
         ))
-    return [candidate for candidate in candidates if candidate != code_text]
+    return list(dict.fromkeys(
+        candidate for candidate in candidates if candidate != code_text
+    ))
+
+
+def _qa_candidate_identity(code_text):
+    expression = _qa_locator_expression_from_code(code_text)
+    id_match = re.search(r"locator\((['\"])#([^'\"]+)\1\)", expression)
+    xpath_id = re.search(r"@id\s*=\s*(['\"])([^'\"]+)\1", expression)
+    if id_match:
+        return "id:" + id_match.group(2)
+    if xpath_id:
+        return "id:" + xpath_id.group(2)
+    return re.sub(r"\s+", "", expression)
+
+
+def _qa_resolution_candidates(code_text, metadata):
+    raw = [("primary", code_text)]
+    details = metadata or {}
+    field_name = str(details.get("field_name") or "").strip()
+    control_role = str(details.get("control_role") or "").strip().lower()
+    if field_name and control_role:
+        semantic = (
+            "page.get_by_role(" + repr(control_role) + ", name="
+            + repr(field_name) + ", exact=True)"
+        )
+        raw.append(("exact_semantic", _qa_replace_locator_expression(code_text, semantic)))
+    normalized_primary = _qa_locator_code(details.get("primary_locator"))
+    if normalized_primary:
+        raw.append(("normalized_primary", _qa_replace_locator_expression(code_text, normalized_primary)))
+    persisted = _qa_persisted_candidate_codes(code_text, metadata)
+    xpath = str((metadata or {}).get("xpath") or "").strip()
+    for candidate in persisted:
+        source = "xpath" if xpath not in {"", "-"} and xpath in candidate else "fallback"
+        raw.append((source, candidate))
+    seen = set()
+    candidates = []
+    for source, candidate in raw:
+        identity = _qa_candidate_identity(candidate)
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        candidates.append({"code": candidate, "source": source, "identity": identity})
+    return candidates
+
+
+def _qa_resolve_action(code_text, metadata):
+    attempts = []
+    for candidate in _qa_resolution_candidates(code_text, metadata):
+        check = _qa_verify_code(candidate["code"], metadata)
+        candidate.update(check)
+        attempts.append(candidate)
+        if (check.get("count") == 1 and check.get("visible")
+                and check.get("actionable") and check.get("semantic_compatible")):
+            return candidate["code"], candidate, attempts
+    return None, None, attempts
 
 
 def _qa_locator_code(display_value):
@@ -1078,9 +1315,9 @@ def _qa_locator_code(display_value):
     if value.startswith("data-testid="):
         return "page.get_by_test_id(" + repr(value[12:]) + ")"
     if value.startswith("label="):
-        return "page.get_by_label(" + repr(value[6:]) + ")"
+        return "page.get_by_label(" + repr(value[6:]) + ", exact=True)"
     if value.startswith("placeholder="):
-        return "page.get_by_placeholder(" + repr(value[12:]) + ")"
+        return "page.get_by_placeholder(" + repr(value[12:]) + ", exact=True)"
     if value.startswith("text="):
         return "page.get_by_text(" + repr(value[5:]) + ", exact=True)"
     return "page.locator(" + repr(value) + ")"
@@ -1119,16 +1356,102 @@ def _qa_try_parent_reopen(metadata):
         return False
     try:
         parent = eval(parent_code, {**globals(), "page": _qa_active_page()})
-        if parent.count() != 1 or not parent.is_visible():
+        parent_count = parent.count()
+        parent_visible = parent.is_visible() if parent_count == 1 else False
+        if parent_count != 1 or not parent_visible:
+            _qa_send_event({"event": "parent_reopen_failed", "step": _QA_STATE["current_step"], "error": f"Parent locator resolved count={parent_count}, visible={parent_visible}."})
             return False
         parent.click()
         _qa_smart_wait({"field_type": "dropdown"})
         return True
-    except Exception:
+    except Exception as ex:
+        _qa_send_event({"event": "parent_reopen_failed", "step": _QA_STATE["current_step"], "error": str(ex)})
         return False
 
 
+class _QaPostActionVerificationError(RuntimeError):
+    pass
+
+
+class _QaLocatorResolutionError(RuntimeError):
+    def __init__(self, attempts):
+        self.attempts = attempts
+        summary = "; ".join(
+            f"{item.get('source')}: count={item.get('count', 0)}, visible={bool(item.get('visible'))}, actionable={bool(item.get('actionable'))}, semantic={bool(item.get('semantic_compatible'))}"
+            for item in attempts
+        )
+        super().__init__("No saved locator candidate resolved safely. " + summary)
+
+
+def _qa_verify_post_action(code_text, metadata=None):
+    """Verify deterministic semantic outcomes; report skipped when no safe assertion exists."""
+    field_type = str((metadata or {}).get("field_type") or "").lower()
+    action_type = str((metadata or {}).get("action_type") or "").lower()
+    expected = str((metadata or {}).get("expected_value") or "").strip()
+    _, code_value = _qa_extract_locator_and_value(code_text)
+    expected = expected or (code_value if action_type in {"fill", "type", "select_option"} else "")
+    if action_type in {"goto", "navigation", "execute"} or code_text.lstrip().startswith(("assert ", "expect(")):
+        return {"verified": True, "checked": False, "reason": "Step itself supplied the available verification."}
+    try:
+        expression = _qa_locator_expression_from_code(code_text)
+        locator = eval(expression, {**globals(), "page": _qa_active_page()}) if expression else None
+        if action_type in {"fill", "type"} and expected:
+            if locator is None or not hasattr(locator, "count") or locator.count() != 1:
+                return {"verified": False, "checked": True, "reason": "Filled field is no longer uniquely resolvable."}
+            node = locator.first
+            actual = node.input_value()
+            return {"verified": actual == expected, "checked": True, "reason": f"Expected value '{expected}', found '{actual}'."}
+        popup_evidence = any(
+            str((metadata or {}).get(key) or "").strip() not in {"", "-"}
+            for key in ("popup_locator", "transaction_popup")
+        ) or str((metadata or {}).get("control_role") or "").lower() == "combobox"
+        if ((field_type in {"dropdown", "combobox", "autocomplete", "calendar"}
+             or action_type in {"open_dropdown", "open_calendar"}) and popup_evidence):
+            if locator is None or not hasattr(locator, "count") or locator.count() != 1:
+                return {"verified": False, "checked": True, "reason": "Owning control is no longer uniquely resolvable."}
+            node = locator.first
+            expanded = node.get_attribute("aria-expanded")
+            visible_popup = _qa_active_page().locator('[role="listbox"],[role="option"],.k-list-container,.k-popup,.k-calendar').evaluate_all(r"""els => els.some(el => getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && el.getClientRects().length)""")
+            ok = expanded == "true" if expanded is not None else bool(visible_popup)
+            return {"verified": ok, "checked": True, "reason": "Owning popup/calendar did not become visible."}
+        if field_type == "checkbox":
+            if locator is None or locator.count() != 1:
+                return {"verified": False, "checked": True, "reason": "Checkbox is no longer uniquely resolvable."}
+            node = locator.first
+            return {"verified": node.is_checked(), "checked": True, "reason": "Checkbox did not become checked."}
+        if field_type == "radio":
+            if locator is None or locator.count() != 1:
+                return {"verified": False, "checked": True, "reason": "Radio is no longer uniquely resolvable."}
+            node = locator.first
+            return {"verified": node.is_checked(), "checked": True, "reason": "Radio did not become selected."}
+        if field_type in {"option", "date"} and expected:
+            parent_code = _qa_locator_code((metadata or {}).get("parent_locator"))
+            if parent_code:
+                parent = eval(parent_code, {**globals(), "page": _qa_active_page()})
+                if hasattr(parent, "count") and parent.count() == 1:
+                    is_value_control = parent.first.evaluate(
+                        "el => ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)"
+                    )
+                    actual = parent.first.input_value() if is_value_control else (parent.first.inner_text() or "")
+                    popup_open = _qa_active_page().locator('[role="listbox"],.k-list-container,.k-popup,.k-calendar').evaluate_all(r"""els => els.some(el => getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && el.getClientRects().length)""")
+                    ok = expected.lower() in str(actual).lower() or not popup_open
+                    return {"verified": ok, "checked": True, "reason": f"Owning field does not reflect '{expected}' and its popup remains open."}
+        # A successful Playwright click already proves that its target was
+        # uniquely actionable before dispatch. Modal/dialog buttons and
+        # navigation/rerender controls commonly disappear afterwards; their
+        # old locator is therefore not a valid post-condition.
+        return {"verified": True, "checked": False, "reason": "Action completed; no deterministic post-condition was required."}
+    except Exception as ex:
+        return {"verified": False, "checked": True, "reason": str(ex)}
 def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadata=None):
+    if _QA_STATE["failed_step"] != step_number:
+        _QA_STATE["repair_generation"] += 1
+    _QA_STATE.update({
+        "current_step": step_number, "failed_step": step_number,
+        "repair_state": "waiting", "pending_selection_step": None,
+    })
+    generation = _QA_STATE["repair_generation"]
+    _qa_mark_failed_control(code_text, metadata)
     locator, value = _qa_extract_locator_and_value(code_text)
     context = _qa_capture_context(locator)
     _qa_send_event({
@@ -1146,6 +1469,7 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
         "accessibility": context["accessibility"],
         "dom_candidates": context["dom_candidates"],
         "failure_matches": context["failure_matches"],
+        **_qa_state_fields(),
     })
     # Loop reading commands for this SAME pause -- "verify_locator" is
     # a non-terminal, repeatable check (it does not count as a repair
@@ -1155,12 +1479,23 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
     # this function.
     while True:
         command = _qa_read_command()
+        command_step = command.get("step")
+        command_generation = command.get("repair_generation")
+        if ((command_step is not None and int(command_step) != step_number) or
+                (command_generation is not None and int(command_generation) != generation)):
+            _qa_send_event({
+                "event": "stale_decision_rejected", "step": step_number,
+                "repair_generation": generation,
+                "error": "Decision belongs to a different failed step or repair generation.",
+            })
+            continue
         action = command.get("action")
         if action == "select_element":
-            _qa_send_event({"event": "selection_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
+            _QA_STATE.update({"repair_state": "selecting", "pending_selection_step": step_number})
+            _qa_send_event({"event": "selection_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "repair_generation": generation})
             while True:
                 _qa_send_event({"event": "selection_waiting", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "timeout_seconds": int(_QA_SELECTION_TIMEOUT_MS / 1000)})
-                selection = _qa_select_element(code_text, step_number)
+                selection = _qa_select_element(code_text, step_number, metadata)
                 if selection.get("cancelled"):
                     _qa_send_event({"event": "selection_cancelled", "step": step_number, "error": selection.get("error")})
                     break
@@ -1192,13 +1527,18 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
                 "corrected_code": selection.get("corrected_code"),
                 "verification": selected_candidate.get("verification") or {},
                 "error": selection.get("error"),
+                "repair_generation": generation,
                 }
                 _qa_send_event(selected_event)
                 corrected_code = selection.get("corrected_code")
                 if corrected_code:
                     _QA_SELECTIONS[step_number] = selection
+                    _QA_STATE["repair_state"] = "verified"
                     return corrected_code
-                _qa_send_event({"event": "selection_waiting", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "timeout_seconds": int(_QA_SELECTION_TIMEOUT_MS / 1000), "message": "No safe locator was verified; selection remains active."})
+                rejection_reasons = [candidate.get("rejected_reason") for candidate in selection.get("candidates") or [] if candidate.get("rejected_reason")]
+                rejection_reason = rejection_reasons[0] if rejection_reasons else "No unique, visible, actionable, semantically compatible locator was verified."
+                _qa_send_event({"event": "selection_rejected", "step": step_number, "repair_generation": generation, "error": rejection_reason})
+                _qa_send_event({"event": "selection_waiting", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "repair_generation": generation, "timeout_seconds": int(_QA_SELECTION_TIMEOUT_MS / 1000), "message": "No safe locator was verified; selection remains active."})
             continue
         if action in ("verify_locator", "verify_code"):
             if action == "verify_code":
@@ -1231,74 +1571,176 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
 
 def _qa_run_step(step_number, code_text, metadata=None):
     global _QA_LAST_DYNAMIC_CONTROL
+    if step_number <= _QA_STATE["last_passed_step"]:
+        raise RuntimeError("Interactive replay attempted to rerun an already checkpointed step.")
+    _QA_STATE.update({"current_step": step_number, "repair_state": "executing"})
     current_code = code_text
     attempt = 0
     while True:
         _qa_send_event({"event": "step_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
         try:
+            action_type = str((metadata or {}).get("action_type") or "").lower()
+            expression = _qa_locator_expression_from_code(current_code)
+            locator_action = (
+                expression.startswith("page.")
+                and expression != current_code.strip()
+                and action_type not in {"goto", "navigation", "execute", "assert"}
+                and not current_code.lstrip().startswith(("assert ", "expect("))
+            )
+            if locator_action and attempt == 0:
+                resolved_code, resolved_candidate, resolution_attempts = _qa_resolve_action(
+                    current_code, metadata
+                )
+                _qa_send_event({
+                    "event": "locator_resolution", "step": step_number,
+                    "total_steps": _QA_TOTAL_STEPS,
+                    "selected_source": (resolved_candidate or {}).get("source"),
+                    "attempts": [{
+                        "source": item.get("source"),
+                        "identity": item.get("identity"),
+                        "count": item.get("count", 0),
+                        "visible": bool(item.get("visible")),
+                        "actionable": bool(item.get("actionable")),
+                        "semantic_compatible": bool(item.get("semantic_compatible")),
+                        "semantic_reason": item.get("semantic_reason") or "",
+                    } for item in resolution_attempts],
+                })
+                if not resolved_code:
+                    raise _QaLocatorResolutionError(resolution_attempts)
+                current_code = resolved_code
+                if current_code != code_text:
+                    _QA_SELECTIONS[step_number] = {
+                        "repair_source": resolved_candidate.get("source"),
+                        "selected_candidate": resolved_candidate,
+                    }
             exec(current_code, globals())
             _qa_smart_wait(metadata)
+            post_check = _qa_verify_post_action(current_code, metadata)
+            _qa_send_event({"event": "post_action_verified" if post_check["verified"] else "post_action_failed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, **post_check})
+            if not post_check["verified"]:
+                raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
             if str((metadata or {}).get("field_type") or "").lower() in {"dropdown", "calendar", "autocomplete", "accordion"}:
                 _QA_LAST_DYNAMIC_CONTROL = current_code
             if current_code != code_text:
                 selection = _QA_SELECTIONS.pop(step_number, {})
-                _QA_REPAIRS.append({
-                    "step": step_number,
-                    "original": code_text,
-                    "corrected": current_code,
-                    "selection": selection,
-                })
                 _qa_send_event({
                     "event": "step_repaired",
                     "step": step_number,
+                    "repair_generation": _QA_STATE["repair_generation"],
                     "original_code": code_text,
                     "corrected_code": current_code,
                     "selection": selection,
                 })
+                persistence = _qa_read_command()
+                if (persistence.get("action") != "repair_persisted" or
+                        int(persistence.get("step") or -1) != step_number or
+                        int(persistence.get("repair_generation") or -1) != _QA_STATE["repair_generation"]):
+                    raise RuntimeError("Verified repair could not be persisted for this step generation.")
+                _QA_REPAIRS.append({
+                    "step": step_number, "repair_generation": _QA_STATE["repair_generation"],
+                    "original": code_text, "corrected": current_code, "selection": selection,
+                })
+            _qa_clear_failed_control()
+            _QA_STATE.update({
+                "last_passed_step": step_number, "failed_step": None,
+                "repair_state": "passed", "pending_selection_step": None,
+            })
             _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
             return
         except Exception as ex:
+            if isinstance(ex, _QaPostActionVerificationError):
+                _QA_STATE.update({"failed_step": step_number, "repair_state": "post_action_uncertain"})
+                _qa_send_event({
+                    "event": "post_action_uncertain", "step": step_number,
+                    "total_steps": _QA_TOTAL_STEPS, "error": str(ex),
+                    "details": _qa_step_details(current_code, metadata),
+                })
+                # The action itself completed. Never repeat a potentially
+                # destructive/navigation action as locator repair.
+                raise
             if attempt == 0:
+                if _QA_STATE["failed_step"] != step_number:
+                    _QA_STATE["repair_generation"] += 1
+                _QA_STATE.update({"failed_step": step_number, "repair_state": "failed", "pending_selection_step": None})
+                _qa_mark_failed_control(current_code, metadata)
+                _qa_send_event({"event": "step_failure_detected", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "error": str(ex)})
                 _qa_send_event({"event": "auto_repair_attempted", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
-                if _qa_try_parent_reopen(metadata):
-                    try:
-                        exec(current_code, globals())
-                        _qa_smart_wait(metadata)
-                        _qa_send_event({"event": "parent_reopen_succeeded", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
-                        _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
-                        return
-                    except Exception:
-                        pass
-                for fallback_code in _qa_persisted_candidate_codes(current_code, metadata):
+                fallback_codes = (
+                    [] if isinstance(ex, _QaLocatorResolutionError)
+                    else _qa_persisted_candidate_codes(current_code, metadata)
+                )
+                for fallback_code in fallback_codes:
                     try:
                         exec(fallback_code, globals())
+                        _qa_smart_wait(metadata)
+                        post_check = _qa_verify_post_action(fallback_code, metadata)
+                        if not post_check["verified"]:
+                            raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
                         current_code = fallback_code
                         _qa_send_event({
                             "event": "fallback_succeeded", "step": step_number,
                             "total_steps": _QA_TOTAL_STEPS,
                             "details": _qa_step_details(current_code, metadata),
                         })
-                        _QA_REPAIRS.append({
-                            "step": step_number,
-                            "original": code_text,
-                            "corrected": current_code,
-                        })
                         _qa_send_event({
                             "event": "step_repaired",
                             "step": step_number,
+                            "repair_generation": _QA_STATE["repair_generation"],
                             "original_code": code_text,
                             "corrected_code": current_code,
                         })
+                        persistence = _qa_read_command()
+                        if (persistence.get("action") != "repair_persisted" or
+                                int(persistence.get("step") or -1) != step_number or
+                                int(persistence.get("repair_generation") or -1) != _QA_STATE["repair_generation"]):
+                            raise RuntimeError("Validated fallback could not be persisted for this step generation.")
+                        _QA_REPAIRS.append({
+                            "step": step_number, "repair_generation": _QA_STATE["repair_generation"],
+                            "original": code_text, "corrected": current_code,
+                        })
+                        _qa_clear_failed_control()
+                        _QA_STATE.update({"last_passed_step": step_number, "failed_step": None, "repair_state": "passed", "pending_selection_step": None})
                         _qa_send_event({
-                            "event": "step_passed",
-                            "step": step_number,
-                            "total_steps": _QA_TOTAL_STEPS,
-                            "attempt": attempt + 1,
+                            "event": "step_passed", "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1,
                             "details": _qa_step_details(current_code, metadata),
                         })
                         return
+                    except _QaPostActionVerificationError as post_error:
+                        _qa_send_event({
+                            "event": "post_action_uncertain", "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS, "error": str(post_error),
+                            "details": _qa_step_details(fallback_code, metadata),
+                        })
+                        # This candidate action executed. Trying another
+                        # locator could repeat a destructive side effect.
+                        raise
                     except Exception:
                         continue
+                if _qa_try_parent_reopen(metadata):
+                    _qa_send_event({"event": "parent_reopen_succeeded", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
+                    try:
+                        exec(current_code, globals())
+                        _qa_smart_wait(metadata)
+                        post_check = _qa_verify_post_action(current_code, metadata)
+                        if not post_check["verified"]:
+                            raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
+                        _qa_clear_failed_control()
+                        _QA_STATE.update({"last_passed_step": step_number, "failed_step": None, "repair_state": "passed", "pending_selection_step": None})
+                        _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
+                        return
+                    except Exception as parent_retry_error:
+                        if isinstance(parent_retry_error, _QaPostActionVerificationError):
+                            _qa_send_event({
+                                "event": "post_action_uncertain", "step": step_number,
+                                "total_steps": _QA_TOTAL_STEPS, "error": str(parent_retry_error),
+                                "details": _qa_step_details(current_code, metadata),
+                            })
+                            raise
+                        _qa_send_event({
+                            "event": "parent_retry_failed", "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS, "error": str(parent_retry_error),
+                        })
             attempt += 1
             if attempt > _QA_MAX_REPAIR_ROUNDS:
                 _qa_send_event({
@@ -1310,11 +1752,13 @@ def _qa_run_step(step_number, code_text, metadata=None):
                 raise
             outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt, metadata)
             if outcome is None:
+                _qa_clear_failed_control()
                 _qa_send_event({
                     "event": "run_cancelled_by_operator",
                     "step": step_number,
                 })
                 sys.exit(2)
+            _QA_STATE["repair_state"] = "retrying"
             _qa_send_event({"event": "step_retrying", "step": step_number, "attempt": attempt + 1})
             current_code = outcome
 # --- end QA AI Studio interactive step runner ---
@@ -1442,6 +1886,61 @@ class PlaywrightRunner:
         OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
         EVIDENCE_FOLDER.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------
+
+    @staticmethod
+    def _subprocess_environment(extra=None):
+        """Give generated scripts the same import root as the Web process."""
+        environment = dict(os.environ)
+        existing = environment.get("PYTHONPATH", "")
+        roots = [str(APPLICATION_ROOT)]
+        if existing:
+            roots.append(existing)
+        environment["PYTHONPATH"] = os.pathsep.join(roots)
+        if extra:
+            environment.update(extra)
+        return environment
+
+    @staticmethod
+    def _safe_startup_diagnostic(stderr_text, script_path):
+        """Return a concise redacted subprocess diagnostic for the UI."""
+        text = (stderr_text or "").strip()
+        redacted = re.sub(
+            r"(?i)((?:password|passwd|token|authorization|secret|api[_-]?key)\s*[=:]\s*)([^\s,;]+)",
+            r"\1******",
+            text,
+        )
+        lines = [line.strip() for line in redacted.splitlines() if line.strip()]
+        final_line = lines[-1] if lines else "The replay subprocess exited before Step 1."
+        exception_line = next((
+            line for line in reversed(lines)
+            if re.match(r"[A-Za-z_][\w.]*(?:Error|Exception):", line)
+        ), final_line)
+        exception_type = "RuntimeError"
+        exception_message = exception_line
+        exception_match = re.match(r"([A-Za-z_][\w.]*(?:Error|Exception)):\s*(.*)", exception_line)
+        if exception_match:
+            exception_type = exception_match.group(1)
+            exception_message = exception_match.group(2) or final_line
+        line_number = None
+        script_name = Path(script_path).name
+        for line in reversed(lines):
+            match = re.search(rf'File "[^"]*{re.escape(script_name)}", line (\d+)', line)
+            if match:
+                line_number = int(match.group(1))
+                break
+        message = f"{exception_type}: {exception_message}"
+        if line_number:
+            message += f" (generated script line {line_number})"
+        return {
+            "failure_stage": "Script Initialization",
+            "exception_type": exception_type,
+            "exception_message": exception_message,
+            "script_line": line_number,
+            "error": message,
+            "final_message": f"FAILED — Script Initialization\n{message}",
+        }
 
     # --------------------------------------------------
 
@@ -1659,6 +2158,7 @@ class PlaywrightRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=self._subprocess_environment(),
         )
 
         self._current_process = process
@@ -1803,7 +2303,7 @@ class PlaywrightRunner:
                 pending = {"step": int(marker.group(1)), "description": (marker.group(2) or "").strip()}
                 continue
             metadata_match = re.match(
-                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|PARENT_LOCATOR|PRIMARY_LOCATOR|FALLBACK_LOCATORS|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
+                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|EXPECTED_VALUE|EXPECTED_POST_STATE|PRIMARY_LOCATOR|FALLBACK_LOCATORS|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
                 line, re.IGNORECASE,
             )
             if metadata_match and pending is not None:
@@ -1874,7 +2374,9 @@ class PlaywrightRunner:
 
         harness = INTERACTIVE_HARNESS_TEMPLATE.replace(
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
-        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace("__TOTAL_STEPS__", str(len(lines)))
+        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace(
+            "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
+        ).replace("__TOTAL_STEPS__", str(len(lines)))
 
         steps_code = "\n".join(
             f"        _qa_run_step({item['step']}, {item['code']!r}, {item['metadata']!r})"
@@ -2066,7 +2568,9 @@ class PlaywrightRunner:
 
         harness = INTERACTIVE_HARNESS_TEMPLATE.replace(
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
-        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000))))
+        ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace(
+            "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
+        )
 
         shim = SPEED_SHIM_TEMPLATE.format(
             slow_mo=slow_mo_ms, timeout=timeout_ms
@@ -2261,6 +2765,19 @@ class PlaywrightRunner:
         cancelled = False
 
         stdout_lines = []
+        saw_step_event = False
+        last_failure_event = None
+        last_repair_event = None
+        total_match = re.search(r"^_QA_TOTAL_STEPS\s*=\s*(\d+)", interactive_script, re.MULTILINE)
+        total_steps = int(total_match.group(1)) if total_match else 0
+
+        if on_runtime_event:
+            on_runtime_event({
+                "event": "run_initializing",
+                "step": 0,
+                "total_steps": total_steps,
+                "failure_stage": "Script Initialization",
+            })
 
         self._cancel_requested = False
         popen_kwargs = {}
@@ -2275,7 +2792,9 @@ class PlaywrightRunner:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            env={**os.environ, "QA_SELECTION_CANCEL_FILE": str(script_path) + ".selection.cancel"},
+            env=self._subprocess_environment({
+                "QA_SELECTION_CANCEL_FILE": str(script_path) + ".selection.cancel"
+            }),
             **popen_kwargs,
         )
 
@@ -2308,13 +2827,29 @@ class PlaywrightRunner:
                     continue
 
                 event_type = event.get("event")
+                if event_type in {"step_started", "step_passed", "step_failed"}:
+                    saw_step_event = True
+                if event_type in {
+                    "step_failed", "step_failure_detected",
+                    "post_action_failed", "post_action_uncertain",
+                    "step_gave_up",
+                }:
+                    last_failure_event = dict(event)
+                if event_type in {"element_selected", "fallback_succeeded", "step_repaired"}:
+                    last_repair_event = dict(event)
 
                 if event_type in {
                     "step_started", "step_passed", "step_retrying",
+                    "step_failure_detected",
+                    "locator_resolution",
+                    "post_action_verified", "post_action_failed",
+                    "post_action_uncertain",
                     "fallback_succeeded",
                     "selection_started", "selection_waiting",
                     "selection_cancelled", "selection_failed",
+                    "selection_rejected", "stale_decision_rejected",
                     "auto_repair_attempted", "parent_reopen_succeeded",
+                    "parent_reopen_failed", "parent_retry_failed",
                 } and on_runtime_event:
                     on_runtime_event(event)
 
@@ -2378,16 +2913,16 @@ class PlaywrightRunner:
                     )
 
                     if on_element_selected:
-
                         on_element_selected(event)
 
                 elif event_type == "step_repaired":
-
+                    selection = event.get("selection") or {}
                     repair = {
                         "step": event.get("step"),
+                        "repair_generation": event.get("repair_generation"),
                         "original": event.get("original_code"),
                         "corrected": event.get("corrected_code"),
-                        "selection": {
+                        "selection": selection or {
                             "selected_candidate": event.get("selected_candidate") or {},
                             "candidates": event.get("candidates") or [],
                             "xpath": event.get("xpath"),
@@ -2399,8 +2934,16 @@ class PlaywrightRunner:
                     repairs.append(repair)
 
                     if on_repaired:
-
-                        on_repaired(repair)
+                        persistence_result = on_repaired(repair)
+                        persisted = persistence_result is not False
+                    else:
+                        persisted = True
+                    process.stdin.write(json.dumps({
+                        "action": "repair_persisted" if persisted else "repair_persistence_failed",
+                        "step": event.get("step"),
+                        "repair_generation": event.get("repair_generation"),
+                    }) + "\n")
+                    process.stdin.flush()
 
                 elif event_type == "run_cancelled_by_operator":
 
@@ -2432,13 +2975,23 @@ class PlaywrightRunner:
 
         success = (return_code == 0) and not cancelled
 
+        startup_diagnostic = None
+        if not success and not cancelled and not saw_step_event:
+            startup_diagnostic = self._safe_startup_diagnostic(
+                stderr_text, script_path
+            )
+            self.logger.error(
+                "Interactive replay failed before Step 1. Full subprocess stderr:\n%s",
+                stderr_text or "(empty stderr)",
+            )
+
         self.logger.info(
             f"Interactive Playwright run finished in {duration:.1f}s "
             f"— {'PASS' if success else ('CANCELLED' if cancelled else 'FAIL')} "
             f"(exit code {return_code}, {len(repairs)} repair(s))"
         )
 
-        return {
+        result = {
             "interactive_supported": True,
             "success": success,
             "cancelled": cancelled,
@@ -2451,6 +3004,60 @@ class PlaywrightRunner:
             "timeout_ms": timeout_ms,
             "repairs": repairs,
         }
+        if startup_diagnostic:
+            result.update(startup_diagnostic)
+        elif not success and not cancelled and last_failure_event:
+            failed_step = int(last_failure_event.get("step") or 0)
+            failure_event = str(last_failure_event.get("event") or "step_failure").upper()
+            reason = str(
+                last_failure_event.get("error")
+                or last_failure_event.get("reason")
+                or "Step execution failed."
+            )
+            details = last_failure_event.get("details") or {}
+            field_name = str(details.get("field_name") or "").strip()
+            original_locator = str(details.get("primary_locator") or details.get("locator") or "").strip()
+            repair_locator = ""
+            repair_source = ""
+            if last_repair_event:
+                selected = last_repair_event.get("selected_candidate") or {}
+                repair_locator = str(
+                    last_repair_event.get("locator")
+                    or selected.get("expression")
+                    or selected.get("locator")
+                    or (last_repair_event.get("details") or {}).get("locator")
+                    or ""
+                ).strip()
+                repair_source = (
+                    "manual selection" if last_repair_event.get("event") == "element_selected"
+                    else "saved fallback" if last_repair_event.get("event") == "fallback_succeeded"
+                    else "automatic repair"
+                )
+            repair_summary = ""
+            if repair_locator:
+                repair_summary = (
+                    f"\nOriginal locator: {original_locator or 'Unknown'}"
+                    f"\nRepair locator: {repair_locator}"
+                    f"\nRepair source: {repair_source}"
+                )
+            result.update({
+                "failure_stage": "Step Execution",
+                "failure_type": failure_event,
+                "failure_reason": reason,
+                "failed_step": failed_step,
+                "total_steps": total_steps,
+                "failure_details": details,
+                "original_locator": original_locator,
+                "repair_locator": repair_locator,
+                "repair_source": repair_source,
+                "final_message": (
+                    f"Failed Step: {failed_step} / {total_steps}\n"
+                    f"Field: {field_name or 'Unknown'}\n"
+                    f"Failure Type: {failure_event}\n"
+                    f"Reason: {reason}{repair_summary}"
+                ),
+            })
+        return result
 
     def cancel_current_run(self):
         """

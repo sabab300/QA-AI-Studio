@@ -321,7 +321,18 @@
      internally while every fixed row (source tabs, search toolbar,
      the action button row) keeps flex-shrink:0 and stays on screen. */
   .detail-body{ padding:14px 16px; overflow:hidden; display:flex; flex:1; min-height:0; }
-  .detail-panel-view{ display:none; flex-direction:column; gap:10px; flex:1; min-height:0; overflow:hidden; width:100%; }
+  /* FINAL-END-TO-END-WORKSPACE-V2 section 4: every tab now scrolls
+     internally on its own (overflow-y:auto here) as a guaranteed
+     fallback on top of the original "only one designated inner
+     region scrolls" design above — Request tab's Params/Headers/
+     Auth/Body/Assertions/Extraction sections have no single scroll
+     wrapper of their own, so at real modal heights (laptop screens,
+     100% zoom) their content was being clipped by the old
+     overflow:hidden here with no way to reach it. This never hides
+     the fixed modal header (.detail-head, outside .detail-body
+     entirely) — only a tab's own body can now scroll when it doesn't
+     fit. */
+  .detail-panel-view{ display:none; flex-direction:column; gap:10px; flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; width:100%; }
   .detail-panel-view.active{ display:flex; }
   /* Deliberately no blanket flex-shrink rule here: a flex item's
      default min-height is "auto" (its own content's minimum size),
@@ -331,6 +342,13 @@
      flex:1 + min-height:0 to opt IN to being the one scrolling
      region per panel. */
   .detail-scroll-area{ flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+  /* section 6: collapsible readiness panel caret rotation + hide the
+     default marker (Chrome/Firefox both honor list-style:none on
+     <summary>, but Safari still shows its own triangle unless the
+     ::-webkit-details-marker is hidden too). */
+  #tcExecuteReadiness summary::-webkit-details-marker{ display:none; }
+  #tcExecuteReadiness details[open] summary .details-caret{ transform:rotate(90deg); display:inline-block; }
+  #tcExecuteReadiness summary .details-caret{ display:inline-block; transition:transform .12s ease; }
 
   .notice{ border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.5; display:flex; gap:8px; }
   .notice-warn{ background:var(--warning-soft); color:#7A4E08; border:1px solid #EBD190; }
@@ -658,13 +676,22 @@
 
 
   /* ===== QA AI Studio UI hardening — 09-Sep-2026 ===== */
-  .tc-detail-card{width:96vw!important;max-width:1640px!important;height:94vh!important;max-height:94vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
+  /* FINAL-END-TO-END-WORKSPACE-V2 section 4/34: modal sized to
+     ~90-95vw / ~88-92vh (was 96vw/94vh, just outside that range) for
+     maximum working space, and max-width raised (was capped at
+     1640px) so it keeps scaling on larger monitors instead of
+     plateauing early. */
+  .tc-detail-card{width:94vw!important;max-width:1920px!important;height:90vh!important;max-height:90vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
   .tc-detail-card .detail-head{padding:9px 16px!important;}
   .tc-detail-card .detail-head h3{margin:2px 0 3px!important;font-size:14px!important;line-height:1.25!important;}
   .tc-detail-card .detail-tabs{padding:0 16px!important;gap:18px!important;}
   .tc-detail-card .dtab{padding:7px 0!important;}
   .tc-detail-card .detail-body{padding:8px 16px 10px!important;overflow:hidden!important;min-height:0!important;}
-  #d-script.active{display:flex!important;flex-direction:column!important;gap:5px!important;min-height:0!important;overflow:hidden!important;}
+  /* section 4: Request tab scrolls internally like every other tab
+     now (see the .detail-panel-view base rule above) instead of
+     clipping its Params/Headers/Auth/Body/Assertions/Extraction
+     sections with no way to reach the rest. */
+  #d-script.active{display:flex!important;flex-direction:column!important;gap:5px!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;}
   #tcActiveSourceRow{padding:5px 9px!important;margin-bottom:2px!important;min-height:30px!important;}
   #tcSourceButtons{margin:1px 0!important;min-height:31px!important;align-items:center!important;}
   #d-script>.muted-small{margin-bottom:2px!important;line-height:1.25!important;}
@@ -996,6 +1023,36 @@
     <div class="modal-actions">
       <button type="button" class="btn" id="tcImportCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="tcImportRun">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- FINAL-END-TO-END-WORKSPACE-V2 section 21: Direct API Collection
+     Upload — lets the operator upload a Postman collection straight
+     from the API Automation page, without first going to Knowledge
+     Hub. Reuses the SAME backend ingestion (POST
+     /api/automation/api-collections/import -> ApiCollectionsWeb ->
+     ApiCollectionRepository.import_postman_collection() — the exact
+     repository Knowledge Hub's own API Collection upload already
+     calls) so there is no parallel storage model. Free-text hierarchy
+     fields (with datalist suggestions from already-known values) so a
+     BRAND NEW Domain/Module/Knowledge Name can be typed, not only one
+     that already has test cases loaded. -->
+<div class="modal-overlay" id="apiCollectionUploadModal">
+  <div class="modal-card" style="max-width:480px;">
+    <h3>API Collection Upload</h3>
+    <div class="modal-sub">Uploads a Postman collection (.json) directly into the same Knowledge Hub storage used everywhere else in QA AI Studio — endpoints become available to API Automation immediately.</div>
+    <div class="auth-error" id="apiCollectionUploadError"></div>
+    <div class="field"><label for="acuDomain">Domain</label><input id="acuDomain" list="acuDomainList"><datalist id="acuDomainList"></datalist></div>
+    <div class="field"><label for="acuModule">Module</label><input id="acuModule" list="acuModuleList"><datalist id="acuModuleList"></datalist></div>
+    <div class="field"><label for="acuKnowledge">Knowledge name</label><input id="acuKnowledge" list="acuKnowledgeList"><datalist id="acuKnowledgeList"></datalist></div>
+    <div class="field"><label for="acuVersion">Version</label><input id="acuVersion" value="1.0"></div>
+    <div class="field"><label for="acuDocumentType">Document Type</label><input id="acuDocumentType" value="API Collection"></div>
+    <div class="field"><label for="acuFile">Postman Collection (.json)</label><input id="acuFile" type="file" accept=".json,application/json"></div>
+    <div id="apiCollectionUploadSummary"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="apiCollectionUploadCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="apiCollectionUploadRun">Upload</button>
     </div>
   </div>
 </div>
@@ -1392,14 +1449,15 @@
             <span class="muted-small at-scope-count">0 test cases</span>
             <button class="btn btn-primary at-load">Load APIs</button>
             <div class="fbar-spacer"></div>
-            <button class="btn" id="apiGenFromCollectionBtn">Generate Automation from API Collection</button>
+            <button class="btn" id="apiCollectionUploadBtn">API Collection Upload</button>
             <button class="btn at-import">External Test Case Import</button>
+            <button class="btn" id="apiTemplateBtn">Download Sample Template</button>
             <button class="btn at-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Refresh</button>
           </div>
 
           <div class="card">
             <div class="btn-row" style="padding:8px 10px;border-bottom:1px solid var(--line);">
-              <button class="btn btn-sm at-generate-selected">Generate Automation for Selected</button>
+              <button class="btn btn-sm at-generate-selected">AI Generate API Automation Request</button>
               <div class="fbar-spacer"></div>
               <div class="fbar-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="at-search" placeholder="Filter test cases…"></div>
             </div>
@@ -1408,10 +1466,10 @@
                 <thead><tr>
                   <th style="width:28px;"><input type="checkbox" class="at-header-check"></th>
                   <th style="width:62px;">TC #</th>
-                  <th>Test Case / API Title</th>
+                  <th>Test Case</th>
+                  <th>API Title</th>
                   <th style="width:90px;">Last Result</th>
-                  <th style="width:72px;">Script</th>
-                  <th style="width:96px;">Actions</th>
+                  <th style="width:150px;">Actions</th>
                 </tr></thead>
                 <tbody class="at-tbody"><tr><td colspan="6" class="muted-small" style="padding:12px 10px;">Select a Domain / Module / Knowledge above, then Load APIs.</td></tr></tbody>
               </table>
@@ -1983,17 +2041,23 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment</span></div>
+          <div class="card-head"><h3>Remembered {{variable}} Values</h3><span style="font-size:11.5px;color:var(--ink-muted);">Same idea as a Postman Environment. Secret values are always masked here and everywhere else — Show/Hide only affects what you're typing, not a value already saved.</span></div>
           <div class="var-table-wrap">
             <table>
-              <thead><tr><th>Variable</th><th>Value</th></tr></thead>
-              <tbody id="envVarsTableBody"><tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr></tbody>
+              <thead><tr><th>Variable</th><th>Value</th><th>Secret</th><th style="width:120px;">Actions</th></tr></thead>
+              <tbody id="envVarsTableBody"><tr><td colspan="4" class="muted-small">No remembered variables yet.</td></tr></tbody>
             </table>
           </div>
-          <div class="btn-row" style="padding:10px;">
+          <div id="envVarFormError" class="muted-small" style="color:var(--danger);padding:0 10px;display:none;"></div>
+          <div class="btn-row" style="padding:10px;flex-wrap:wrap;">
             <input id="envVarName" placeholder="Variable name" style="max-width:180px;">
-            <input id="envVarValue" placeholder="Value" style="max-width:220px;">
+            <span style="position:relative;display:inline-flex;">
+              <input id="envVarValue" type="password" placeholder="Value" style="max-width:220px;">
+              <button type="button" class="btn" id="envVarShowHideBtn" title="Show/hide what you're typing" style="padding:4px 8px;">Show</button>
+            </span>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12.5px;"><input type="checkbox" id="envVarSecret"> Secret</label>
             <button class="btn" id="envVarSaveBtn">Remember Variable</button>
+            <button class="btn" id="envVarCancelEditBtn" style="display:none;">Cancel Edit</button>
           </div>
         </div>
         <div id="apiEnvSecretHints" class="muted-small"></div>
@@ -3191,7 +3255,7 @@
     var items = autoTestCasesByType[type];
     var rows = items.map(function(tc){
       var latest = tc.latest_run || null;
-      var scriptLabel = type === 'SQL' ? 'View SQL' : 'View Script';
+      var scriptLabel = type === 'SQL' ? 'View SQL' : (type === 'API' ? 'View Request' : 'View Script');
       var clickUpCell = tc.last_result === 'Fail'
         ? '<button class="btn btn-sm at-clickup-btn" data-tc-id="' + tc.id + '">Create Bug</button>'
         : '<span class="muted-small">—</span>';
@@ -3203,7 +3267,19 @@
       // scenario/title until something is bound.
       var titleText = (type === 'API' && tc.bound_endpoint_name)
         ? tc.bound_endpoint_name : (tc.test_case || tc.scenario || '');
-      var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(titleText)+'</td>';
+      var commonCells='<td>'+checkboxCell+'</td><td class="mono">'+escapeHtml(tc.tc_number)+'</td><td>'+escapeHtml(tc.test_case || tc.scenario || '')+'</td>';
+      // FINAL-END-TO-END-WORKSPACE-V2 section 3: API gets its own
+      // "API Title" column showing the bound endpoint's method + the
+      // COMPLETE URL (never only the short endpoint name) — falls
+      // back to a plain "Not bound yet" hint until something is
+      // bound.
+      var apiTitleCell = (type === 'API')
+        ? '<td class="mono muted-small" style="word-break:break-all;">'
+          + (tc.bound_api_endpoint_id
+              ? escapeHtml(((tc.bound_endpoint_name || '') + ' ' + (tc.bound_endpoint_url || '')).trim())
+              : '<span class="muted-small">Not bound yet</span>')
+          + '</td>'
+        : '';
       // API-SQL-AUTOMATION-END-TO-END grid cleanup: the API/SQL grids
       // no longer show a separate Automation Readiness column, an
       // Active Source column, or per-row Open/Generate buttons —
@@ -3221,12 +3297,12 @@
         cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">View Script</button></td><td><button class="btn btn-sm at-record-btn" data-tc-id="'+tc.id+'" title="Record a Manually Recorded Script by driving a live browser">Record</button></td>';
       } else if(type === 'API'){
         var bindLabel = tc.bound_api_endpoint_id ? 'Rebind' : 'Bind';
-        cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td><td><button class="btn btn-sm at-bind-btn" data-tc-id="'+tc.id+'" title="Bind or change this test case\'s API endpoint">'+bindLabel+'</button></td>';
+        cells = commonCells+apiTitleCell+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td class="btn-row" style="gap:4px;"><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button><button class="btn btn-sm at-bind-btn" data-tc-id="'+tc.id+'" title="Bind or change this test case\'s API endpoint">'+bindLabel+'</button></td>';
       } else {
         cells = commonCells+'<td>'+resultPillHtml((latest&&latest.outcome)||(tc.last_result==='Not Run'?null:tc.last_result))+'</td><td><button class="btn btn-sm at-view-btn" data-tc-id="'+tc.id+'">'+scriptLabel+'</button></td>';
       }
       var html = '<tr data-tc-id="' + tc.id + '">' + cells + '</tr>';
-      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '') + ' ' + titleText).toLowerCase() };
+      return { html: html, search: (tc.tc_number + ' ' + (tc.test_case || tc.scenario || '') + ' ' + titleText + ' ' + (tc.bound_endpoint_url || '')).toLowerCase() };
     });
     autoGridControllers[type].setRows(rows);
   }
@@ -3665,7 +3741,14 @@
     // place that used to read the select's value already used
     // autoSelectedType directly (see tcGenerateBtn below) — backend
     // automation_type enforcement is completely untouched.
-    document.getElementById('tcSuggestTypeBtn').style.display = isApi ? 'inline-flex' : 'none';
+    // FINAL-END-TO-END-WORKSPACE-V2 section 2: "Suggest Type (AI)" is
+    // removed from the API workflow entirely — API classification now
+    // comes from the Central Test Case's own Execution Type/Tool
+    // fields, never an AI suggestion on top of the script-lifecycle-
+    // era automation_type. It was already hidden for Playwright/SQL,
+    // so this makes it unconditionally hidden everywhere rather than
+    // shown only for API as before.
+    document.getElementById('tcSuggestTypeBtn').style.display = 'none';
     document.getElementById('tcSqlAssertionRow').style.display = isSql ? 'flex' : 'none';
     document.getElementById('tcApiRequestBar').style.display = isApi ? 'flex' : 'none';
     document.getElementById('tcApiAssertionRow').style.display = isApi ? 'flex' : 'none';
@@ -3792,23 +3875,46 @@
       '</div>';
   }
 
+  // FINAL-END-TO-END-WORKSPACE-V2 section 6: the readiness panel is
+  // collapsible (native <details>/<summary> — no extra JS wiring
+  // needed for the toggle itself) so it doesn't dominate the Execute
+  // tab once it has served its purpose. Collapsed by default once
+  // Ready (nothing more to look at); auto-expanded whenever any check
+  // failed, so a failing operator always sees why without an extra
+  // click.
   function renderReadiness(el, data){
     el.innerHTML =
-      '<div class="notice" style="background:' + (data.ready ? 'var(--success-soft)' : 'var(--warning-soft)') + ';border:1px solid ' + (data.ready ? 'var(--success)' : 'var(--warning)') + ';flex-direction:column;align-items:flex-start;">' +
-        '<strong>' + (data.ready ? 'Ready to execute' : 'Not ready yet') + '</strong>' +
+      '<details class="notice" style="background:' + (data.ready ? 'var(--success-soft)' : 'var(--warning-soft)') + ';border:1px solid ' + (data.ready ? 'var(--success)' : 'var(--warning)') + ';flex-direction:column;align-items:flex-start;padding:0;"' + (data.ready ? '' : ' open') + '>' +
+        '<summary style="cursor:pointer;padding:10px 12px;font-weight:600;list-style:none;display:flex;align-items:center;gap:6px;">' +
+          '<span class="details-caret" aria-hidden="true">▸</span>' + (data.ready ? 'Ready to execute' : 'Not ready yet') +
+        '</summary>' +
+        '<div style="padding:0 12px 10px 30px;">' +
         data.checks.map(function(c){
           return '<div style="font-size:12px;">' + (c.ok ? '✓' : '✗') + ' ' + escapeHtml(c.check.replace(/_/g, ' ')) + (c.detail ? ' — ' + escapeHtml(c.detail) : '') + '</div>';
         }).join('') +
-      '</div>';
+        '</div>' +
+      '</details>';
   }
 
   function showTcActionResult(title, ok, summary, checks){
     document.getElementById('tcActionResultTitle').textContent = title;
-    var rows = (checks || []).map(function(c){
+    function checkGroup(check){
+      if(check === 'syntax_valid') return 'Syntax';
+      if(check === 'locator_quality_valid') return 'Locator Quality';
+      if(check === 'semantic_consistency_valid') return 'Semantic Consistency';
+      if(/warning|risk/i.test(check || '')) return 'Warnings';
+      return 'Readiness';
+    }
+    var grouped = {};
+    (checks || []).forEach(function(c){ var group=checkGroup(c.check); (grouped[group]||(grouped[group]=[])).push(c); });
+    var rows = ['Syntax','Locator Quality','Semantic Consistency','Warnings','Readiness'].map(function(group){
+      if(!grouped[group] || !grouped[group].length) return '';
+      return '<div style="font-size:12px;font-weight:700;margin-top:10px;color:var(--text-muted);">'+escapeHtml(group)+'</div>' + grouped[group].map(function(c){
       return '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">' +
         '<strong style="color:' + (c.ok ? 'var(--success)' : 'var(--danger)') + ';">' + (c.ok ? '✓' : '✗') + '</strong>' +
         '<div><strong>' + escapeHtml((c.check || '').replace(/_/g,' ')) + '</strong>' +
         (c.detail ? '<div class="muted-small">' + escapeHtml(c.detail) + '</div>' : '') + '</div></div>';
+      }).join('');
     }).join('');
     document.getElementById('tcActionResultBody').innerHTML =
       '<div class="notice ' + (ok ? '' : 'notice-warn') + '" style="margin-bottom:10px;"><strong>' +
@@ -4777,13 +4883,15 @@
     }
     var socket = new WebSocket(url);
     socket.binaryType = 'blob';
+    socket._qaExpectedClose = false;
+    socket._qaTerminalReceived = false;
     recordSocket = socket;
 
     socket.addEventListener('open', function(){ recordActivityLine('Connecting to recorder...'); });
 
     socket.addEventListener('close', function(ev){
       if(recordSocket === socket){
-        recordSetState('Closed');
+        if(!socket._qaTerminalReceived && !socket._qaExpectedClose) recordSetState('Closed');
         if(ev.code === 4409){
           recordActivityLine('Another recording is already in progress on this server — only one can run at a time.');
           toast('Another recording is already in progress. Try again once it finishes.', true);
@@ -4794,7 +4902,9 @@
     });
 
     socket.addEventListener('error', function(){
-      recordActivityLine('Connection error.');
+      if(recordSocket !== socket || socket._qaExpectedClose || socket._qaTerminalReceived) return;
+      recordSetState('Failed');
+      recordActivityLine('Unexpected recorder connection failure.');
     });
 
     socket.addEventListener('message', function(ev){
@@ -4811,6 +4921,8 @@
         toast(msg.message, true);
         recordSetState('Failed');
       } else if(msg.type === 'stopped'){
+        socket._qaTerminalReceived = true;
+        socket._qaExpectedClose = true;
         recordSetState('Captured');
         recordActivityLine('Recording saved.');
         closeRecordModal();
@@ -4823,6 +4935,8 @@
           selectTestCase(tc, 'Playwright');
         });
       } else if(msg.type === 'cancelled'){
+        socket._qaTerminalReceived = true;
+        socket._qaExpectedClose = true;
         recordSetState('Idle');
         recordActivityLine('Recording cancelled — nothing was saved.');
         closeRecordModal();
@@ -4833,6 +4947,7 @@
   function closeRecordModal(){
     document.getElementById('tcRecordModal').classList.remove('show');
     if(recordSocket && recordSocket.readyState === WebSocket.OPEN){
+      recordSocket._qaExpectedClose = true;
       try { recordSocket.close(); } catch(e){}
     }
     recordSocket = null;
@@ -5099,9 +5214,19 @@
   }
 
   function interactiveSend(payload){
+    if(payload && payload.type === 'decision' && payload.decision && currentRepairEvent){
+      payload.decision.step = currentRepairEvent.step;
+      payload.decision.repair_generation = currentRepairEvent.repair_generation;
+    }
     if(interactiveSocket && interactiveSocket.readyState === WebSocket.OPEN){
       interactiveSocket.send(JSON.stringify(payload));
     }
+  }
+
+  function isCurrentRepairPayload(payload){
+    if(!currentRepairEvent || !payload) return true;
+    return Number(payload.step) === Number(currentRepairEvent.step)
+      && Number(payload.repair_generation) === Number(currentRepairEvent.repair_generation);
   }
 
   function openRepairModal(event){
@@ -5356,6 +5481,10 @@
         if(kv) kv.innerHTML =
           '<div>Test Case</div><div>' + escapeHtml(tc.tc_number || '') + '</div>' +
           '<div>Status</div><div class="muted-small">' + escapeHtml(msg.text) + '</div>';
+      } else if(msg.type === 'run_initializing'){
+        updateReplayStatus('STARTING', 'Initializing recorded script', 'Opening', msg.event);
+        appendReplayActivity(activeRunId, 'run_initializing', msg.event,
+          'Initializing replay runtime before Step 1 (' + (msg.event.total_steps || 0) + ' executable steps).');
       } else if(msg.type === 'step_failed'){
         tcReplayFailedStep = msg.event.step;
         updateReplayStatus('WAITING FOR USER', 'Paused on locator failure', 'Waiting', msg.event);
@@ -5366,10 +5495,27 @@
           appendReplayActivity(activeRunId,'selection_required',msg.event,'Selection required after automatic parent and fallback repair attempts.');
           document.getElementById('repairSelectElementBtn').click();
         },0);
+      } else if(msg.type === 'step_failure_detected'){
+        appendReplayActivity(activeRunId,'step_failure_detected',msg.event,'Step '+msg.event.step+' failed. Repair remains checkpointed at this step.',true);
+      } else if(msg.type === 'locator_resolution'){
+        var locatorAttempts=(msg.event.attempts||[]).map(function(item){
+          return item.source+': '+item.count+' match'+(item.count===1?'':'es')+', '+(item.visible?'visible':'not visible')+', '+(item.actionable?'actionable':'not actionable')+', '+(item.semantic_compatible?'semantic match':'semantic mismatch');
+        });
+        appendReplayActivity(activeRunId,'locator_resolution',msg.event,
+          'Locator resolution for Step '+msg.event.step+': '+(msg.event.selected_source?('selected '+msg.event.selected_source):'no automatic candidate passed')+(locatorAttempts.length?'\n'+locatorAttempts.join('\n'):''),!msg.event.selected_source);
       } else if(msg.type === 'auto_repair_attempted'){
         appendReplayActivity(activeRunId,'auto_repair_attempted',msg.event,'Automatic repair attempted for Step '+msg.event.step+'.');
+      } else if(msg.type === 'post_action_verified'){
+        appendReplayActivity(activeRunId,'post_action_verified',msg.event,'Post-action verification '+(msg.event.checked?'passed':'was not applicable')+' for Step '+msg.event.step+'.');
+      } else if(msg.type === 'post_action_failed'){
+        appendReplayActivity(activeRunId,'post_action_failed',msg.event,'Post-action verification failed for Step '+msg.event.step+': '+(msg.event.reason||'expected state was not reached.'),true);
+      } else if(msg.type === 'post_action_uncertain'){
+        updateReplayStatus('FAILED', 'Post-action state uncertain at Step ' + msg.event.step, 'Closed', msg.event);
+        appendReplayActivity(activeRunId,'post_action_uncertain',msg.event,'Step '+msg.event.step+' action completed, but its expected state could not be confirmed. The action was not repeated to avoid duplicate side effects.\n'+(msg.event.error||''),true);
       } else if(msg.type === 'parent_reopen_succeeded'){
-        appendReplayActivity(activeRunId,'parent_reopen_succeeded',msg.event,'Parent control reopened and Step '+msg.event.step+' passed.');
+        appendReplayActivity(activeRunId,'parent_reopen_succeeded',msg.event,'Parent control reopened for Step '+msg.event.step+'; retrying the child action.');
+      } else if(msg.type === 'parent_reopen_failed' || msg.type === 'parent_retry_failed'){
+        appendReplayActivity(activeRunId,msg.type,msg.event,'Parent-control recovery did not complete Step '+msg.event.step+': '+(msg.event.error||'unknown failure'),true);
       } else if(msg.type === 'step_started'){
         updateReplayStatus('RUNNING', (msg.event.details&&msg.event.details.action)||('Executing Step '+msg.event.step), 'Open', msg.event);
       } else if(msg.type === 'step_retrying'){
@@ -5411,6 +5557,12 @@
         document.getElementById('repairVerifyBtn').disabled = false;
         document.getElementById('repairVerifyStatus').style.color = 'var(--danger)';
         document.getElementById('repairVerifyStatus').textContent = (msg.event && msg.event.error) || 'Element selection failed. Try again or stop replay.';
+      } else if(msg.type === 'selection_rejected' || msg.type === 'stale_decision_rejected'){
+        var rejected = msg.event || {};
+        updateReplayStatus('WAITING FOR USER', rejected.error || 'Selection rejected.', 'Waiting', rejected);
+        appendReplayActivity(activeRunId,msg.type,rejected,'Selection rejected: '+(rejected.error||'invalid or stale repair decision.'),true);
+      } else if(msg.type === 'repair_saved'){
+        appendReplayActivity(activeRunId,'repair_saved',msg.repair,'Repair saved for Step '+msg.repair.step+'.');
       } else if(msg.type === 'step_repaired'){
         updateReplayStatus('RUNNING', 'Step ' + msg.repair.step + ' repaired', 'Open', msg.repair);
         appendReplayActivity(activeRunId,'step_repaired',msg.repair,'✓ Step '+msg.repair.step+' repaired and '+(msg.persisted?'saved.':'not saved.'),!msg.persisted);
@@ -5463,6 +5615,7 @@
         expl.style.display = '';
         document.getElementById('repairApplyAiBtn').style.display = 'inline-flex';
       } else if(msg.type === 'locator_verified'){
+        if(!isCurrentRepairPayload(msg.event)) return;
         var vbtn = document.getElementById('repairVerifyBtn');
         vbtn.disabled = false;
         var vstatus = document.getElementById('repairVerifyStatus');
@@ -5481,6 +5634,10 @@
           vstatus.textContent = '✗ Locator not found on the current page (0 matches).' + (ev.error ? ' ' + ev.error : '') + ' Retry will likely fail — try another locator or ask AI again.';
         }
       } else if(msg.type === 'element_selected'){
+        if(!isCurrentRepairPayload(msg.event)){
+          appendReplayActivity(activeRunId,'stale_element_ignored',msg.event,'Ignored an element selection from an older repair generation.',true);
+          return;
+        }
         console.info('[repair] frontend received element_selected', msg.event && msg.event.step);
         var selection = msg.event || {};
         var selected = selection.selected_candidate;
@@ -5572,8 +5729,18 @@
         closeRepairModal();
         var result = msg.result || {};
         document.getElementById('pwCancelSelectionBtn').style.display='none';
-        updateReplayStatus(result.cancelled ? 'USER CANCELLED' : (result.success ? 'PASSED' : (result.error?'ERROR':'FAILED')), result.cancelled ? 'Replay cancelled' : (result.success ? 'Replay completed successfully' : 'Replay failed'), 'Closed');
-        appendReplayActivity(activeRunId,'finished',msg,result.cancelled?'Replay cancelled.\nBrowser cleanup completed.':(result.success?'Replay completed successfully.\nBrowser cleanup completed.':'Replay failed.\nBrowser cleanup completed.'),!result.success&&!result.cancelled);
+        var stoppedByUser = !!result.stopped;
+        var failureStage = result.failure_stage || (result.error ? 'Replay Startup' : 'Step Execution');
+        var failureDetail = result.final_message || result.error || result.exception_message || 'Replay failed without a diagnostic.';
+        var finishedCurrent = stoppedByUser ? 'Execution stopped by user' : (result.cancelled ? 'Replay cancelled' :
+          (result.success ? 'Replay completed successfully' : ('FAILED — ' + failureStage)));
+        var finishedText = stoppedByUser ? 'Execution stopped by user.\nBrowser cleanup completed.' : (result.cancelled ? 'Replay cancelled.\nBrowser cleanup completed.' :
+          (result.success ? 'Replay completed successfully.\nBrowser cleanup completed.' :
+            failureDetail +
+            (result.script_line ? '\nScript line: ' + result.script_line : '') +
+            '\nBrowser cleanup completed.'));
+        updateReplayStatus(stoppedByUser ? 'STOPPED' : (result.cancelled ? 'USER CANCELLED' : (result.success ? 'PASSED' : (result.error?'ERROR':'FAILED'))), finishedCurrent, 'Closed');
+        appendReplayActivity(activeRunId,'finished',msg,finishedText,!result.success&&!result.cancelled);
         if(msg.run_uuid){
           apiFetch('/api/automation/runs/' + msg.run_uuid).then(function(run){
             renderRunResult(document.getElementById('tcRunResult'), run);
@@ -5993,25 +6160,111 @@
       var canEdit = autoCanEdit();
       ['envApiAuthType','envApiAuthToken','envApiHeaderName','envApiHeaderValue',
        'envApiUsername','envApiPassword','envApiTimeout','envApiBaseOverride','envApiVerifySsl',
-       'apiEnvSaveBtn','envVarName','envVarValue','envVarSaveBtn'].forEach(function(id){
+       'apiEnvSaveBtn','envVarName','envVarValue','envVarSecret','envVarSaveBtn'].forEach(function(id){
         document.getElementById(id).disabled = !canEdit;
       });
 
-      renderEnvVariables(env.api_variables || {});
+      // Section 10/19: `env.variables` is the masked CRUD list —
+      // `[{name, value, secret, value_is_set}]`, with every secret
+      // value already replaced server-side by ****** (see
+      // EnvironmentConfigWeb.get() in Core/automation_web_repository.py).
+      // The old raw `env.api_variables` dict is no longer sent by the
+      // backend at all, so there is nothing left here that could leak
+      // a real secret into this table.
+      envVarRows = env.variables || [];
+      renderEnvVariables(envVarRows);
     }).catch(function(err){ toast(err.message, true); });
   }
 
+  var envVarRows = [];
+  var envVarEditingName = null;
+
   function renderEnvVariables(vars){
     var body = document.getElementById('envVarsTableBody');
-    var names = Object.keys(vars);
-    if(!names.length){
-      body.innerHTML = '<tr><td colspan="2" class="muted-small">No remembered variables yet.</td></tr>';
+    if(!vars.length){
+      body.innerHTML = '<tr><td colspan="4" class="muted-small">No remembered variables yet.</td></tr>';
       return;
     }
-    body.innerHTML = names.map(function(name){
-      return '<tr><td class="mono">' + escapeHtml(name) + '</td><td>' + escapeHtml(vars[name]) + '</td></tr>';
+    var canEdit = autoCanEdit();
+    body.innerHTML = vars.map(function(v){
+      return '<tr>' +
+        '<td class="mono">' + escapeHtml(v.name) + '</td>' +
+        '<td>' + (v.secret ? (v.value_is_set ? '<span class="mono">******</span>' : '<span class="muted-small">(not set)</span>') : escapeHtml(v.value || '')) + '</td>' +
+        '<td>' + (v.secret ? 'Yes' : 'No') + '</td>' +
+        '<td class="btn-row">' +
+          '<button type="button" class="btn env-var-edit" data-name="' + escapeHtml(v.name) + '"' + (canEdit ? '' : ' disabled') + '>Edit</button>' +
+          '<button type="button" class="btn btn-danger env-var-delete" data-name="' + escapeHtml(v.name) + '"' + (canEdit ? '' : ' disabled') + '>Delete</button>' +
+        '</td>' +
+      '</tr>';
     }).join('');
   }
+
+  function resetEnvVarForm(){
+    envVarEditingName = null;
+    document.getElementById('envVarName').value = '';
+    document.getElementById('envVarName').disabled = !autoCanEdit();
+    document.getElementById('envVarValue').value = '';
+    document.getElementById('envVarValue').type = 'password';
+    document.getElementById('envVarShowHideBtn').textContent = 'Show';
+    document.getElementById('envVarSecret').checked = false;
+    document.getElementById('envVarSaveBtn').textContent = 'Remember Variable';
+    document.getElementById('envVarCancelEditBtn').style.display = 'none';
+    var errEl = document.getElementById('envVarFormError');
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
+
+  document.getElementById('envVarShowHideBtn').addEventListener('click', function(){
+    var input = document.getElementById('envVarValue');
+    var showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    this.textContent = showing ? 'Show' : 'Hide';
+  });
+
+  document.getElementById('envVarCancelEditBtn').addEventListener('click', function(){
+    resetEnvVarForm();
+  });
+
+  document.getElementById('envVarsTableBody').addEventListener('click', function(e){
+    var editBtn = e.target.closest('.env-var-edit');
+    var delBtn = e.target.closest('.env-var-delete');
+    if(editBtn){
+      var name = editBtn.getAttribute('data-name');
+      var row = envVarRows.filter(function(v){ return v.name === name; })[0];
+      if(!row) return;
+      envVarEditingName = name;
+      document.getElementById('envVarName').value = name;
+      // Editing an existing name isn't allowed — {{name}} is how every
+      // other place (URL/headers/assertions/etc.) references this
+      // variable, so silently renaming it here would break every one
+      // of those references. Delete + re-add instead if a rename is
+      // genuinely needed.
+      document.getElementById('envVarName').disabled = true;
+      // Secret rows never received their real value from the server
+      // (masked to ****** — see EnvironmentConfigWeb.get()), so the
+      // field starts blank with a placeholder; leaving it blank keeps
+      // the stored value unchanged (see upsert_variable()). A
+      // non-secret row's value IS the real value already, so it's
+      // safe to prefill directly for editing.
+      document.getElementById('envVarValue').value = row.secret ? '' : (row.value || '');
+      document.getElementById('envVarValue').placeholder = row.secret ? '(unchanged — enter to replace)' : '';
+      document.getElementById('envVarSecret').checked = !!row.secret;
+      document.getElementById('envVarSaveBtn').textContent = 'Save Changes';
+      document.getElementById('envVarCancelEditBtn').style.display = 'inline-flex';
+      var errEl = document.getElementById('envVarFormError');
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+      document.getElementById('envVarName').scrollIntoView({block:'nearest'});
+    } else if(delBtn){
+      var delName = delBtn.getAttribute('data-name');
+      if(!confirm('Delete remembered variable "' + delName + '"? Anything still referencing {{' + delName + '}} will fail to resolve until it is re-added.')) return;
+      apiFetch('/api/automation/environment/variables/' + encodeURIComponent(delName), { method: 'DELETE' }).then(function(){
+        toast('Variable deleted.');
+        if(envVarEditingName === delName) resetEnvVarForm();
+        loadApiEnvironment();
+      }).catch(function(err){ toast(err.message, true); });
+    }
+  });
 
   document.getElementById('envSaveBtn').addEventListener('click', function(){
     var payload = {
@@ -6055,13 +6308,36 @@
   });
 
   document.getElementById('envVarSaveBtn').addEventListener('click', function(){
+    var errEl = document.getElementById('envVarFormError');
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+
     var name = document.getElementById('envVarName').value.trim();
     var value = document.getElementById('envVarValue').value;
-    if(!name){ toast('Variable name is required.', true); return; }
-    apiFetch('/api/automation/environment/variables', { method: 'POST', body: JSON.stringify({ variables: { [name]: value } }) }).then(function(){
-      document.getElementById('envVarName').value = '';
-      document.getElementById('envVarValue').value = '';
-      toast('Variable remembered.');
+    var secret = document.getElementById('envVarSecret').checked;
+
+    if(!name){
+      errEl.textContent = 'Variable name is required.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    // Section 10: reject a duplicate name in ADD mode (editing an
+    // existing row goes through the Edit button instead, which locks
+    // the name field) — otherwise submitting a name that already
+    // exists would silently overwrite that other variable's value.
+    if(!envVarEditingName && envVarRows.some(function(v){ return v.name === name; })){
+      errEl.textContent = 'A variable named "' + name + '" already exists. Use Edit on that row instead.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    apiFetch('/api/automation/environment/variables/' + encodeURIComponent(name), {
+      method: 'PUT',
+      body: JSON.stringify({ value: value, secret: secret }),
+    }).then(function(){
+      toast(envVarEditingName ? 'Variable updated.' : 'Variable remembered.');
+      resetEnvVarForm();
       loadApiEnvironment();
     }).catch(function(err){ toast(err.message, true); });
   });
@@ -6078,6 +6354,7 @@
     document.getElementById('envModal').classList.add('show');
   });
   document.getElementById('apiEnvBtn').addEventListener('click', function(){
+    resetEnvVarForm();
     loadApiEnvironment();
     document.getElementById('apiEnvModal').classList.add('show');
   });
@@ -6085,6 +6362,7 @@
     document.getElementById('envModal').classList.remove('show');
   });
   document.getElementById('apiEnvCloseBtn').addEventListener('click', function(){
+    resetEnvVarForm();
     document.getElementById('apiEnvModal').classList.remove('show');
   });
 
@@ -6264,12 +6542,15 @@
     }).catch(function(err){ toast(err.message, true); });
   });
 
-  // ---- Download Sample Template (Playwright tab's Manual Excel
-  // Import) — a real, authenticated binary download; a plain <a href>
-  // can't carry the Bearer token, so this fetches the file as a blob
-  // and triggers the save the same way evidence screenshots do. ----
-  document.getElementById('pwTemplateBtn').addEventListener('click', function(){
-    fetch(API_BASE + '/api/automation/test-cases/sample-template', {
+  // ---- Download Sample Template — a real, authenticated binary
+  // download; a plain <a href> can't carry the Bearer token, so this
+  // fetches the file as a blob and triggers the save the same way
+  // evidence screenshots do. Shared by Playwright's own Manual Excel
+  // Import entry point AND API Automation's (section 20 — the SAME
+  // template format works for both, since the importer's own column
+  // aliases are automation-type-agnostic). ----
+  function downloadSampleTemplate(){
+    return fetch(API_BASE + '/api/automation/test-cases/sample-template', {
       headers: authState.token ? { 'Authorization': 'Bearer ' + authState.token } : {},
     }).then(function(res){
       if(!res.ok) throw new Error('Could not download template (' + res.status + ')');
@@ -6284,60 +6565,105 @@
       a.remove();
       setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
     }).catch(function(err){ toast(err.message, true); });
-  });
+  }
+  document.getElementById('pwTemplateBtn').addEventListener('click', downloadSampleTemplate);
+  document.getElementById('apiTemplateBtn').addEventListener('click', downloadSampleTemplate);
 
-  // ---- Generate Automation from API Collection (API tab) — reuses the
-  // real, existing /generate-from-collection endpoint (already used by
-  // the Desktop app) for every imported endpoint in the current
-  // Domain/Module/Knowledge scope. ----
-  document.getElementById('apiGenFromCollectionBtn').addEventListener('click', function(){
+  // ---- FINAL-END-TO-END-WORKSPACE-V2 section 21: API Collection
+  // Upload (API tab) — uploads a Postman collection .json straight
+  // from API Automation via the SAME backend ingestion Knowledge Hub
+  // uses (POST /api/automation/api-collections/import ->
+  // ApiCollectionsWeb -> ApiCollectionRepository.import_postman_collection()
+  // — no parallel storage model). Free-text hierarchy fields (with
+  // datalist suggestions) so a brand-new Domain/Module/Knowledge Name
+  // can be entered, not only one that already has test cases loaded.
+  // Section 23: the old "Generate Automation from API Collection"
+  // button/handler this replaced is intentionally gone — bulk-
+  // generating automation for every imported endpoint created
+  // unrelated/duplicate automation; the intelligent operation now
+  // belongs to selected Test Cases (see "AI Generate API Automation
+  // Request" instead). ----
+  function acuFillDatalist(id, values){
+    var list = document.getElementById(id);
+    list.innerHTML = '';
+    uniqueVals(values).forEach(function(v){
+      var opt = document.createElement('option');
+      opt.value = v;
+      list.appendChild(opt);
+    });
+  }
+  document.getElementById('apiCollectionUploadBtn').addEventListener('click', function(){
     var scope = activeTypeScope('API');
-    if(!scope.domain || !scope.module || !scope.knowledge_name){
-      toast('Select a Domain / Module / Knowledge first.', true);
-      return;
-    }
-    var btn = document.getElementById('apiGenFromCollectionBtn');
-    btn.disabled = true;
-    apiFetch('/api/automation/generate-from-collection', {
+    var sources = (autoScopesByType.API && autoScopesByType.API.sources) || [];
+    document.getElementById('apiCollectionUploadError').textContent = '';
+    document.getElementById('apiCollectionUploadSummary').innerHTML = '';
+    document.getElementById('acuDomain').value = scope.domain || '';
+    document.getElementById('acuModule').value = scope.module || '';
+    document.getElementById('acuKnowledge').value = scope.knowledge_name || '';
+    document.getElementById('acuVersion').value = scope.version || '1.0';
+    document.getElementById('acuDocumentType').value = 'API Collection';
+    document.getElementById('acuFile').value = '';
+    acuFillDatalist('acuDomainList', sources.map(function(s){ return s.domain; }));
+    acuFillDatalist('acuModuleList', sources.map(function(s){ return s.module; }));
+    acuFillDatalist('acuKnowledgeList', sources.map(function(s){ return s.knowledge_name; }));
+    document.getElementById('apiCollectionUploadModal').classList.add('show');
+  });
+  document.getElementById('apiCollectionUploadCancel').addEventListener('click', function(){
+    document.getElementById('apiCollectionUploadModal').classList.remove('show');
+  });
+  document.getElementById('apiCollectionUploadRun').addEventListener('click', function(){
+    var domain = document.getElementById('acuDomain').value.trim();
+    var module = document.getElementById('acuModule').value.trim();
+    var knowledge = document.getElementById('acuKnowledge').value.trim();
+    var version = document.getElementById('acuVersion').value.trim();
+    var documentType = document.getElementById('acuDocumentType').value.trim();
+    var fileInput = document.getElementById('acuFile');
+    var errBox = document.getElementById('apiCollectionUploadError');
+    errBox.textContent = '';
+    if(!domain || !module || !knowledge){ errBox.textContent = 'Domain, Module and Knowledge Name are required.'; return; }
+    if(!fileInput.files.length){ errBox.textContent = 'Choose a Postman Collection .json file.'; return; }
+    if(!/\.json$/i.test(fileInput.files[0].name)){ errBox.textContent = 'API Collection Upload accepts Postman collection .json files only.'; return; }
+    var formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('domain', domain);
+    formData.append('module', module);
+    formData.append('knowledge_name', knowledge);
+    if(version) formData.append('version', version);
+    if(documentType) formData.append('document_type', documentType);
+    var runBtn = document.getElementById('apiCollectionUploadRun');
+    runBtn.disabled = true;
+    fetch(API_BASE + '/api/automation/api-collections/import', {
       method: 'POST',
-      body: JSON.stringify({
-        domain: scope.domain, module: scope.module, knowledge_name: scope.knowledge_name,
-        automation_type: 'API',
-      }),
+      headers: authState.token ? { 'Authorization': 'Bearer ' + authState.token } : {},
+      body: formData,
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!res.ok) throw new Error(normalizeApiError(data && data.detail, res.status));
+        return data;
+      });
     }).then(function(result){
-      toast('Generated ' + (result.generated || 0) + ' API automation script(s), skipped ' + (result.skipped || 0) + '.');
+      document.getElementById('apiCollectionUploadSummary').innerHTML =
+        '<div class="muted-small"><strong>Upload Completed</strong><br>Endpoints saved: ' + (result.endpoints_saved || 0) + '</div>';
+      toast('Uploaded ' + (result.endpoints_saved || 0) + ' endpoint(s).');
       var panel = panelFor('API');
-      // The generated test cases are grouped under a real, canonical
-      // document (test_case_document_name / source_knowledge_ids) even
-      // though no file was ever uploaded for them — refresh the type's
-      // scopes/options so that document appears in the Test Case
-      // Document dropdown, then auto-select it and reload the grid so
-      // the newly generated rows are visible immediately instead of
-      // requiring a manual refresh.
       return loadTypeScopes('API').then(function(){
-        panel.querySelector('.at-domain').value = scope.domain;
+        panel.querySelector('.at-domain').value = domain;
         refreshTypeModuleOptions('API');
-        panel.querySelector('.at-module').value = scope.module;
+        panel.querySelector('.at-module').value = module;
         refreshTypeKnowledgeOptions('API');
-        panel.querySelector('.at-knowledge').value = scope.knowledge_name;
+        panel.querySelector('.at-knowledge').value = knowledge;
         refreshTypeVersionOptions('API');
-        if(scope.version) panel.querySelector('.at-version').value = scope.version;
+        if(version) panel.querySelector('.at-version').value = version;
         refreshTypeDocumentTypeOptions('API');
-        if(result.document_type) panel.querySelector('.at-document-type').value = result.document_type;
+        if(documentType) panel.querySelector('.at-document-type').value = documentType;
         refreshTypeSourceOptions('API');
-        if(result.source_knowledge_ids && result.source_knowledge_ids.length){
-          setSourcePickerSelection(panel.querySelector('.at-source-picker'), result.source_knowledge_ids);
-        }
         refreshTypeDocumentOptions('API');
-        if(result.document_name) panel.querySelector('.at-document').value = result.document_name;
         refreshTypeScopeCount('API');
         return loadTypeTestCases('API');
       });
-    }).then(function(){
-      loadTypeLog('API');
     }).catch(function(err){
-      toast(err.message, true);
-    }).then(function(){ btn.disabled = !autoCanCreate(); });
+      errBox.textContent = err.message;
+    }).then(function(){ runBtn.disabled = false; });
   });
 
   // ---- Knowledge Hub (Milestone 1) ----

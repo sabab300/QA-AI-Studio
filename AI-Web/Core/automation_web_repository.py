@@ -50,6 +50,7 @@ a REST wrapper like this one. A test case recorded on Desktop can
 still be viewed/edited/executed (non-interactively) from Web.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -65,6 +66,7 @@ from Core.test_execution_manager import TestExecutionManager
 from Core.test_environment_config import TestEnvironmentConfig
 from Core.qa_engineering_web_repository import QaEngineeringWeb
 from Core.api_automation_runner import ApiAutomationRunner
+from Core.secret_masking import mask_headers, is_sensitive_key, MASK
 from Core.sql_environment_config import SqlEnvironmentConfig
 from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
 from Core.sql_generator import SQLGenerator
@@ -361,6 +363,48 @@ class EnvironmentConfigWeb:
 
             masked[field] = ""
 
+        # FINAL-END-TO-END-WORKSPACE-V2 section 10/19: this used to
+        # hand back the raw `api_variables` dict as-is — a genuine
+        # secret (e.g. a bearer token remembered from a real run)
+        # came back in PLAINTEXT in this response (confirmed live —
+        # the "Remembered {{variable}} Values" table showing an
+        # unmasked JWT). Now every variable is exposed ONLY through
+        # this masked `variables` list, and the raw
+        # api_variables/api_variable_secrets dicts are stripped from
+        # the response entirely. Nothing else in the web layer reads
+        # them off get()'s return value — ApiAutomationRunner and the
+        # generation prompt builder both read the config file
+        # directly via TestEnvironmentConfig, never through this
+        # masked view, so this cannot break variable resolution.
+        raw_variables = data.get("api_variables") or {}
+
+        secret_flags = data.get("api_variable_secrets") or {}
+
+        variables = []
+
+        for name in sorted(raw_variables.keys()):
+
+            value = raw_variables.get(name) or ""
+
+            is_secret = secret_flags.get(name)
+
+            if is_secret is None:
+
+                is_secret = is_sensitive_key(name)
+
+            variables.append({
+                "name": name,
+                "value": MASK if (is_secret and value) else value,
+                "secret": bool(is_secret),
+                "value_is_set": bool(value),
+            })
+
+        masked["variables"] = variables
+
+        masked.pop("api_variables", None)
+
+        masked.pop("api_variable_secrets", None)
+
         return masked
 
     def update(self, fields):
@@ -413,10 +457,81 @@ class EnvironmentConfigWeb:
         return self.get()
 
     def remember_variables(self, variables):
+        """
+        Bulk upsert, `{name: value}` — kept for callers that don't
+        need to set a secret flag explicitly (each name falls back to
+        Core.secret_masking.is_sensitive_key() the same as everywhere
+        else). Used e.g. when a real API run pauses to ask the
+        operator for one or more missing {{variable}} values and
+        wants to remember every answer in one call.
+        """
 
         for name, value in (variables or {}).items():
 
             self.config.remember_api_variable(name, value)
+
+        return self.get()
+
+    def upsert_variable(self, name, value, secret=None):
+        """
+        Add-or-edit ONE remembered {{variable}} (section 10's CRUD
+        grid Add/Save row) — `secret` explicitly sets/clears the
+        masked flag; None preserves the existing flag for an edit, or
+        infers it from the name for a brand-new variable. Rejects a
+        blank name so the CRUD grid can't create an unusable row.
+
+        Same "blank value means keep what's already stored" rule
+        applied to every other secret field in this file's update() —
+        a secret's real value is never sent back to the client (get()
+        masks it to ******), so the CRUD grid's edit form can only
+        ever submit a blank value for an untouched secret, and reading
+        that blank as "clear it" would silently wipe the secret every
+        time the operator edits just the Secret checkbox or another
+        field. A non-secret value keeps supporting an explicit empty
+        clear, since its real value IS visible to edit in the first
+        place.
+        """
+
+        name = (name or "").strip()
+
+        if not name:
+
+            raise ValueError("Variable name is required.")
+
+        existing_data = self.config.load()
+
+        existing_variables = existing_data.get("api_variables") or {}
+
+        existing_secret_flags = existing_data.get("api_variable_secrets") or {}
+
+        is_update = name in existing_variables
+
+        is_secret = secret
+
+        if is_secret is None:
+
+            is_secret = existing_secret_flags.get(name)
+
+        if is_secret is None:
+
+            is_secret = is_sensitive_key(name)
+
+        if is_update and is_secret and not value:
+
+            value = existing_variables.get(name, "")
+
+        self.config.remember_api_variable(name, value or "", secret=secret)
+
+        return self.get()
+
+    def delete_variable(self, name):
+        """Removes one remembered {{variable}} (CRUD grid Delete)."""
+
+        name = (name or "").strip()
+
+        if name:
+
+            self.config.forget_api_variable(name)
 
         return self.get()
 
@@ -540,6 +655,13 @@ class TestCasesWeb:
 
                 test_case["bound_endpoint_name"] = (
                     f"{method} {name}".strip() if method else name
+                )
+
+                # FINAL-END-TO-END-WORKSPACE-V2 section 3: "API Title
+                # must show the COMPLETE API URL" — bound_endpoint_name
+                # alone (method + endpoint name) doesn't include it.
+                test_case["bound_endpoint_url"] = (
+                    endpoint.get("url_resolved") or endpoint.get("url_raw") or ""
                 )
 
         return result
@@ -887,7 +1009,44 @@ class TestCasesWeb:
 
             raise ValueError(f"Test case {test_case_id} not found.")
 
+        # REQUEST-CENTRIC-LIFECYCLE-FINAL: self-heal the legacy
+        # automation_type label here too, not only at the Request-
+        # workspace save choke point (TestCaseRepository.
+        # _update_api_config_field()) — a Test Case can reach Validate
+        # without having saved anything in THIS session (e.g. the
+        # Central Test Case classification was changed to Execution
+        # Type=Automatable / Execution Tool=API Automation AFTER the
+        # Request Configuration was already bound/saved). Without
+        # this, Validate would keep falling into the legacy generic
+        # branch below ("No Automation Type is set" / "No automation
+        # script...") even though the operator has fully configured
+        # the Request workspace — exactly the failure mode reported
+        # live. This never sets Execution Tool itself, only mirrors a
+        # classification already made, and never touches Playwright/
+        # SQL test cases.
+        if (
+            (test_case.get("automation_type") or "None") != "API"
+            and test_case.get("execution_type") == "Automatable"
+            and test_case.get("execution_tool") == "API Automation"
+        ):
+
+            self.repository.update_automation(test_case_id, "API")
+
+            test_case = manager.repository.get_test_case(test_case_id)
+
         automation_type = test_case.get("automation_type") or "None"
+
+        # FINAL-END-TO-END-WORKSPACE-V2 section 32: readiness must
+        # also account for a MATERIAL Test Environment Settings
+        # change (e.g. a regenerated token landing in a {{variable}}
+        # this request references, or an edited Base URL override) —
+        # not only the request config itself. Computed once and
+        # reused below both when CHECKING current readiness and when
+        # a successful Validate MARKS the new baseline, so the two
+        # always agree — see _api_env_fingerprint().
+        env_fingerprint = (
+            self._api_env_fingerprint(test_case) if automation_type == "API" else ""
+        )
 
         # POSTMAN-STYLE-END-TO-END-FINAL-COMPLETION section 11: a
         # masked Request Preview (Method/Resolved URL/Headers/Body) —
@@ -905,7 +1064,7 @@ class TestCasesWeb:
 
         validating_selected_source = source in ("AUTO", "MANUAL")
 
-        if not validating_selected_source:
+        def add_execution_tool_configured():
 
             expected_tool = self.repository.execution_tool_for_automation_type(
                 automation_type
@@ -919,6 +1078,10 @@ class TestCasesWeb:
                 "" if test_case.get("execution_type") == "Automatable" else
                 "The central Test Case is not classified as Automatable.",
             )
+
+        if not validating_selected_source:
+
+            add_execution_tool_configured()
 
             # REMOVE-SCRIPT-LIFECYCLE item 4/7: API Automation has no
             # Set Active step and no "active_script_source" concept —
@@ -936,7 +1099,7 @@ class TestCasesWeb:
             if automation_type == "API":
 
                 request_validated = self.repository.is_script_source_validated(
-                    test_case, "AUTO"
+                    test_case, "AUTO", env_fingerprint=env_fingerprint
                 )
                 add(
                     "request_validated",
@@ -962,6 +1125,24 @@ class TestCasesWeb:
                     else "The active script changed since validation, or has not "
                     "been validated and activated.",
                 )
+
+        elif automation_type == "API":
+
+            # REQUEST-CENTRIC-LIFECYCLE-FINAL item 1/2 of the required
+            # Validate checklist ("TC Execution Type = Automatable",
+            # "Execution Tool = API Automation") must be checked by
+            # the Validate BUTTON click too, not only by the separate
+            # Execute-tab readiness panel — the frontend's Validate
+            # button always calls this endpoint with
+            # source=autoViewedSource ("AUTO"), i.e.
+            # validating_selected_source is always True for API, so
+            # without this branch these two classification checks
+            # would never actually run for a user-initiated Validate.
+            # The "is what was already validated still valid" checks
+            # above (request_validated/active_script_approved) stay
+            # out of this branch on purpose — they describe execute-
+            # readiness, not "please validate me right now".
+            add_execution_tool_configured()
 
         # REMOVE-SCRIPT-LIFECYCLE item 4: "automation_type_set" is a
         # script-lifecycle-era generic check ("has ANY automation type
@@ -1012,6 +1193,50 @@ class TestCasesWeb:
             syntax_error = manager.check_script_syntax(script)
 
             add("syntax_valid", syntax_error is None, syntax_error or "")
+            locator_quality = manager.assess_playwright_script_quality(script)
+            invalid_locators = [item for item in locator_quality if item["classification"] == "Invalid"]
+            quality_summary = ", ".join(
+                f"{name}: {sum(1 for item in locator_quality if item['classification'] == name)}"
+                for name in ("Stable", "Acceptable", "High Risk", "Invalid")
+            )
+            invalid_detail = "; ".join(
+                f"Step {item['step']} — {item['reason']}" for item in invalid_locators[:8]
+            )
+            add(
+                "locator_quality_valid", not invalid_locators,
+                quality_summary + ((". Affected: " + invalid_detail) if invalid_detail else ""),
+            )
+            high_risk_locators = [
+                item for item in locator_quality if item["classification"] == "High Risk"
+            ]
+            if high_risk_locators:
+                add(
+                    "locator_quality_warning", True,
+                    "; ".join(
+                        f"Step {item['step']} â€” {item['reason']}"
+                        for item in high_risk_locators[:8]
+                    ),
+                )
+            semantic_failures = [
+                item for item in locator_quality
+                if not item.get("semantic_valid", True)
+                or not item.get("parent_valid", True)
+                or not item.get("action_valid", True)
+            ]
+            semantic_detail = []
+            for item in semantic_failures[:8]:
+                reasons = [
+                    item.get("semantic_reason") if not item.get("semantic_valid", True) else "",
+                    item.get("parent_reason") if not item.get("parent_valid", True) else "",
+                    item.get("action_reason") if not item.get("action_valid", True) else "",
+                ]
+                semantic_detail.append(
+                    f"Step {item['step']} â€” " + "; ".join(reason for reason in reasons if reason)
+                )
+            add(
+                "semantic_consistency_valid", not semantic_failures,
+                "; ".join(semantic_detail),
+            )
 
         if automation_type == "Playwright":
 
@@ -1425,7 +1650,8 @@ class TestCasesWeb:
             # Validate alone still never activates a script that
             # wasn't already Active — Set Active remains required.
             self.repository.mark_script_validated(
-                test_case_id, source, keep_active=(automation_type == "API")
+                test_case_id, source, keep_active=(automation_type == "API"),
+                env_fingerprint=env_fingerprint,
             )
 
         return {"ready": ready, "checks": checks, "request_preview": request_preview}
@@ -1783,6 +2009,52 @@ class TestCasesWeb:
 
             return {}
 
+    @staticmethod
+    def _merge_secret_kv_rows(existing_rows, incoming_rows):
+        """
+        Row-level merge for a Headers/Query-Params/Path-Params list —
+        see set_api_request_config()'s call site above. `existing_rows`
+        is the RAW (unmasked) previously-stored list; `incoming_rows`
+        is what the browser just sent, which for any row whose key
+        looks sensitive may carry back get_api_request_config()'s mask
+        sentinel ("******") rather than the real value if the operator
+        never touched that particular row. Matches existing rows to
+        incoming ones by key, in order (first not-yet-consumed match
+        for that key), mirroring how the Params/Headers table itself
+        is keyed — duplicate header names are rare and, worst case,
+        fall back to the incoming value as-is.
+        """
+
+        existing_by_key = {}
+
+        for row in existing_rows or []:
+
+            key = (row or {}).get("key", "")
+
+            existing_by_key.setdefault(key, []).append(dict(row or {}))
+
+        merged = []
+
+        for row in incoming_rows or []:
+
+            row = dict(row or {})
+
+            key = row.get("key", "")
+
+            value = row.get("value", "")
+
+            if is_sensitive_key(key) and value == MASK:
+
+                candidates = existing_by_key.get(key) or []
+
+                if candidates:
+
+                    row["value"] = candidates.pop(0).get("value", "")
+
+            merged.append(row)
+
+        return merged
+
     def get_api_request_config(self, test_case_id):
         """
         The masked-for-display config — powers the Request
@@ -1812,6 +2084,21 @@ class TestCasesWeb:
             auth[field] = ""
 
         config["auth"] = auth
+
+        # REQUEST-CENTRIC-LIFECYCLE-FINAL / SECRET SECURITY: a raw
+        # Header/Query-Param/Path-Param row (e.g. "X-Client-Secret:
+        # <real value>") is a resolved literal exactly like the auth
+        # sub-fields above, and must never come back to the browser
+        # unmasked — reuses the same key-name-based
+        # Core.secret_masking rule already trusted for Request
+        # Preview/Result/History (a "{{variable}}" reference is left
+        # visible; a resolved literal for a sensitive-looking key name
+        # is replaced with "******"). set_api_request_config() below
+        # recognizes that same "******" sentinel on write-back and
+        # reuses the real stored value instead of overwriting it.
+        for field in ("headers", "query_params", "path_params"):
+
+            config[field] = mask_headers(config.get(field) or [])
 
         return config
 
@@ -1889,6 +2176,24 @@ class TestCasesWeb:
                     )
 
                 merged["method"] = raw_method
+
+            elif key in ("headers", "query_params", "path_params"):
+
+                # SECRET SECURITY: the UI only ever reads these rows
+                # back through get_api_request_config(), which masks a
+                # sensitive-looking key's resolved value to "******"
+                # (see above). A save that round-trips that same
+                # "******" sentinel for a row the operator never
+                # touched must NOT overwrite the real stored secret
+                # with the literal string "******" — reuse the
+                # existing raw value at that key instead, exactly like
+                # the auth sub-fields' "blank preserves existing
+                # secret" rule just above. A deliberately typed new
+                # value (anything other than the exact sentinel) is
+                # always taken as-is.
+                merged[key] = self._merge_secret_kv_rows(
+                    existing.get(key) or [], request_config[key] or []
+                )
 
             else:
 
@@ -1971,6 +2276,111 @@ class TestCasesWeb:
 
         return None, candidates
 
+    def _api_env_fingerprint(self, test_case):
+        """
+        FINAL-END-TO-END-WORKSPACE-V2 section 32: the extra piece of
+        the API readiness fingerprint that comes from Test Environment
+        Settings rather than the Test Case's own saved Request
+        Configuration — so regenerating a token into a referenced
+        {{variable}}, or editing the environment's Base URL override /
+        auth type, correctly flips a validated Test Case back to
+        "Needs Validation" even though nothing on the Test Case itself
+        was touched.
+
+        Deliberately narrow, to satisfy the other half of section 32
+        ("avoid over-invalidating unrelated test cases on unrelated
+        env variable changes"): only the {{variable}} NAMES this
+        specific Test Case's bound endpoint + its own overrides
+        actually reference are hashed in (reusing
+        ApiAutomationRunner.find_unresolved_variables() — the exact
+        same variable-reference scan execute_api() already relies on
+        for its missing-variable check, so "what this TC depends on"
+        can never drift out of sync between the two). Editing some
+        OTHER remembered variable this TC never references leaves its
+        fingerprint, and therefore its readiness, untouched.
+
+        Returns "" when there's no bound endpoint yet (nothing
+        environment-specific to fingerprint) — never raises, since a
+        readiness check must never itself fail a Test Case that just
+        isn't bound yet (a different, already-reported check).
+        """
+
+        bound_id = test_case.get("bound_api_endpoint_id")
+
+        if not bound_id:
+
+            return ""
+
+        try:
+
+            manager = TestExecutionManager()
+
+            endpoint, _candidates = self._resolve_bound_endpoint(test_case, manager)
+
+            if endpoint is None:
+
+                return ""
+
+            request_overrides = self._parsed_api_request_config(test_case)
+
+            runner = ApiAutomationRunner()
+
+            referenced_names = sorted(set(
+                runner.find_unresolved_variables(endpoint, request_overrides)
+            ))
+
+            env = TestEnvironmentConfig().load()
+
+            variables = env.get("api_variables") or {}
+
+            secret_flags = env.get("api_variable_secrets") or {}
+
+            # Every real API request is affected by these two
+            # regardless of which {{variables}} it happens to
+            # reference, so they're always included, not gated behind
+            # referenced_names.
+            parts = [
+                f"base_url_override={env.get('api_base_url_override') or ''}",
+                f"auth_type={env.get('api_auth_type') or ''}",
+            ]
+
+            for name in referenced_names:
+
+                value = variables.get(name, "")
+
+                is_secret = secret_flags.get(name)
+
+                if is_secret is None:
+
+                    is_secret = is_sensitive_key(name)
+
+                # The fingerprint hashes the value rather than
+                # embedding it directly — auto_script_validated_hash
+                # is never returned to any client (unlike
+                # get_api_request_config()/execute_api()'s results),
+                # but this keeps that guarantee intact even so, and
+                # keeps a real secret out of anywhere this fingerprint
+                # might ever end up logged.
+                value_hash = (
+                    hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+                    if value else ""
+                )
+
+                parts.append(
+                    f"var:{name}={value_hash}:secret={bool(is_secret)}"
+                )
+
+            return "|".join(parts)
+
+        except Exception:
+
+            # A readiness check must degrade gracefully, not 500 the
+            # Execute tab, if anything here goes unexpectedly wrong —
+            # falls back to "no environment contribution", which at
+            # worst under-invalidates rather than blocking the
+            # operator from seeing readiness at all.
+            return ""
+
     # --------------------------------------------------
     # Execute — API, real HTTP request against the real,
     # imported endpoint (never the AI-generated script text — see
@@ -2007,9 +2417,17 @@ class TestCasesWeb:
 
         if test_case.get("status") != "Automated":
 
+            # REQUEST-CENTRIC-LIFECYCLE-FINAL EXECUTE section: exact
+            # required wording — status != "Automated" here means
+            # either this Request Configuration has never been
+            # validated, or it changed (any executable-field edit
+            # demotes status back to Draft and clears the validated
+            # fingerprint — see TestCaseRepository.
+            # _update_api_config_field()) since the last successful
+            # Validate.
             raise ValueError(
-                "The API automation asset is still Draft. Validate and "
-                "activate it before execution."
+                "Request configuration has changed. Validate before "
+                "execution."
             )
 
         endpoint, endpoints = self._resolve_bound_endpoint(

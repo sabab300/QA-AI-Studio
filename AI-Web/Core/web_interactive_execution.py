@@ -138,6 +138,14 @@ class WebInteractiveExecutionSession:
         self._persisted_repairs = 0
         self._runtime_activity = []
         self._stopped_by_user = False
+        self._state_lock = threading.Lock()
+        self.current_step = 0
+        self.last_passed_step = 0
+        self.failed_step = None
+        self.repair_state = "idle"
+        self.pending_selection_step = None
+        self.repair_generation = 0
+        self._persisted_repair_keys = set()
 
     def _remember_activity(self, event_type, payload=None):
         self._runtime_activity.append({
@@ -292,7 +300,13 @@ class WebInteractiveExecutionSession:
         an async router instead of a Qt signal handler.
         """
 
-        self._pending_failure_event = event
+        with self._state_lock:
+            self.current_step = int(event.get("step") or 0)
+            self.failed_step = self.current_step
+            self.repair_generation = int(event.get("repair_generation") or self.repair_generation + 1)
+            self.repair_state = "waiting"
+            event["repair_generation"] = self.repair_generation
+            self._pending_failure_event = event
         logger.info("[repair] selection available step=%s total=%s", event.get("step"), event.get("total_steps"))
 
         self._remember_activity("step_failed", event)
@@ -305,19 +319,27 @@ class WebInteractiveExecutionSession:
         self._pending_failure_event = None
         try:
             self._remember_activity("step_repaired", repair)
-            self.manager.apply_script_repairs(self.test_case_id, [repair])
+            key = (int(repair.get("step") or 0), int(repair.get("repair_generation") or self.repair_generation))
+            if key not in self._persisted_repair_keys:
+                self.manager.apply_script_repairs(self.test_case_id, [repair])
+                self._persisted_repair_keys.add(key)
+                self._persisted_repairs += 1
             logger.info("[repair] patch persisted step=%s", repair.get("step"))
-            self._persisted_repairs += 1
+            self.repair_state = "saved"
+            self._remember_activity("repair_saved", repair)
+            self._out_queue.put({"type": "repair_saved", "repair": repair, "persisted": True})
             self._out_queue.put({
                 "type": "step_repaired", "repair": repair,
                 "persisted": True,
             })
+            return True
         except Exception as ex:
             logger.exception("[web-interactive-execute] repair persistence failed")
             self._out_queue.put({
                 "type": "step_repaired", "repair": repair,
                 "persisted": False, "persistence_error": str(ex),
             })
+            return False
 
     def _on_locator_verified(self, event):
         """
@@ -342,8 +364,18 @@ class WebInteractiveExecutionSession:
         logger.info("[repair] session received element_selected step=%s candidate=%s", event.get("step"), event.get("locator") or selected.get("expression"))
         self._remember_activity("element_selected", event)
         self._out_queue.put({"type": "element_selected", "event": event})
+        return True
 
     def _on_runtime_event(self, event):
+        step = int(event.get("step") or 0)
+        with self._state_lock:
+            if event.get("event") == "step_started":
+                self.current_step = step
+            elif event.get("event") == "step_passed" and step > self.last_passed_step:
+                self.last_passed_step = step
+                self.failed_step = None
+                self.pending_selection_step = None
+                self.repair_state = "passed"
         if event.get("event") != "step_started":
             self._remember_activity(event.get("event"), event)
         self._out_queue.put({"type": event.get("event"), "event": event})
@@ -364,8 +396,25 @@ class WebInteractiveExecutionSession:
         # wrongly report "No failure is currently awaiting a fix."
         # while the operator is still mid-verification on the exact
         # same paused step.
-        if (decision or {}).get("action") == "select_element":
+        decision = dict(decision or {})
+        pending = self._pending_failure_event
+        expected_step = int((pending or {}).get("step") or 0)
+        expected_generation = int((pending or {}).get("repair_generation") or 0)
+        supplied_step = int(decision.get("step") or expected_step)
+        supplied_generation = int(decision.get("repair_generation") or expected_generation)
+        if not pending or supplied_step != expected_step or supplied_generation != expected_generation:
+            rejection = {
+                "step": expected_step, "repair_generation": expected_generation,
+                "error": "Stale repair decision rejected; the failed step or generation no longer matches.",
+            }
+            self._remember_activity("stale_decision_rejected", rejection)
+            self._out_queue.put({"type": "stale_decision_rejected", "event": rejection})
+            return False
+        decision.update({"step": expected_step, "repair_generation": expected_generation})
+        if decision.get("action") == "select_element":
             logger.info("[repair] selection requested step=%s", (self._pending_failure_event or {}).get("step"))
+            self.pending_selection_step = expected_step
+            self.repair_state = "selecting"
         if (decision or {}).get("action") not in (
             "verify_locator", "verify_code", "select_element",
         ):
@@ -373,6 +422,7 @@ class WebInteractiveExecutionSession:
             self._pending_failure_event = None
 
         self._decision_queue.put(decision)
+        return True
 
     def ask_ai(self):
         """

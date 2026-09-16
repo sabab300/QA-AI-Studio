@@ -253,7 +253,13 @@ RECORDER_JS = r"""
   }
 
   function isGenericFrameworkClass(value) {
-    return /^(?:k-icon|k-svg-icon|k-select|k-input|k-widget|k-button-icon|icon|wrapper|container|row|col|form-control|input-group)$/i.test(value || '');
+    return /^(?:k-icon|k-svg-icon|k-select|k-input|k-widget|k-button-icon|icon|wrapper|container|row|col|btn|form-control|input-group|p-\d+|m[btxy]?-\d+|p[btxy]?-\d+|col-(?:xs|sm|md|lg|xl)-\d+)$/i.test(value || '');
+  }
+
+  function isLayoutDependentCss(path) {
+    if (!path) return true;
+    var depth = (path.match(/\s>\s/g) || []).length;
+    return depth > 2 || /:nth-(?:child|of-type)|(?:^|[.\s>])(?:row|col(?:-|[.\s>])|p-\d+|m[btxy]?-\d+|p[btxy]?-\d+)(?:[.\s>:]|$)|(?:^|\s>\s)(?:form|fieldset)(?:[.\s>:]|$)/i.test(path);
   }
 
   function attr(el, name) {
@@ -425,6 +431,20 @@ RECORDER_JS = r"""
       + el.tagName.toLowerCase() + '[normalize-space(.)=' + xpathLiteral(text) + ']';
   }
 
+  function fieldContextXpathFor(el) {
+    var container = el.closest('.k-form-field,.form-group,.field,[class*="form-field"],[class*="field-wrap"],[class*="input-group"]');
+    if (!container) return null;
+    var label = container.querySelector('label,.k-label,[class*="field-label"]');
+    var labelText = label && (label.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!labelText || labelText.length > 120) return null;
+    var tag = el.tagName.toLowerCase();
+    var role = attr(el, 'role') || implicitRole(el);
+    var suffix = role ? '[@role=' + xpathLiteral(role) + ']' : '';
+    return '//*[self::div or self::section or self::fieldset or self::label]'
+      + '[.//*[self::label or contains(@class,"label")][normalize-space()=' + xpathLiteral(labelText) + ']]//'
+      + tag + suffix;
+  }
+
   // Item 29: known-stable locators pulled from Knowledge Hub's URL
   // Discovery captures for this test case's Domain/Module/Knowledge
   // Name scope (see web_recorder.py's _known_locators_for_scope() —
@@ -483,20 +503,24 @@ RECORDER_JS = r"""
         if (locatorMatchCount(testLocator) === 1) return testLocator;
       }
     }
-    var role = attr(el, 'role') || implicitRole(el);
-    var name = accessibleName(el);
-    if (role && name) {
-      var roleLocator = { strategy: 'role', role: role, name: name };
-      if (locatorMatchCount(roleLocator) === 1) return roleLocator;
+    if (el.id && !looksDynamic(el.id)) {
+      var stableIdLocator = { strategy: 'id', value: el.id };
+      if (locatorMatchCount(stableIdLocator) === 1) return stableIdLocator;
+    }
+    if (el.name && !looksDynamic(el.name)) {
+      var nameLocator = { strategy: 'name', value: el.name };
+      if (locatorMatchCount(nameLocator) === 1) return nameLocator;
     }
     var label = labelFor(el);
     if (label) {
       var labelLocator = { strategy: 'label', value: label };
       if (locatorMatchCount(labelLocator) === 1) return labelLocator;
     }
-    if (el.name && !looksDynamic(el.name)) {
-      var nameLocator = { strategy: 'name', value: el.name };
-      if (locatorMatchCount(nameLocator) === 1) return nameLocator;
+    var role = attr(el, 'role') || implicitRole(el);
+    var name = accessibleName(el);
+    if (role && name) {
+      var roleLocator = { strategy: 'role', role: role, name: name };
+      if (locatorMatchCount(roleLocator) === 1) return roleLocator;
     }
     var placeholder = attr(el, 'placeholder');
     if (placeholder) {
@@ -507,10 +531,6 @@ RECORDER_JS = r"""
     if (title) {
       var titleLocator = { strategy: 'title', value: title };
       if (locatorMatchCount(titleLocator) === 1) return titleLocator;
-    }
-    if (el.id && !looksDynamic(el.id)) {
-      var idLocator = { strategy: 'id', value: el.id };
-      if (locatorMatchCount(idLocator) === 1) return idLocator;
     }
     var text = (el.innerText || '').trim();
     if (text && text.length > 0 && text.length <= 60 &&
@@ -523,10 +543,15 @@ RECORDER_JS = r"""
       var contextual = {strategy:'xpath', value:contextualXpath};
       if (locatorMatchCount(contextual) === 1) return contextual;
     }
+    var fieldXpath = fieldContextXpathFor(el);
+    if (fieldXpath && locatorMatchCount({strategy:'xpath', value:fieldXpath}) === 1) {
+      return {strategy:'xpath', value:fieldXpath};
+    }
     var cssInfo = cssPathInfo(el);
-    if (cssInfo.fragileCount > 0 || /:nth-(?:child|of-type)/.test(cssInfo.path)) {
+    if (cssInfo.fragileCount > 0 || isLayoutDependentCss(cssInfo.path)) {
       var xp = xpathFor(el);
       if (xp && locatorMatchCount({strategy:'xpath', value:xp}) === 1) return { strategy: 'xpath', value: xp };
+      return null;
     }
     var cssLocator = { strategy: 'css', value: cssInfo.path };
     if (cssInfo.path && locatorMatchCount(cssLocator) === 1) return cssLocator;
@@ -546,6 +571,7 @@ RECORDER_JS = r"""
     }
     var inputType = (attr(control, 'type') || '').toLowerCase();
     var role = attr(control, 'role') || implicitRole(control) || '';
+    var widgetClass = ((control.closest('.k-datepicker,.k-calendar,.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-picker') || {}).className || '');
     var name = accessibleName(control) || attr(control, 'name') || '';
     if (!name) {
       var container = control.closest('.k-form-field,.form-group,.field,[class*="field"]');
@@ -557,11 +583,11 @@ RECORDER_JS = r"""
     }
     var type = 'text';
     if (inputType === 'password') type = 'password';
-    else if (inputType === 'date' || /date|calendar/i.test((control.className || '') + ' ' + name)) type = 'date';
+    else if (role !== 'gridcell' && (inputType === 'date' || /date|calendar/i.test((control.className || '') + ' ' + widgetClass + ' ' + name))) type = /calendar/i.test(widgetClass) ? 'calendar' : 'date';
     else if (inputType === 'file') type = 'file';
     else if (role === 'option' || /(?:k-list-item|k-item|option)/i.test(control.className || '')) type = 'option';
     else if (role === 'gridcell' || /(?:calendar|date-cell|k-calendar)/i.test(control.className || '')) type = 'date';
-    else if (control.tagName === 'SELECT' || role === 'combobox' || control.getAttribute('aria-haspopup') === 'listbox' || /dropdown|combobox|autocomplete|k-select/i.test(control.className || '')) type = /autocomplete/i.test(control.className || '') ? 'autocomplete' : 'dropdown';
+    else if (control.tagName === 'SELECT' || role === 'combobox' || control.getAttribute('aria-haspopup') === 'listbox' || /dropdown|combobox|autocomplete|k-select/i.test((control.className || '') + ' ' + widgetClass)) type = /autocomplete/i.test((control.className || '') + ' ' + widgetClass) ? 'autocomplete' : 'dropdown';
     else if (/accordion|expansion-panel/i.test(control.className || '')) type = 'accordion';
     else if (role === 'dialog' || /modal|dialog/i.test(control.className || '')) type = 'modal';
     else if (control.tagName === 'BUTTON' || role === 'button' || kind === 'click') type = 'button';
@@ -590,22 +616,65 @@ RECORDER_JS = r"""
     var cssInfo = cssPathInfo(el);
     var contextualXpath = contextualXpathFor(el);
     if (contextualXpath) add({strategy:'xpath', value:contextualXpath});
-    if (cssInfo.path && cssInfo.fragileCount === 0 && !/:nth-(?:child|of-type)/.test(cssInfo.path) && cssInfo.path.length <= 180) add({strategy:'css', value:cssInfo.path});
+    var fieldXpath = fieldContextXpathFor(el);
+    if (fieldXpath) add({strategy:'xpath', value:fieldXpath});
+    if (cssInfo.path && cssInfo.fragileCount === 0 && !isLayoutDependentCss(cssInfo.path) && cssInfo.path.length <= 180) add({strategy:'css', value:cssInfo.path});
     return {locator: primary, fallback_locators: fallbacks, xpath: xpathFor(el)};
   }
 
   function capturedAction(el, kind, extra) {
-    var target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"],[onclick],[tabindex]:not([tabindex="-1"])');
-    if (!target) {
-      var node = el, depth = 0;
-      while (!target && node && node !== document.body && depth < 8) {
-        if (getComputedStyle(node).cursor === 'pointer') target = node;
-        node = node.parentElement; depth++;
+    var target = null;
+    var option = el.closest('[role="option"],option,.k-list-item,.k-item');
+    var dateCell = el.closest('[role="gridcell"],.k-calendar-td,.k-calendar td');
+    if (option) target = option;
+    else if (dateCell) target = dateCell;
+    else if (/(?:k-icon|k-svg-icon|k-select|k-input-button)/i.test(el.className || '')) {
+      var widget = el.closest('.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,[role="combobox"]');
+      if (widget) target = /(?:k-datepicker|k-picker)/i.test(widget.className || '')
+        ? (el.closest('button,[role="button"]') || widget.querySelector('input[aria-controls],input[aria-owns],button,[role="button"],input') || widget)
+        : (widget.querySelector('input,[role="combobox"],button') || widget);
+    }
+    if (!target) target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"]');
+    if (!target && el.querySelectorAll && (
+        getComputedStyle(el).cursor === 'pointer' ||
+        /(?:k-input|k-picker|k-dropdown|k-combobox|input-group|button-wrap)/i.test(el.className || '')
+    )) {
+      var actionableChildren = el.querySelectorAll('button,a[href],input,select,textarea,[role="button"],[role="combobox"],[role="link"]');
+      if (actionableChildren.length === 1) target = actionableChildren[0];
+    }
+    if (!target) return null;
+    var targetRole = attr(target, 'role') || implicitRole(target) || '';
+    var semanticLeaf = ['button','link','combobox','option','gridcell','menuitem','tab'].indexOf(targetRole) !== -1;
+    if (!semanticLeaf && (/^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(target.tagName) ||
+        /(?:k-header|k-dialog|k-popup|wrapper|container|(?:^|\s)(?:row|col(?:-|\s)))/i.test(target.className || ''))) return null;
+    var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
+    if (kind === 'click' && /(?:k-icon|k-svg-icon|k-input-button)/i.test(el.className || '') && el.closest('.k-datepicker,.k-picker')) {
+      result.field_type = 'calendar';
+      var dateInput = el.closest('.k-datepicker,.k-picker').querySelector('input');
+      if (dateInput) {
+        result.field_name = accessibleName(dateInput) || result.field_name;
+        // Icon text such as "calendar" describes the glyph, not the date
+        // field. Do not serialize it as a semantic fallback for this step.
+        result.fallback_locators = (result.fallback_locators || []).filter(function(locator) {
+          return locator.strategy !== 'role' && locator.strategy !== 'text';
+        });
       }
     }
-    target = target || el;
-    var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
+    result.control_role = attr(target, 'role') || implicitRole(target) || '';
+    result.control_context = sectionFor(target).name || '';
+    var owns = attr(target, 'aria-controls') || attr(target, 'aria-owns');
+    result.popup_locator = owns ? {strategy:'id', value:owns} : null;
     return result;
+  }
+
+  function notificationContainerFor(el) {
+    return el.closest('[role="status"],[role="alert"],[aria-live]:not([aria-live="off"]),.toast,.notification,.snackbar,.k-notification,.k-notification-container,[class*="toast"],[class*="notification"],[class*="snackbar"]');
+  }
+
+  function actionableNotificationTarget(el, notification) {
+    if (!notification) return el;
+    var target = el.closest('button,a[href],[role="button"],[role="link"]');
+    return target && target !== notification && notification.contains(target) ? target : null;
   }
 
   var TEXT_ENTRY_TYPES = ['text', 'email', 'password', 'search', 'tel', 'url', 'number', 'date'];
@@ -621,26 +690,224 @@ RECORDER_JS = r"""
     return false;
   }
 
+  function isDynamicTextControl(el) {
+    var role = attr(el, 'role') || implicitRole(el) || '';
+    return role === 'combobox'
+      || attr(el, 'aria-haspopup') === 'listbox'
+      || !!el.closest('.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-picker');
+  }
+
+  var LAST_REPORTED = null;
+
   function report(action) {
     if (!action || !action.locator) {
       console.warn('QA AI Studio Recorder skipped an action without a unique locator.');
       return;
     }
+    var signature = JSON.stringify({
+      kind: action.kind, locator: action.locator,
+      value: action.kind === 'fill' ? action.value : action.expected_value
+    });
+    var now = Date.now();
+    if (LAST_REPORTED && LAST_REPORTED.signature === signature && now - LAST_REPORTED.at < 750) return;
+    LAST_REPORTED = {signature: signature, at: now};
     if (window.__qa_record_action) {
       window.__qa_record_action(JSON.stringify(action));
     }
   }
 
-  var LAST_DYNAMIC_CONTROL = null;
+  var POPUP_TRANSACTION = null;
+  var POPUP_SEQUENCE = 0;
+  var PENDING_DYNAMIC_FILL = null;
+  var POPUP_SELECTOR = '[role="listbox"],[role="grid"],.k-list-container,.k-popup,.k-calendar,.k-calendar-container';
+
+  function visibleElement(el) {
+    if (!el || !el.isConnected) return false;
+    var style = getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
+  }
+
+  function closePopupTransaction(reason) {
+    if (!POPUP_TRANSACTION) return;
+    POPUP_TRANSACTION.state = 'CLOSED';
+    POPUP_TRANSACTION.closed_reason = reason || 'completed';
+    POPUP_TRANSACTION = null;
+  }
+
+  function sameLocator(left, right) {
+    return !!left && !!right && JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function flushPendingDynamicFill(tx) {
+    if (!PENDING_DYNAMIC_FILL || (tx && PENDING_DYNAMIC_FILL.transaction !== tx)) return;
+    var pending = PENDING_DYNAMIC_FILL;
+    PENDING_DYNAMIC_FILL = null;
+    report(pending.action);
+  }
+
+  function controlledPopup(opener) {
+    var owns = opener && (attr(opener, 'aria-controls') || attr(opener, 'aria-owns'));
+    if (!owns) return null;
+    for (var id of owns.split(/\s+/)) {
+      var candidate = document.getElementById(id);
+      if (candidate) return candidate;
+    }
+    return null;
+  }
+
+  function reconcilePopupTransaction() {
+    var tx = POPUP_TRANSACTION;
+    if (!tx || tx.state === 'CLOSED') return;
+    var controlled = controlledPopup(tx.opener_element);
+    if (controlled) {
+      tx.popup_element = controlled;
+      tx.popup_id = controlled.id || '';
+      tx.evidence = 'opener aria-controls/aria-owns';
+      return;
+    }
+    var visiblePopups = Array.prototype.filter.call(document.querySelectorAll(POPUP_SELECTOR), visibleElement);
+    if (visiblePopups.length === 1) {
+      tx.popup_element = visiblePopups[0];
+      tx.popup_id = visiblePopups[0].id || '';
+      tx.evidence = 'single visible popup after opener';
+    }
+  }
+
+  function beginPopupTransaction(action, opener) {
+    if (POPUP_TRANSACTION && POPUP_TRANSACTION.state === 'OPEN' &&
+        sameLocator(POPUP_TRANSACTION.action.locator, action.locator) &&
+        Date.now() - POPUP_TRANSACTION.started_at < 2500) {
+      action.control_transaction = POPUP_TRANSACTION.id;
+      return false;
+    }
+    flushPendingDynamicFill(POPUP_TRANSACTION);
+    closePopupTransaction('superseded by another dynamic control');
+    POPUP_TRANSACTION = {
+      id: 'popup-' + (++POPUP_SEQUENCE), action: action, opener_element: opener,
+      widget_element: opener.closest('.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,[role="combobox"]'),
+      popup_element: controlledPopup(opener), popup_id: '', state: 'OPEN',
+      started_at: Date.now(), evidence: 'opener interaction'
+    };
+    if (POPUP_TRANSACTION.popup_element) {
+      POPUP_TRANSACTION.popup_id = POPUP_TRANSACTION.popup_element.id || '';
+      POPUP_TRANSACTION.evidence = 'opener aria-controls/aria-owns';
+    }
+    action.control_transaction = POPUP_TRANSACTION.id;
+    setTimeout(reconcilePopupTransaction, 0);
+    setTimeout(reconcilePopupTransaction, 80);
+    return true;
+  }
+
+  function elementBelongsToTransaction(el, tx) {
+    if (!el || !tx) return false;
+    reconcilePopupTransaction();
+    if (el === tx.opener_element || (tx.widget_element && tx.widget_element.contains(el))) return true;
+    if (tx.popup_element && tx.popup_element.contains(el)) return true;
+    var popup = el.closest(POPUP_SELECTOR);
+    if (popup && tx.popup_element === popup) return true;
+    if (popup && popup.id && tx.popup_id === popup.id) return true;
+    return false;
+  }
+
+  function provenOwnerFor(el) {
+    var popup = el.closest(POPUP_SELECTOR);
+    var tx = POPUP_TRANSACTION;
+    if (tx && tx.state !== 'CLOSED' && elementBelongsToTransaction(el, tx)) {
+      tx.state = 'SELECTING';
+      return {owner:tx.action, transaction:tx, popup:popup || tx.popup_element, evidence:tx.evidence || 'active control transaction'};
+    }
+    var labelledBy = popup && attr(popup, 'aria-labelledby');
+    var opener = labelledBy ? document.getElementById(labelledBy.split(/\s+/)[0]) : null;
+    var active = document.activeElement;
+    if (!opener && popup && active && active.nodeType === 1) {
+      var controls = attr(active, 'aria-controls') || attr(active, 'aria-owns');
+      if (popup.id && controls && controls.split(/\s+/).indexOf(popup.id) !== -1) opener = active;
+    }
+    if (opener) {
+      var ownerAction = capturedAction(opener, 'click');
+      if (ownerAction && ['dropdown','autocomplete','calendar'].indexOf(ownerAction.field_type) !== -1) {
+        beginPopupTransaction(ownerAction, opener);
+        POPUP_TRANSACTION.popup_element = popup;
+        POPUP_TRANSACTION.popup_id = (popup && popup.id) || '';
+        POPUP_TRANSACTION.state = 'SELECTING';
+        POPUP_TRANSACTION.evidence = labelledBy ? 'popup aria-labelledby opener' : 'active opener controls popup';
+        return {owner:ownerAction, transaction:POPUP_TRANSACTION, popup:popup, evidence:POPUP_TRANSACTION.evidence};
+      }
+    }
+    return {owner:null, transaction:null, popup:popup, evidence:'no active control-scoped popup transaction matched'};
+  }
+
+  function finishSelectionTransaction(tx) {
+    if (!tx) return;
+    setTimeout(function () {
+      if (POPUP_TRANSACTION !== tx) return;
+      var expanded = attr(tx.opener_element, 'aria-expanded');
+      if (!visibleElement(tx.popup_element) || expanded === 'false') closePopupTransaction('popup closed after selection');
+      else tx.state = 'OPEN';
+    }, 120);
+  }
 
   document.addEventListener('click', function (e) {
     var el = e.target;
     if (!el || el.nodeType !== 1) return;
-    if (isTextEntry(el)) return;
+    var notification = notificationContainerFor(el);
+    if (notification) {
+      el = actionableNotificationTarget(el, notification);
+      if (!el) return;
+    }
+    if (isTextEntry(el) && !isDynamicTextControl(el)) return;
     var action = capturedAction(el, 'click');
-    if (['option','date'].indexOf(action.field_type) !== -1 && LAST_DYNAMIC_CONTROL) action.parent_locator = LAST_DYNAMIC_CONTROL;
+    if (!action) return;
+    if (action.field_type === 'dropdown' || action.field_type === 'autocomplete') { action.kind = 'open_dropdown'; action.expected_post_state = 'owning popup visible or aria-expanded=true'; }
+    else if (action.field_type === 'calendar') { action.kind = 'open_calendar'; action.expected_post_state = 'owning calendar visible'; }
+    else if (action.field_type === 'option') { action.kind = 'select_option'; action.expected_value = action.field_name; action.expected_post_state = 'owning field reflects value or popup closes'; }
+    else if (action.field_type === 'date') { action.kind = 'select_date'; action.expected_value = action.field_name; action.expected_post_state = 'owning date field reflects value or calendar closes'; }
+    if (['option','date'].indexOf(action.field_type) !== -1) {
+      var ownership = provenOwnerFor(el), owner = ownership.owner;
+      flushPendingDynamicFill(ownership.transaction);
+      action.parent_locator = owner ? owner.locator : null;
+      action.popup_locator = owner ? (owner.popup_locator || action.popup_locator) : action.popup_locator;
+      if (!action.popup_locator && ownership.popup && ownership.popup.id) {
+        action.popup_locator = {strategy:'id', value:ownership.popup.id};
+      }
+      action.control_context = owner ? (owner.control_context || action.control_context) : action.control_context;
+      action.control_transaction = ownership.transaction ? ownership.transaction.id : null;
+      action.ownership_diagnostic = {
+        detected_opener: owner ? owner.locator : null,
+        detected_popup: ownership.popup ? (ownership.popup.id || ownership.popup.getAttribute('role') || ownership.popup.className || '') : '',
+        resolved_parent: action.parent_locator,
+        evidence: ownership.evidence,
+        accepted: !!owner
+      };
+      action.transaction_opener = action.parent_locator;
+      action.transaction_popup = action.popup_locator || (
+        ownership.popup ? {strategy:'text', value:(ownership.popup.getAttribute('role') || ownership.popup.className || ownership.popup.tagName || 'popup')} : null
+      );
+      action.ownership_evidence = ownership.evidence;
+      action.ownership_accepted = !!owner;
+      finishSelectionTransaction(ownership.transaction);
+    }
+    if (['dropdown','calendar','autocomplete','accordion'].indexOf(action.field_type) !== -1) {
+      if (!beginPopupTransaction(action, el.closest('button,input,select,[role="combobox"]') || el)) return;
+    }
+    else if (['option','date'].indexOf(action.field_type) === -1 && !elementBelongsToTransaction(el, POPUP_TRANSACTION)) closePopupTransaction('unrelated actionable interaction');
     report(action);
-    if (['dropdown','calendar','autocomplete','accordion'].indexOf(action.field_type) !== -1) LAST_DYNAMIC_CONTROL = action.locator;
+  }, true);
+
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || el.nodeType !== 1 || !isTextEntry(el) || !isDynamicTextControl(el)) return;
+    var tx = POPUP_TRANSACTION;
+    if (!tx || tx.state !== 'OPEN' || !elementBelongsToTransaction(el, tx)) return;
+    var fillAction = capturedAction(el, 'fill', {
+      value: el.value, expected_value: el.value,
+      expected_post_state: 'value equals entered value'
+    });
+    if (!fillAction) return;
+    fillAction.control_transaction = tx.id;
+    fillAction.parent_locator = tx.action.locator;
+    fillAction.popup_locator = tx.action.popup_locator || fillAction.popup_locator;
+    PENDING_DYNAMIC_FILL = {transaction: tx, action: fillAction};
   }, true);
 
   document.addEventListener('change', function (e) {
@@ -650,6 +917,8 @@ RECORDER_JS = r"""
       var selected = el.options[el.selectedIndex];
       report(capturedAction(el, 'select_option', {
         value: el.value, label: selected ? selected.text : el.value,
+        expected_value: selected ? selected.text : el.value,
+        expected_post_state: 'owning field reflects selected value',
       }));
       return;
     }
@@ -657,7 +926,24 @@ RECORDER_JS = r"""
       return; // already captured as a click
     }
     if (isTextEntry(el)) {
-      report(capturedAction(el, 'fill', {value: el.value}));
+      if (isDynamicTextControl(el)) {
+        // Kendo and similar widgets emit a late change event after an
+        // option has already been selected. Genuine user search input is
+        // captured by the input listener and flushed before that option.
+        flushPendingDynamicFill(POPUP_TRANSACTION);
+        return;
+      }
+      var fillAction = capturedAction(el, 'fill', {value: el.value, expected_value: el.value, expected_post_state: 'value equals entered value'});
+      var belongsToPopup = POPUP_TRANSACTION && elementBelongsToTransaction(el, POPUP_TRANSACTION);
+      if (belongsToPopup) {
+        fillAction.control_transaction = POPUP_TRANSACTION.id;
+        fillAction.parent_locator = POPUP_TRANSACTION.action.locator;
+        fillAction.popup_locator = POPUP_TRANSACTION.action.popup_locator || fillAction.popup_locator;
+      }
+      if (fillAction && ['dropdown','autocomplete','calendar'].indexOf(fillAction.field_type) !== -1 &&
+          !belongsToPopup) beginPopupTransaction(fillAction, el);
+      else if (!belongsToPopup) closePopupTransaction('unrelated text interaction');
+      report(fillAction);
     }
   }, true);
 })();
@@ -981,6 +1267,17 @@ class WebRecordingSession:
         except Exception:
             return
 
+        diagnostic = action.get("ownership_diagnostic") or {}
+        if diagnostic:
+            logger.info(
+                "[recorder-ownership] transaction=%s accepted=%s opener=%s popup=%s evidence=%s",
+                action.get("control_transaction") or "-",
+                bool(diagnostic.get("accepted")),
+                self._locator_display(diagnostic.get("detected_opener") or {}) or "-",
+                str(diagnostic.get("detected_popup") or "-")[:120],
+                str(diagnostic.get("evidence") or "-")[:160],
+            )
+
         self.actions.append(action)
 
         activity(self._describe_action(action))
@@ -1045,12 +1342,16 @@ class WebRecordingSession:
             if locator_src is None:
                 continue
 
-            if kind == "click":
+            if kind in {"click", "open_dropdown", "open_calendar", "select_date"}:
                 statement = f"{locator_src}.click()"
             elif kind == "fill":
                 statement = f"{locator_src}.fill({action.get('value', '')!r})"
             elif kind == "select_option":
-                statement = f"{locator_src}.select_option({action.get('value', '')!r})"
+                statement = (
+                    f"{locator_src}.select_option({action.get('value', '')!r})"
+                    if action.get("tag") == "select"
+                    else f"{locator_src}.click()"
+                )
             else:
                 continue
             lines.extend(self._structured_step_lines(step_number, action, statement))
@@ -1101,6 +1402,8 @@ class WebRecordingSession:
             "Open application" if kind == "goto" else
             f"Enter {field_name}" if kind == "fill" else
             f"Select {field_name}" if kind == "select_option" else
+            f"Select date {field_name}" if kind == "select_date" else
+            f"Open {field_name}" if kind in {"open_dropdown", "open_calendar"} else
             f"Click {field_name}"
         )
         metadata = [
@@ -1110,7 +1413,17 @@ class WebRecordingSession:
             metadata_comment("FIELD_NAME", field_name),
             metadata_comment("SECTION", action.get("section")),
             metadata_comment("ACTION_TYPE", kind),
+            metadata_comment("CONTROL_ROLE", action.get("control_role")),
+            metadata_comment("CONTROL_CONTEXT", action.get("control_context")),
+            metadata_comment("CONTROL_TRANSACTION", action.get("control_transaction")),
+            metadata_comment("TRANSACTION_OPENER", cls._locator_display(action.get("transaction_opener") or {})),
+            metadata_comment("TRANSACTION_POPUP", cls._locator_display(action.get("transaction_popup") or {})),
+            metadata_comment("OWNERSHIP_EVIDENCE", action.get("ownership_evidence")),
+            metadata_comment("OWNERSHIP_ACCEPTED", "true" if action.get("ownership_accepted") else "false"),
             metadata_comment("PARENT_LOCATOR", cls._locator_display(action.get("parent_locator") or {})),
+            metadata_comment("POPUP_LOCATOR", cls._locator_display(action.get("popup_locator") or {})),
+            metadata_comment("EXPECTED_VALUE", action.get("expected_value") or action.get("value")),
+            metadata_comment("EXPECTED_POST_STATE", action.get("expected_post_state")),
             metadata_comment("PRIMARY_LOCATOR", primary),
             metadata_comment("FALLBACK_LOCATORS", "; ".join(fallbacks)),
             metadata_comment("XPATH", xpath),
@@ -1190,6 +1503,33 @@ class WebRecordingSession:
                         "Recorder generated invalid Python and did not save it: "
                         f"line {ex.lineno or '?'}: {ex.msg}. Captured actions remain in this recorder session."
                     ) from ex
+                # The in-page recorder has already ranked/normalized candidates.
+                # Refuse persistence if an executable step still crosses the same
+                # structural/semantic gate used by Validate and replay repair.
+                from Core.test_execution_manager import TestExecutionManager
+                quality = TestExecutionManager.assess_playwright_script_quality(script)
+                invalid = [
+                    item for item in quality
+                    if item.get("classification") == "Invalid"
+                    or not item.get("semantic_valid", True)
+                    or not item.get("parent_valid", True)
+                    or not item.get("action_valid", True)
+                ]
+                if invalid:
+                    details = "; ".join(
+                        f"Step {item['step']}: " + next(
+                            reason for reason in (
+                                item.get("reason") if item.get("classification") == "Invalid" else "",
+                                item.get("semantic_reason") if not item.get("semantic_valid", True) else "",
+                                item.get("parent_reason") if not item.get("parent_valid", True) else "",
+                                item.get("action_reason") if not item.get("action_valid", True) else "",
+                            ) if reason
+                        )
+                        for item in invalid[:8]
+                    )
+                    raise RecordingError(
+                        "Recorder did not save unsafe executable steps. " + details
+                    )
                 TestCaseRepository().update_recorded_script(
                     self.test_case_id, script
                 )
