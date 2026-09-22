@@ -40,6 +40,7 @@ from Core.automation_web_repository import (
     GitAutomationWeb,
     TestCasesWeb,
     SqlAutomationWeb,
+    SqlScriptsWeb,
 )
 from Core.sql_automation_runner import SqlValidationError
 from Core.user_repository import UserRepository
@@ -94,6 +95,14 @@ def import_api_collection(
     knowledge_name: Optional[str] = Form(None),
     version: Optional[str] = Form(None),
     document_type: Optional[str] = Form(None),
+    # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4
+    # Rule 5: optional and additive — the rebuilt "API Collection
+    # Upload" modal always sends this now (it only offers TC-*
+    # folders as Source Files), but any older caller that omits it
+    # keeps working exactly as before via ApiCollectionsWeb/
+    # ApiCollectionRepository's own backward-compatible fallback.
+    test_case_version_id: Optional[int] = Form(None),
+    test_case_file_id: Optional[int] = Form(None),
     current_user=Depends(require_permission("automation", "create")),
 ):
 
@@ -105,6 +114,7 @@ def import_api_collection(
             file_bytes=file_bytes, original_filename=file.filename,
             domain=domain, module=module, knowledge_name=knowledge_name,
             version=version, document_type=document_type,
+            test_case_version_id=test_case_version_id,
         )
 
     except ValueError as error:
@@ -176,6 +186,163 @@ def update_api_endpoint(
 
 
 # ============================================================
+# SQL Scripts — "Upload SQL Script"
+# (QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4 Rule 6)
+#
+# A NEW, additive automation asset: a real, pre-written .sql FILE
+# bound to a Test Cases (TC-*) folder — same relationship Rule 5's
+# API Collection Upload has to a TC-* folder, mirrored endpoint-for-
+# endpoint. This never replaces the existing /sql/... endpoints below
+# (per-test-case AI-generated inline SQL, unchanged) — see
+# Core/sql_script_repository.py's module docstring.
+# ============================================================
+
+
+@router.post("/sql-scripts/upload")
+def upload_sql_script(
+    file: UploadFile = File(...),
+    test_case_version_id: int = Form(...),
+    display_name: Optional[str] = Form(None),
+    current_user=Depends(require_permission("automation", "create")),
+):
+
+    file_bytes = file.file.read()
+
+    try:
+
+        result = SqlScriptsWeb().upload_script(
+            file_bytes=file_bytes, original_filename=file.filename,
+            test_case_version_id=test_case_version_id,
+            display_name=display_name,
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    _audit(current_user, "UPLOAD_SQL_SCRIPT", f"Uploaded '{file.filename}' bound to TC folder id={test_case_version_id}")
+
+    return result
+
+
+@router.post("/test-cases/import-sql-mapping")
+def import_sql_mapping(
+    file: UploadFile = File(...),
+    test_case_version_id: int = Form(...),
+    test_case_file_id: int = Form(...),
+    current_user=Depends(require_permission("automation", "create")),
+):
+    try:
+        result = SqlAutomationWeb().import_mapping(
+            file.file.read(), file.filename or "", test_case_version_id,
+            test_case_file_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    if result.get("ok"):
+        _audit(current_user, "IMPORT_SQL_MAPPING", f"Imported SQL mapping '{file.filename}'")
+    return result
+
+
+@router.post("/test-cases/import-raw-sql")
+def import_raw_sql(
+    file: UploadFile = File(...),
+    test_case_version_id: int = Form(...),
+    test_case_file_id: int = Form(...),
+    test_case_id: int = Form(...),
+    current_user=Depends(require_permission("automation", "create")),
+):
+    try:
+        result = SqlAutomationWeb().import_raw_sql(
+            file.file.read(), file.filename or "", test_case_version_id,
+            test_case_file_id, test_case_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    _audit(current_user, "IMPORT_RAW_SQL", f"Bound raw SQL to test case id={test_case_id}")
+    return result
+
+
+@router.get("/sql-scripts")
+def list_sql_scripts(current_user=Depends(require_permission("automation", "view"))):
+
+    return {"scripts": SqlScriptsWeb().list_scripts()}
+
+
+@router.get("/sql-scripts/{script_id}")
+def get_sql_script(script_id: int, current_user=Depends(require_permission("automation", "view"))):
+
+    script = SqlScriptsWeb().get_script(script_id)
+
+    if script is None:
+
+        raise HTTPException(status_code=404, detail="SQL script not found.")
+
+    return script
+
+
+@router.delete("/sql-scripts/{script_id}")
+def delete_sql_script(script_id: int, current_user=Depends(require_permission("automation", "delete"))):
+
+    try:
+
+        result = SqlScriptsWeb().delete_script(script_id)
+
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    _audit(current_user, "DELETE_SQL_SCRIPT", f"Unbound SQL script id={script_id}")
+
+    return result
+
+
+@router.post("/sql-scripts/{script_id}/validate")
+def validate_sql_script(script_id: int, current_user=Depends(require_permission("automation", "view"))):
+
+    try:
+
+        # Rule 6 — every Validate is now also recorded to SQL History
+        # (see SqlScriptRepository._record_history()); who ran it is
+        # attributed the same way every other Execute in this app
+        # already is.
+        return SqlScriptsWeb().validate_script(
+            script_id, executed_by_user_id=current_user["id"],
+            executed_by_username=current_user["username"],
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/sql-scripts/{script_id}/execute")
+def execute_sql_script(script_id: int, current_user=Depends(require_permission("automation", "execute"))):
+
+    try:
+
+        result = SqlScriptsWeb().execute_script(
+            script_id, executed_by_user_id=current_user["id"],
+            executed_by_username=current_user["username"],
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    _audit(current_user, "EXECUTE_SQL_SCRIPT", f"Executed SQL script id={script_id}")
+
+    return result
+
+
+@router.get("/sql-scripts/{script_id}/history")
+def sql_script_history(
+    script_id: int, limit: int = 50,
+    current_user=Depends(require_permission("automation", "view")),
+):
+    """Rule 6 — SQL History for one uploaded script (Validate/Execute
+    attempts, most recent first). See SqlScriptRepository.list_history()."""
+
+    return SqlScriptsWeb().list_history(script_id, limit=min(max(limit, 1), 200))
+
+
+# ============================================================
 # Test Environment Settings (execution configuration)
 # ============================================================
 
@@ -206,6 +373,30 @@ class RememberVariablesRequest(BaseModel):
 class UpsertVariableRequest(BaseModel):
     value: Optional[str] = ""
     secret: Optional[bool] = None
+
+
+class GenerateTokenRequest(BaseModel):
+    """
+    API-Automation Requirement 1 — `request_config` is deliberately
+    the SAME method/url/query_params/path_params/headers/auth/body/
+    body_mode/body_params shape ApiRequestConfigRequest below already
+    uses for the per-Test-Case Request Configuration tabs (plus the
+    Settings-tab-only timeout_seconds/verify_ssl overrides) — the
+    frontend's Add Token request builder is the exact same tabbed
+    component, so it produces the exact same JSON.
+    """
+
+    request_config: dict
+    extract_type: Optional[str] = "json_path"
+    # API-Automation Requirement 5 — for the common case (a standard
+    # OAuth/token response containing `access_token`) the operator no
+    # longer has to type a JSON path at all; EnvironmentConfigWeb.
+    # generate_token() defaults an omitted/blank json_path extraction
+    # to "access_token" server-side. A header-name IS still required
+    # when extract_type == "header" (there's no universal default
+    # header name) — that requirement is enforced there too.
+    extract_path: Optional[str] = None
+    save_to_variable: str
 
 
 @router.get("/environment")
@@ -282,6 +473,47 @@ def delete_variable(
     return result
 
 
+@router.post("/environment/token-request/generate")
+def generate_token(
+    payload: GenerateTokenRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    """
+    API-Automation Requirement 1 — the full Postman-style "Add Token"
+    request builder's Send action. Actually sends the configured
+    request and, on success, saves the extracted value as a Secret
+    {{variable}} — see EnvironmentConfigWeb.generate_token() for the
+    full behavior. The full real response (status/headers/body text/
+    duration) is always returned so the Response area can render it,
+    same as any other Send in this app; only the individually-
+    extracted token value itself is never a separate field in this
+    response — it is persisted straight into the destination variable
+    server-side.
+    """
+
+    try:
+
+        result = EnvironmentConfigWeb().generate_token(
+            request_config=payload.request_config,
+            extract_type=payload.extract_type or "json_path",
+            extract_path=(payload.extract_path or ""),
+            save_to_variable=payload.save_to_variable,
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result.get("success"):
+
+        _audit(
+            current_user, "UPDATE_TEST_ENVIRONMENT",
+            f"Generated token and saved to variable '{payload.save_to_variable}'",
+        )
+
+    return result
+
+
 # ============================================================
 # Automation Workspace (cross-scope landing page)
 # ============================================================
@@ -296,6 +528,13 @@ def workspace(
     document_type: Optional[str] = None,
     source_knowledge_ids: Optional[List[int]] = Query(None),
     test_case_document: Optional[str] = None,
+    # Rule 4 (QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-
+    # V4) — the exact hierarchy's "Source Files" level (a real TC-*
+    # folder / test_case_versions row). Additive alongside the legacy
+    # source_knowledge_ids/test_case_document params so nothing already
+    # depending on those breaks; see TestCasesWeb.list_workspace().
+    test_case_version_id: Optional[int] = None,
+    test_case_file_id: Optional[int] = None,
     status: Optional[str] = None,
     automation_type: Optional[str] = None,
     q: Optional[str] = None,
@@ -308,6 +547,8 @@ def workspace(
         domain=domain, module=module, knowledge_name=knowledge_name,
         version=version, document_type=document_type,
         source_knowledge_ids=source_knowledge_ids, test_case_document=test_case_document,
+        test_case_version_id=test_case_version_id,
+        test_case_file_id=test_case_file_id,
         status=status, automation_type=automation_type, q=q,
         limit=min(max(limit, 1), 200), offset=max(offset, 0),
     )
@@ -407,55 +648,80 @@ def sample_template(current_user=Depends(require_permission("automation", "view"
     importer actually accepts.
     """
 
-    import io
-
-    from openpyxl import Workbook
-
-    headers = [
-        "TC No.", "Requirement/Scenario", "Test Type", "Important",
-        "Test Case", "Pre-Conditions", "Steps", "Expected result",
-        "Actual Result", "Status", "Bug ID", "Comments",
-    ]
-
-    example_row = [
-        "TC-001",
-        "Login with valid credentials",
-        "Functional",
-        "High",
-        "Verify a user can log in with a valid username and password",
-        "User account exists and is active",
-        "1. Open the login page\n2. Enter valid username/password\n3. Click Login",
-        "User is redirected to the dashboard and sees their name in the header",
-        "", "Draft", "", "Sample row",
-    ]
-
-    workbook = Workbook()
-
-    sheet = workbook.active
-
-    sheet.title = "Test Cases"
-
-    sheet.append(headers)
-
-    sheet.append(example_row)
-
-    for col_index in range(1, len(headers) + 1):
-
-        sheet.column_dimensions[sheet.cell(row=1, column=col_index).column_letter].width = 28
-
-    buffer = io.BytesIO()
-
-    workbook.save(buffer)
-
-    buffer.seek(0)
+    from io import BytesIO
+    from Core.test_case_workbook import workbook_bytes
 
     from fastapi.responses import StreamingResponse
 
     return StreamingResponse(
-        buffer,
+        BytesIO(workbook_bytes()),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=qa_automation_test_case_template.xlsx"},
     )
+
+
+# ============================================================
+# V5-04 — Playwright "Upload Playwright Scripts" mapping import.
+# Registered BEFORE '/test-cases/{test_case_id}' for the same reason
+# 'sample-template' above is — a literal path segment must be declared
+# ahead of an int-typed path param on the same method or FastAPI never
+# reaches it (this GET route would otherwise 422 first). The mapping
+# import is a POST, which doesn't collide, but is kept in this same
+# block for readability/locality.
+# ============================================================
+
+@router.get("/test-cases/playwright-sample-template")
+def playwright_sample_template(current_user=Depends(require_permission("automation", "view"))):
+    """Shared template-generation utility (V5 SAMPLE TEMPLATE RULE) —
+    see Core/automation_import_service.generate_sample_template()."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from Core.automation_import_service import generate_sample_template, PLAYWRIGHT_CONTENT_LABEL
+
+    return StreamingResponse(
+        BytesIO(generate_sample_template(PLAYWRIGHT_CONTENT_LABEL)),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Playwright_Script_Import_Template.xlsx"},
+    )
+
+
+@router.post("/test-cases/import-playwright-mapping")
+def import_playwright_mapping(
+    file: UploadFile = File(...),
+    test_case_version_id: int = Form(...),
+    test_case_file_id: int = Form(...),
+    current_user=Depends(require_permission("automation", "create")),
+):
+    """Validates the uploaded Test Case ID (+ optional Script) mapping
+    file against the SELECTED Test Cases workbook (test_case_version_id)
+    via the shared AutomationImportService, and — only if every row
+    validates — saves each script through the EXISTING script/test-case
+    binding architecture (TestCasesWeb.update_script(), the same method
+    PUT /test-cases/{id}/script uses). Atomic: a validation failure
+    saves nothing and returns the detailed row-level breakdown instead
+    of a bare 400 (V5 IMPORT ERROR UX)."""
+    file_bytes = file.file.read()
+    try:
+        result = TestCasesWeb().import_playwright_mapping(
+            file_bytes=file_bytes, filename=file.filename,
+            test_case_version_id=test_case_version_id,
+            test_case_file_id=test_case_file_id,
+        )
+    except Exception as error:  # AutomationImportError and friends -> a clean 400, never a bare 500
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if result.get("ok"):
+        _audit(
+            current_user, "IMPORT_PLAYWRIGHT_MAPPING",
+            f"Imported Playwright mapping '{file.filename}' — {len(result.get('saved_test_case_ids') or [])} script(s) saved "
+            f"against test_case_version_id={test_case_version_id}",
+        )
+        return result
+    # Not ok: nothing was saved — return 200 with the breakdown (this
+    # IS the successful, detailed response to a blocked import) rather
+    # than an HTTP error status, so the frontend can render it as the
+    # normal "Import blocked" summary instead of a generic failure toast.
+    return result
 
 
 @router.get("/test-cases/{test_case_id}")
@@ -852,10 +1118,20 @@ def list_runs(
     document_type: Optional[str] = None,
     source_knowledge_ids: Optional[List[int]] = Query(None),
     test_case_document: Optional[str] = None,
+    # Rule 4 — see workspace() above; same additive TC-folder filter,
+    # reused by the Execution Log and History popups via
+    # TestCasesWeb.list_runs() -> list_workspace().
+    test_case_version_id: Optional[int] = None,
     test_case_id: Optional[int] = None,
     status: Optional[str] = None,
     automation_type: Optional[str] = None,
     q: Optional[str] = None,
+    # Requirement 9 — Reports & Analytics' date-range filter. Added to
+    # this EXISTING endpoint (the same one the API Execution History
+    # popup already uses) rather than standing up a parallel
+    # reports-only runs endpoint — one query surface for run history.
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     current_user=Depends(require_permission("automation", "view")),
@@ -865,8 +1141,10 @@ def list_runs(
         domain=domain, module=module, knowledge_name=knowledge_name,
         version=version, document_type=document_type,
         source_knowledge_ids=source_knowledge_ids, test_case_document=test_case_document,
+        test_case_version_id=test_case_version_id,
         test_case_id=test_case_id, status=status, q=q,
         automation_type=automation_type,
+        start_date=start_date, end_date=end_date,
         limit=min(max(limit, 1), 200), offset=max(offset, 0),
     )
 
@@ -881,6 +1159,37 @@ def get_run(run_id: str, current_user=Depends(require_permission("automation", "
         raise HTTPException(status_code=404, detail="Run not found.")
 
     return job
+
+
+class DeleteRunsRequest(BaseModel):
+    run_uuids: List[str]
+
+
+@router.delete("/runs")
+def delete_runs(
+    payload: DeleteRunsRequest,
+    current_user=Depends(require_permission("automation", "delete")),
+):
+    """
+    Phase 8 (API-Automation-Enhancement) — backs the History popup's
+    "Clear" action, moved here from the old client-side-only "clear
+    the displayed Execution Log table" button. Deletes ONLY the
+    explicit run_uuids the caller sends (exactly the rows the operator
+    saw, filtered, and confirmed in the History popup) — never a
+    server-recomputed scope/date re-filter, so a delete can never
+    remove more than what was actually shown and confirmed. Requires
+    the same "delete" permission as deleting a Test Case.
+    """
+
+    deleted = TestCasesWeb().delete_runs(payload.run_uuids)
+
+    _audit(
+        current_user, "DELETE_AUTOMATION_RUNS",
+        f"Deleted {deleted} run(s): {', '.join(payload.run_uuids[:20])}"
+        + (f" (+{len(payload.run_uuids) - 20} more)" if len(payload.run_uuids) > 20 else ""),
+    )
+
+    return {"deleted": deleted}
 
 
 @router.get("/runs/{run_id}/evidence")

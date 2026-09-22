@@ -1,13 +1,16 @@
 """QA Engineering web API: grounded generation, review, and persistence."""
 
 from typing import Literal
-
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from pathlib import Path
+import sqlite3
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from Core.qa_engineering_export_service import QaEngineeringExportService
 from Core.qa_engineering_web_repository import QaEngineeringWeb
+from Core.qa_engineering_version_service import QaEngineeringVersionService
+from Core.test_case_workbook import EXECUTION_VALUES, STATUS_VALUES, normalize_test_case, workbook_bytes
 from Core.test_case_generator import ALL_TEST_TYPES
 from Core.test_case_repository import TestCaseRepository
 from Core.user_repository import UserRepository
@@ -42,8 +45,11 @@ class TestCaseDraft(BaseModel):
     pre_conditions: str = ""
     steps: str = ""
     expected_result: str = ""
-    execution_type: str = "Manual"
-    execution_tool: str = ""
+    actual_result: str = ""
+    execution: str = "Manual"
+    status: str = ""
+    bug_id: str = ""
+    comments: str = ""
     source_knowledge_ids: list[int] = Field(default_factory=list)
 
 
@@ -66,6 +72,8 @@ class ReviewSaveRequest(BaseModel):
     source_knowledge_ids: list[int] = Field(min_length=1)
     test_case_document_name: str = ""
     reviewed_file_name: str = Field(min_length=1, max_length=220)
+    test_case_version_id: int | None = None
+    test_case_file_id: int | None = None
     operations: list[ReviewOperation] = Field(min_length=1)
 
 
@@ -92,6 +100,7 @@ def _audit(current_user, action, detail):
 
 
 def _validate_test_types(values):
+    values.update(normalize_test_case(values))
     selected = values.get("test_types") or []
     invalid = [value for value in selected if value not in ALL_TEST_TYPES]
     if invalid:
@@ -99,20 +108,15 @@ def _validate_test_types(values):
             status_code=422,
             detail="Unsupported Test Types: " + ", ".join(invalid),
         )
-    execution_type = values.get("execution_type") or "Manual"
-    execution_tool = values.get("execution_tool") or ""
-    if execution_type not in {"Manual", "Automatable"}:
-        raise HTTPException(status_code=422, detail="Unsupported Execution Type.")
-    if execution_type == "Manual" and execution_tool:
-        raise HTTPException(status_code=422, detail="Manual Test Cases cannot specify an Execution Tool.")
-    allowed_tools = {item["label"] for item in TestCaseRepository().list_execution_tools()}
-    if execution_tool not in ({""} | allowed_tools):
-        raise HTTPException(status_code=422, detail="Unsupported Execution Tool.")
+    if values.get("execution") not in EXECUTION_VALUES:
+        raise HTTPException(status_code=422, detail="Unsupported Execution. Allowed values: " + ", ".join(EXECUTION_VALUES) + ".")
+    if values.get("status") and values.get("status") not in STATUS_VALUES:
+        raise HTTPException(status_code=422, detail="Unsupported Status. Allowed values are Pass, Fail, or blank.")
 
 
 def _validate_required_case_fields(values):
     required = (
-        ("Importance", "importance"), ("Execution Type", "execution_type"),
+        ("Importance", "importance"), ("Execution", "execution"),
         ("Test Types", "test_types"), ("Scenario", "scenario"),
         ("Preconditions", "pre_conditions"), ("Test Case", "test_case"),
         ("Steps", "steps"), ("Expected Result", "expected_result"),
@@ -123,8 +127,8 @@ def _validate_required_case_fields(values):
 
 
 @router.get("/execution-tools")
-def execution_tools(current_user=Depends(require_permission("qa_engineering", "view"))):
-    return {"tools": TestCaseRepository().list_execution_tools()}
+def execution_values(current_user=Depends(require_permission("qa_engineering", "view"))):
+    return {"tools": TestCaseRepository().list_execution_values()}
 
 
 @router.get("/scope")
@@ -146,6 +150,10 @@ def scope(
             "source_type": item.get("source_type"),
             "file_name": item.get("file_name"),
             "display_name": item.get("display_name"),
+            "source_file_id": item.get("source_file_id"),
+            "repository_relative_path": item.get("repository_relative_path"),
+            "domain_id": item.get("domain_id"),
+            "module_id": item.get("module_id"),
         }
         for item in items
     ]
@@ -188,7 +196,18 @@ def generate(
 
     # Supports both Pydantic v1 and v2, since the project does not pin it yet.
     payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
-    job = QaEngineeringWeb().start_generation(payload_data)
+    try:
+        job = QaEngineeringWeb().start_generation(payload_data)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except sqlite3.IntegrityError as error:
+        if "UNIQUE constraint failed" in str(error):
+            raise HTTPException(status_code=409, detail="A Test Case ID is duplicated inside the selected Test Cases version.")
+        raise HTTPException(status_code=409, detail="The Test Cases import conflicts with persisted data.")
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="The target Test Cases version already exists.")
+    except OSError:
+        raise HTTPException(status_code=409, detail="The Test Cases workbook could not be stored; no import was committed.")
     _audit(current_user, "GENERATE_TEST_CASES",
            f"Started generation for {payload.domain} / {payload.module} / {payload.knowledge_name}")
     return job
@@ -254,22 +273,177 @@ def review_save(payload: ReviewSaveRequest,
         if operation.action != "insert" and not operation.id:
             raise HTTPException(status_code=422, detail=f"Row {index}: persisted record ID is required.")
         operations.append({"action": operation.action, "id": operation.id, "values": values or {}})
-    scope = payload.model_dump(exclude={"operations", "reviewed_file_name"}) if hasattr(payload, "model_dump") else payload.dict(exclude={"operations", "reviewed_file_name"})
-    scope["test_case_document_name"] = payload.reviewed_file_name
     try:
-        repository = TestCaseRepository()
-        result = repository.review_save(scope, operations)
-        persisted_rows = repository.list_context_test_cases(scope)
-        reviewed_file = QaEngineeringExportService().export(
-            persisted_rows, "xlsx", scope, file_name=payload.reviewed_file_name,
-            allow_empty=True,
-        )
-        repository.set_reviewed_workbook([row["id"] for row in persisted_rows], reviewed_file["relative_path"])
-        result["items"] = persisted_rows
-        result["reviewed_file"] = reviewed_file
+        service = QaEngineeringVersionService()
+        if payload.test_case_version_id:
+            if not payload.test_case_file_id:
+                raise ValueError("Select the Test Cases XLSX before saving changes.")
+            created = service.create_revision(
+                payload.test_case_version_id, payload.test_case_file_id, operations,
+                payload.reviewed_file_name,
+            )
+            result = service.load_version(created["test_case_version_id"], created["test_case_file_id"])
+            result["created"] = created
+        else:
+            if len(payload.source_knowledge_ids) != 1:
+                raise ValueError("Select one Source File/Source Doc when creating a Test Cases version.")
+            if any(item["action"] != "insert" for item in operations):
+                raise ValueError("Load an existing Test Cases Version before editing or deleting persisted rows.")
+            created = service.create_generated_set(
+                payload.source_knowledge_ids[0], [item["values"] for item in operations],
+                payload.reviewed_file_name,
+            )
+            result = service.load_version(created["test_case_version_id"], created["test_case_file_id"])
+            result["created"] = created
     except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error))
     _audit(current_user, "REVIEW_SAVE_TEST_CASES", f"Applied {len(operations)} selected Test Case change(s)")
+    return result
+
+
+@router.get("/sources/{source_knowledge_id}/documents")
+def list_source_documents(
+    source_knowledge_id: int,
+    current_user=Depends(require_permission("qa_engineering", "view")),
+):
+    """List the real items under a Source File that QA Engineering can
+    act on directly: one Source Doc entry per actual repository-backed
+    document/collection (never an artificial merged container), plus
+    one Test Cases Folder entry per persisted generated/imported
+    version. Selecting a Source Doc entry is itself the terminal
+    selection that grounds AI Generate — there is no further "Source
+    Asset" pick beneath it (that intermediate level was removed per
+    QA-AI-STUDIO-LIVE-CORRECTION-PASS-V2 item 1).
+
+    Two genuinely different physical/metadata models exist today, and
+    this endpoint must not blur them into one fake shape:
+
+    - API_COLLECTION sources have NO real file on disk under this
+      Source File at all — `get_source()`/`source_context()` give this
+      row a placeholder `repository_path` ("domain/module/knowledge/
+      version", not a managed folder), so walking it as a filesystem
+      folder is both wrong and unsafe (that path is not guaranteed to
+      exist). The REAL, repository-backed Source Doc entity for this
+      type is the `api_collections` table: each row already IS one
+      distinct, named upload/version linked to this Source File via
+      `linked_knowledge_item_id` (e.g. "SETN-API Collection_V1"). Those
+      rows are returned directly, one per collection.
+    - Plain file sources (Files/CRF/SRS/etc.) place their uploaded raw
+      document(s) directly inside the Source File's own managed folder
+      (built by `CentralRepository.build_source_path()`, prefixed
+      "SD-" for "Source Document" in the physical path). Each such file
+      is a genuine, individually-named Source Doc — returned as its own
+      row rather than merged into a synthetic "Source Documents (N
+      files)" bucket, since the physical folder already gives each one
+      a real, distinct identity.
+    """
+    service = QaEngineeringVersionService()
+    source = service.get_source(source_knowledge_id)
+    source_type = source.get("source_type") or "Files"
+    documents = []
+    source_folder = None
+
+    if source_type in {"API_COLLECTION", "API Collection"}:
+        from Core.api_collection_repository import ApiCollectionRepository
+        collections = [
+            row for row in ApiCollectionRepository().list_collections()
+            if row.get("linked_knowledge_item_id") == source_knowledge_id
+        ]
+        for collection in collections:
+            name = str(collection.get("name") or collection.get("source_file_name") or "").strip()
+            if not name:
+                continue
+            documents.append({
+                "id": f"doc:{collection['id']}", "name": name,
+                "kind": "SOURCE_DOCUMENT", "source_type": "API Collection",
+            })
+    else:
+        _, _, source_folder = service.source_context(source_knowledge_id)
+        if source_folder.is_dir():
+            for path in sorted(source_folder.iterdir(), key=lambda item: item.name.casefold()):
+                if path.is_file() and path.suffix.lower() != ".xlsx":
+                    documents.append({"id": f"doc:{path.name}", "name": path.name,
+                                      "kind": "SOURCE_DOCUMENT", "source_type": source_type})
+
+    # V5-01: "Source Document" means the SD-* managed CONTAINER folder,
+    # not one specific physical file inside it — several knowledge_items
+    # rows can legitimately share the same SD folder (see
+    # CentralRepository.resolve_unique_segment(), which reuses one
+    # folder for repeat uploads of the same document identity). A Test
+    # Cases version is persisted against whichever single
+    # source_knowledge_id was selected at creation time, so restricting
+    # this listing to ONLY that exact id would silently hide sibling
+    # TC-* folders living in the very same physical container. Widen
+    # the lookup to every knowledge_items row that shares this folder.
+    version_source_ids = [source_knowledge_id]
+    if source_folder is not None and source_folder.is_dir():
+        from Core.knowledge_web_repository import KnowledgeRepository
+        for row in KnowledgeRepository().list_items():
+            row_id = row.get("id")
+            if row_id is None or int(row_id) == int(source_knowledge_id):
+                continue
+            raw_path = str(row.get("repository_path") or "").strip()
+            if raw_path and Path(raw_path).parent == source_folder:
+                version_source_ids.append(row_id)
+
+    seen_version_ids = set()
+    for sibling_id in version_source_ids:
+        for version in service.list_versions(sibling_id):
+            if version["id"] in seen_version_ids:
+                continue
+            seen_version_ids.add(version["id"])
+            folder = Path(version["folder_path"])
+            documents.append({"id": f"tc:{version['id']}", "name": folder.name,
+                              "kind": "TEST_CASE_FOLDER", "test_case_version_id": version["id"],
+                              "files": version.get("files") or []})
+    return {"source_knowledge_id": source_knowledge_id, "documents": documents}
+
+
+@router.get("/sources/{source_knowledge_id}/test-case-versions")
+def list_source_test_case_versions(
+    source_knowledge_id: int,
+    current_user=Depends(require_permission("qa_engineering", "view")),
+):
+    versions = QaEngineeringVersionService().list_versions(source_knowledge_id)
+    return {"versions": versions}
+
+
+@router.get("/test-case-versions/{version_id}/load")
+def load_test_case_version(
+    version_id: int, file_id: int | None = None,
+    current_user=Depends(require_permission("qa_engineering", "view")),
+):
+    try:
+        return QaEngineeringVersionService().load_version(version_id, file_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.get("/sample-template.xlsx")
+def download_sample_template(
+    current_user=Depends(require_permission("qa_engineering", "view")),
+):
+    return Response(
+        workbook_bytes(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="qa_ai_studio_test_case_template.xlsx"'},
+    )
+
+
+@router.post("/external-import")
+def external_import(
+    source_knowledge_id: int = Form(...), file: UploadFile = File(...),
+    current_user=Depends(require_permission("qa_engineering", "create")),
+):
+    try:
+        contents = file.file.read()
+        if not contents:
+            raise ValueError("The selected workbook is empty.")
+        result = QaEngineeringVersionService().import_set(
+            source_knowledge_id, contents, file.filename or ""
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    _audit(current_user, "IMPORT_TEST_CASE_VERSION", f"Imported Test Cases version id={result['test_case_version_id']}")
     return result
 
 
@@ -298,7 +472,21 @@ def update_test_case(test_case_id: int, payload: UpdateTestCaseRequest,
     values = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
     _validate_test_types(values)
     _validate_required_case_fields(values)
-    item = TestCaseRepository().update_test_case(test_case_id, values)
+    repository = TestCaseRepository()
+    current = repository.get_test_case(test_case_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Test case not found.")
+    version_id = current.get("test_case_version_id")
+    if version_id:
+        service = QaEngineeringVersionService()
+        loaded = service.load_version(version_id)
+        result = service.apply_operations(
+            version_id, loaded["file"]["id"],
+            [{"action": "update", "id": test_case_id, "values": values}],
+        )
+        item = next((row for row in result["test_cases"] if row["id"] == test_case_id), None)
+    else:
+        item = repository.update_test_case(test_case_id, values)
     if not item:
         raise HTTPException(status_code=404, detail="Test case not found.")
     _audit(current_user, "UPDATE_TEST_CASE", f"Updated test case id={test_case_id}")
@@ -308,7 +496,18 @@ def update_test_case(test_case_id: int, payload: UpdateTestCaseRequest,
 @router.delete("/test-cases/{test_case_id}")
 def delete_test_case(test_case_id: int,
                      current_user=Depends(require_permission("qa_engineering", "delete"))):
-    if not TestCaseRepository().delete_test_case(test_case_id):
+    repository = TestCaseRepository()
+    current = repository.get_test_case(test_case_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Test case not found.")
+    version_id = current.get("test_case_version_id")
+    if version_id:
+        service = QaEngineeringVersionService()
+        loaded = service.load_version(version_id)
+        service.apply_operations(
+            version_id, loaded["file"]["id"], [{"action": "delete", "id": test_case_id}],
+        )
+    elif not repository.delete_test_case(test_case_id):
         raise HTTPException(status_code=404, detail="Test case not found.")
     _audit(current_user, "DELETE_TEST_CASE", f"Deleted test case id={test_case_id}")
     return {"status": "deleted", "id": test_case_id}

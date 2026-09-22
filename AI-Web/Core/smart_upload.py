@@ -5,6 +5,8 @@ Smart Upload
 Version: 1.0
 """
 
+from pathlib import Path
+
 from Core.text_extractor import TextExtractor
 from Core.knowledge_analyzer import KnowledgeAnalyzer
 
@@ -33,9 +35,21 @@ class SmartUpload:
 
             return {
 
-                "success": False,
-
-                "error": "Unable to extract text."
+                "success": True,
+                "indexed": False,
+                "requires_review": True,
+                "error": (
+                    "No extractable text was found. The source can be preserved after you "
+                    "review its metadata, but it will not be indexed for RAG."
+                ),
+                "domain": "",
+                "module": "",
+                "knowledge_name": Path(file_path).stem,
+                "version": "1.0",
+                "document_type": "Other",
+                "summary": "No extractable text; metadata review is required.",
+                "tags": [],
+                "confidence": 0,
 
             }
 

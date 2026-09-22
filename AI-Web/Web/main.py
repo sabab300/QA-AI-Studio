@@ -59,6 +59,8 @@ from fastapi.staticfiles import StaticFiles
 from Core.user_repository import UserRepository
 from Core.automation_execution_repository import AutomationExecutionRepository
 from Core.qa_engineering_web_repository import QaEngineeringWeb
+from Core.api_collection_repository import ApiCollectionRepository
+from Core.logger import Logger
 from Database.db_manager import DatabaseManager
 from Web.routers.auth_router import router as auth_router
 from Web.routers.users_router import (
@@ -126,6 +128,30 @@ def on_startup():
     # Generation history is durable; jobs left running by a prior process
     # are marked interrupted instead of remaining misleadingly active.
     QaEngineeringWeb().reconcile_stale_jobs()
+
+    # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4:
+    # a prior pass (QA-AI-STUDIO-LIVE-CORRECTION-PASS-V2 item 10) added
+    # a startup call here that migrated legacy API Collections into a
+    # Knowledge Hub "ST-API Collection" folder. That direction is now
+    # explicitly WRONG per the V4 master task — API Collections are an
+    # automation asset filed under a Test Cases (TC-*) folder as
+    # "API-TC-*", never a Knowledge Hub source type/folder. That old
+    # migration was NEVER RUN (this review happened before any restart),
+    # so no data was migrated into the wrong shape. The call is removed
+    # here rather than left disabled, so a later edit can't accidentally
+    # re-enable the wrong migration. See
+    # ApiCollectionRepository.migrate_unresolved_legacy_collections() for
+    # the corrected, TC-folder-aware replacement, wired in once the new
+    # storage model lands.
+    try:
+        ApiCollectionRepository().migrate_unresolved_legacy_collections()
+    except Exception:
+        Logger.get_logger().exception(
+            "API Collection legacy-association audit failed — the "
+            "server is starting anyway; existing collections are left "
+            "untouched either way (this step never migrates data, only "
+            "marks/reports association status)."
+        )
 
 
 @app.get("/api/health")

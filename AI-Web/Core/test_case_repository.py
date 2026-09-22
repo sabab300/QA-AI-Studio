@@ -29,10 +29,17 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import sys
 from pathlib import Path
 
 from Database.db_manager import DatabaseManager
 from Core.logger import Logger
+from Core.test_case_workbook import EXECUTION_VALUES, normalize_execution, normalize_test_case
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from Shared.central_repository import CentralRepository
 
 
 class TestCaseRepository:
@@ -144,8 +151,7 @@ class TestCaseRepository:
             "ALTER TABLE test_cases ADD COLUMN recorded_script TEXT",
             "ALTER TABLE test_cases ADD COLUMN active_script_source "
             "TEXT DEFAULT 'AUTO'",
-            "ALTER TABLE test_cases ADD COLUMN execution_type TEXT DEFAULT 'Manual'",
-            "ALTER TABLE test_cases ADD COLUMN execution_tool TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN execution TEXT DEFAULT 'Manual'",
             "ALTER TABLE test_cases ADD COLUMN source_knowledge_ids TEXT DEFAULT '[]'",
             "ALTER TABLE test_cases ADD COLUMN test_case_document_name TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN tc_id TEXT",
@@ -157,6 +163,10 @@ class TestCaseRepository:
             "ALTER TABLE test_cases ADD COLUMN reviewed_workbook_path TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN auto_script_validated_hash TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN manual_script_validated_hash TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN test_case_version_id INTEGER",
+            "ALTER TABLE test_cases ADD COLUMN actual_result TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN bug_id TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN comments TEXT DEFAULT ''",
             # API Automation endpoint binding — persists which real,
             # imported API Collection endpoint (api_endpoints.id) this
             # Test Case is bound to for execution, so "never silently
@@ -199,19 +209,31 @@ class TestCaseRepository:
 
                 pass
 
-        if "execution_type" not in existing_columns:
-            cursor.execute(
-                """UPDATE test_cases
-                   SET execution_type = CASE
-                       WHEN status = 'Automated' THEN 'Automatable'
-                       ELSE 'Manual' END"""
-            )
-        if "execution_tool" not in existing_columns:
-            cursor.execute(
-                """UPDATE test_cases SET execution_tool = CASE
-                       WHEN automation_type IN ('Playwright','API','SQL') THEN automation_type
-                       ELSE '' END"""
-            )
+        # Older databases have a table-level UNIQUE(domain, module,
+        # knowledge_name, tc_number) constraint.  A named-index drop cannot
+        # remove the SQLite auto-index backing that constraint, and it makes a
+        # legitimate TC001 in V2 conflict with TC001 in V1.  Rebuild only that
+        # table, in one transaction, preserving every column and primary key.
+        self._migrate_versioned_test_case_identity(conn)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_test_cases_scope "
+            "ON test_cases(domain, module, knowledge_name)"
+        )
+
+        # The sole compatibility boundary for databases created before the
+        # canonical execution column. All application code below reads/writes
+        # only `execution`; legacy columns are inspected only here.
+        if "execution" not in existing_columns:
+            legacy = {row[1] for row in cursor.execute("PRAGMA table_info(test_cases)")}
+            if {"execution_type", "execution_tool"}.issubset(legacy):
+                cursor.execute(
+                    """UPDATE test_cases SET execution = CASE
+                           WHEN execution_tool IN ('Playwright') THEN 'Playwright'
+                           WHEN execution_tool IN ('API','API Automation') THEN 'API'
+                           WHEN execution_tool IN ('SQL','SQL Automation') THEN 'SQL'
+                           WHEN execution_type IN ('Manual','Manual Execution') THEN 'Manual'
+                           ELSE NULL END"""
+                )
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS test_case_sources (
@@ -229,23 +251,40 @@ class TestCaseRepository:
                 next_value INTEGER NOT NULL
             )
         """)
+        # Versioned rows are unique inside their immutable Test Cases version.
+        # Legacy rows have no version identity, so retain their former logical
+        # scope rule explicitly as a compatibility constraint.
+        cursor.execute("DROP INDEX IF EXISTS uq_test_cases_tc_id")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_version_number ON test_cases(test_case_version_id,tc_number) WHERE test_case_version_id IS NOT NULL")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_legacy_scope_number ON test_cases(domain,module,knowledge_name,tc_number) WHERE test_case_version_id IS NULL")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_version_tc_id ON test_cases(test_case_version_id,tc_id) WHERE tc_id IS NOT NULL AND test_case_version_id IS NOT NULL")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_legacy_tc_id ON test_cases(tc_id) WHERE tc_id IS NOT NULL AND test_case_version_id IS NULL")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_legacy_origin ON test_cases(legacy_origin) WHERE legacy_origin IS NOT NULL")
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS qa_execution_tools (
-                code TEXT PRIMARY KEY, label TEXT NOT NULL UNIQUE,
-                automation_type TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
-                sort_order INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS test_case_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_knowledge_id INTEGER NOT NULL,
+                source_file_id TEXT NOT NULL,
+                version_number INTEGER NOT NULL,
+                folder_path TEXT NOT NULL,
+                workbook_path TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                UNIQUE(source_knowledge_id, version_number),
+                FOREIGN KEY(source_knowledge_id) REFERENCES knowledge_items(id)
             )
         """)
-        cursor.executemany(
-            "INSERT OR IGNORE INTO qa_execution_tools(code,label,automation_type,sort_order) VALUES(?,?,?,?)",
-            (("playwright", "Playwright", "Playwright", 1),
-             ("api", "API Automation", "API", 2),
-             ("sql", "SQL Automation", "SQL", 3)),
-        )
-        cursor.execute("UPDATE test_cases SET execution_tool='API Automation' WHERE execution_tool='API'")
-        cursor.execute("UPDATE test_cases SET execution_tool='SQL Automation' WHERE execution_tool='SQL'")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_tc_id ON test_cases(tc_id) WHERE tc_id IS NOT NULL")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_test_cases_legacy_origin ON test_cases(legacy_origin) WHERE legacy_origin IS NOT NULL")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS test_case_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                test_case_version_id INTEGER NOT NULL,
+                file_name TEXT NOT NULL,
+                workbook_path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                UNIQUE(test_case_version_id, file_name),
+                FOREIGN KEY(test_case_version_id) REFERENCES test_case_versions(id) ON DELETE CASCADE
+            )
+        """)
         self._migrate_legacy_desktop_rows(cursor)
         self._backfill_canonical_ids(cursor)
         self._backfill_source_relations(cursor)
@@ -254,14 +293,61 @@ class TestCaseRepository:
 
         conn.close()
 
-    def list_execution_tools(self):
-        conn = self.db.get_connection()
-        conn.row_factory = self._dict_factory
-        rows = conn.execute(
-            "SELECT code,label,automation_type FROM qa_execution_tools WHERE enabled=1 ORDER BY sort_order"
-        ).fetchall()
-        conn.close()
-        return rows
+    @staticmethod
+    def _migrate_versioned_test_case_identity(conn):
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='test_cases'"
+        ).fetchone()
+        create_sql = (row[0] if row else "") or ""
+        obsolete = re.compile(
+            r",?\s*UNIQUE\s*\(\s*domain\s*,\s*module\s*,\s*knowledge_name\s*,\s*tc_number\s*\)\s*,?",
+            re.IGNORECASE,
+        )
+        if not obsolete.search(create_sql):
+            return
+
+        replacement_sql = obsolete.sub("", create_sql)
+        replacement_sql = re.sub(r",\s*\)", "\n            )", replacement_sql)
+        replacement_sql = re.sub(
+            r"^(\s*CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?(?:\"test_cases\"|`test_cases`|\[test_cases\]|test_cases)",
+            r"\1test_cases_versioned_identity",
+            replacement_sql,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(test_cases)")]
+        quoted = ",".join('"' + name.replace('"', '""') + '"' for name in columns)
+        before = conn.execute("SELECT COUNT(*) FROM test_cases").fetchone()[0]
+        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(replacement_sql)
+            conn.execute(
+                f"INSERT INTO test_cases_versioned_identity ({quoted}) SELECT {quoted} FROM test_cases"
+            )
+            after = conn.execute("SELECT COUNT(*) FROM test_cases_versioned_identity").fetchone()[0]
+            if before != after:
+                raise RuntimeError(
+                    f"Test Case identity migration row-count mismatch: {before} != {after}."
+                )
+            conn.execute("DROP TABLE test_cases")
+            conn.execute("ALTER TABLE test_cases_versioned_identity RENAME TO test_cases")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.execute(f"PRAGMA foreign_keys={'ON' if foreign_keys else 'OFF'}")
+
+    def list_execution_values(self):
+        return [
+            {"code": "manual", "label": "Manual", "automation_type": "None"},
+            {"code": "playwright", "label": "Playwright", "automation_type": "Playwright"},
+            {"code": "api", "label": "API", "automation_type": "API"},
+            {"code": "sql", "label": "SQL", "automation_type": "SQL"},
+        ]
 
     # --------------------------------------------------
     # Save generated cases (bulk, from TestCaseGenerator)
@@ -354,12 +440,12 @@ class TestCaseRepository:
                         scenario, importance, test_type, test_case,
                         pre_conditions, steps, expected_result,
                         status, automation_type, last_result,
-                        execution_type, execution_tool, source_knowledge_ids,
+                        execution, source_knowledge_ids,
                         test_case_document_name, document_type, source_type,
                         created_date, modified_date
                     )
                     VALUES
-                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?,?,?, ?,?)
+                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?, ?,?)
                     """,
                     (
                         tc_number,
@@ -376,8 +462,7 @@ class TestCaseRepository:
                         row.get("pre_conditions", ""),
                         row.get("steps", ""),
                         row.get("expected_result", ""),
-                        self._execution_type(row),
-                        self._execution_tool(row),
+                        normalize_execution(row),
                         json.dumps(source_knowledge_ids or []),
                         test_case_document_name or "",
                         document_type or "",
@@ -477,16 +562,16 @@ class TestCaseRepository:
                         INSERT INTO test_cases
                         (tc_number,tc_id,domain,module,knowledge_name,version,domain_id,module_id,
                          scenario,importance,test_type,test_case,pre_conditions,steps,expected_result,
-                         status,automation_type,last_result,execution_type,execution_tool,
+                         status,automation_type,last_result,execution,
                          source_knowledge_ids,test_case_document_name,document_type,source_type,
                          review_state,created_date,modified_date)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Manual','None','Not Run',?,?,?,?,?,?,
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Manual','None','Not Run',?,?,?,?,?,
                                'Reviewed/Saved',?,?)
                     """, (tc_id,tc_id,scope["domain"],scope["module"],scope["knowledge_name"],scope.get("version") or "",
                             domain_id,module_id,values.get("scenario", ""),values.get("importance", ""),
                             self._serialize_test_types(values),values.get("test_case", ""),values.get("pre_conditions", ""),
-                            values.get("steps", ""),values.get("expected_result", ""),self._execution_type(values),
-                            self._execution_tool(values, cursor),json.dumps(sorted(requested)),
+                            values.get("steps", ""),values.get("expected_result", ""),normalize_execution(values),
+                            json.dumps(sorted(requested)),
                             scope.get("test_case_document_name") or "",scope.get("document_type") or sources[0].get("document_type") or "",
                             self._combined_source_type(sources),now,now))
                     test_case_id = cursor.lastrowid; inserted.append(test_case_id)
@@ -504,10 +589,10 @@ class TestCaseRepository:
                     if old_path.is_file():
                         backup = Path(tempfile.mktemp(prefix="qa_tc_", suffix=".json")); shutil.copy2(old_path, backup); staged.append((old_path, backup, False))
                     cursor.execute("""UPDATE test_cases SET scenario=?,importance=?,test_type=?,test_case=?,pre_conditions=?,
-                        steps=?,expected_result=?,execution_type=?,execution_tool=?,review_state='Reviewed/Saved',modified_date=? WHERE id=?""",
+                        steps=?,expected_result=?,execution=?,review_state='Reviewed/Saved',modified_date=? WHERE id=?""",
                         (values.get("scenario", ""),values.get("importance", ""),self._serialize_test_types(values),
                          values.get("test_case", ""),values.get("pre_conditions", ""),values.get("steps", ""),
-                         values.get("expected_result", ""),self._execution_type(values),self._execution_tool(values, cursor),now,test_case_id))
+                         values.get("expected_result", ""),normalize_execution(values),now,test_case_id))
                     merged = dict(current); merged.update(values)
                     artifact = self._write_artifact(merged, old_sources)
                     cursor.execute("UPDATE test_cases SET artifact_path=? WHERE id=?", (str(artifact), test_case_id)); updated.append(test_case_id)
@@ -554,18 +639,17 @@ class TestCaseRepository:
                     raise ValueError(f"Selected source {source['id']} does not match {key}.")
 
     def _validate_case(self, values, cursor):
+        values = normalize_test_case(values)
         if not str(values.get("importance") or "").strip(): raise ValueError("Importance is required.")
-        if not str(values.get("execution_type") or "").strip(): raise ValueError("Execution Type is required.")
+        if values.get("execution") not in EXECUTION_VALUES: raise ValueError("Execution is required and must be Manual, Playwright, API, or SQL.")
         if not str(values.get("scenario") or "").strip(): raise ValueError("Scenario is required.")
         if not str(values.get("pre_conditions") or "").strip(): raise ValueError("Preconditions are required.")
         if not str(values.get("test_case") or "").strip(): raise ValueError("Test Case is required.")
         if not str(values.get("steps") or "").strip(): raise ValueError("Test Steps are required.")
         if not str(values.get("expected_result") or "").strip(): raise ValueError("Expected Result is required.")
         if not self._serialize_test_types(values): raise ValueError("At least one Test Type is required.")
-        if self._execution_type(values) == "Automatable" and not self._execution_tool(values, cursor):
-            raise ValueError("Execution Tool is required for an Automatable Test Case.")
 
-    def set_reviewed_workbook(self, test_case_ids, relative_path):
+    def set_reviewed_workbook(self, test_case_ids, relative_path, test_case_version_id=None):
         """Associate the reviewed workbook with exactly its saved batch."""
         ids = [int(value) for value in test_case_ids]
         if not ids:
@@ -573,13 +657,87 @@ class TestCaseRepository:
         conn = self.db.get_connection()
         try:
             marks = ",".join("?" for _ in ids)
-            conn.execute(
-                f"UPDATE test_cases SET reviewed_workbook_path=? WHERE id IN ({marks})",
-                [str(relative_path), *ids],
-            )
+            if test_case_version_id:
+                conn.execute(
+                    f"UPDATE test_cases SET reviewed_workbook_path=?,test_case_version_id=? WHERE id IN ({marks})",
+                    [str(relative_path), int(test_case_version_id), *ids],
+                )
+            else:
+                conn.execute(
+                    f"UPDATE test_cases SET reviewed_workbook_path=? WHERE id IN ({marks})",
+                    [str(relative_path), *ids],
+                )
             conn.commit()
         finally:
             conn.close()
+
+    def prepare_reviewed_workbook(self, source_knowledge_id, requested_name):
+        """Return one stable versioned workbook path for a source context."""
+        source = self._source_records([source_knowledge_id])
+        if not source:
+            raise ValueError("Selected Source File no longer exists.")
+        source = source[0]
+        source_file_id = str(source.get("source_file_id") or "").strip()
+        if not source_file_id:
+            source_file_id = f"LEGACY-{source['id']}"
+        central = CentralRepository()
+        repository_path = central.resolve_managed(
+            source.get("repository_path"), source.get("repository_relative_path") or ""
+        )
+        source_folder = repository_path.parent
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        try:
+            existing = conn.execute(
+                "SELECT * FROM test_case_versions WHERE source_knowledge_id=? ORDER BY version_number DESC LIMIT 1",
+                (int(source_knowledge_id),),
+            ).fetchone()
+            if existing and Path(existing["workbook_path"]).is_file():
+                existing["_created"] = False
+                return existing
+            version = central.get_next_test_case_version(source_folder)
+            folder = central.ensure_path(
+                central.build_test_case_version_path(source_folder, version, source_file_id)
+            )
+            name = CentralRepository.sanitize_segment(
+                Path(requested_name or f"testCases_v{version}.xlsx").stem,
+                "test case workbook name",
+            ) + ".xlsx"
+            workbook = folder / name
+            now = datetime.now().isoformat()
+            conn.execute(
+                "INSERT INTO test_case_versions(source_knowledge_id,source_file_id,version_number,folder_path,workbook_path,created_date) VALUES(?,?,?,?,?,?)",
+                (int(source_knowledge_id), source_file_id, version, str(folder), str(workbook), now),
+            )
+            conn.commit()
+            created = conn.execute("SELECT * FROM test_case_versions WHERE id=last_insert_rowid()").fetchone()
+            created["_created"] = True
+            return created
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def list_test_case_versions(self, source_knowledge_id):
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        rows = conn.execute(
+            "SELECT * FROM test_case_versions WHERE source_knowledge_id=? ORDER BY version_number",
+            (int(source_knowledge_id),),
+        ).fetchall()
+        conn.close()
+        return rows
+
+    def discard_empty_test_case_version(self, version_id):
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        row = conn.execute("SELECT * FROM test_case_versions WHERE id=?", (int(version_id),)).fetchone()
+        if row and not Path(row["workbook_path"]).is_file():
+            conn.execute("DELETE FROM test_case_versions WHERE id=?", (int(version_id),))
+            conn.commit()
+            try:
+                Path(row["folder_path"]).rmdir()
+            except OSError:
+                pass
+        conn.close()
 
     @staticmethod
     def _segment(value):
@@ -767,13 +925,23 @@ class TestCaseRepository:
 
     def list_all_test_cases(
         self, domain=None, module=None, knowledge_name=None, version=None,
-        status=None, automation_type=None, execution_type=None, execution_tool=None,
-        document_type=None, q=None,
+        status=None, automation_type=None, execution=None,
+        document_type=None, test_case_version_id=None, reviewed_workbook_path=None, q=None,
         limit=200, offset=0,
     ):
         """
         Returns {"test_cases": [...], "total": N} — total is the
         count BEFORE limit/offset, for real pagination.
+
+        test_case_version_id — Rule 4 (QA-AI-STUDIO-FINAL-ARCHITECTURE-
+        UI-AUTOMATION-COMPLETION-V4): the exact hierarchy's "Source
+        Files" level is a TC-* folder (a real test_case_versions row),
+        and every test_cases row generated/imported under it already
+        carries this FK (see set_reviewed_workbook()/QaEngineeringVersion
+        Service.load_version(), which both key off it). Filtering here
+        lets callers resolve the modern TC-folder selection directly at
+        the SQL level instead of only through the legacy source_knowledge
+        _ids/test_case_document grouping.
         """
 
         conditions = []
@@ -802,6 +970,14 @@ class TestCaseRepository:
             conditions.append("version=?")
             params.append(version)
 
+        if test_case_version_id:
+            conditions.append("test_case_version_id=?")
+            params.append(test_case_version_id)
+
+        if reviewed_workbook_path:
+            conditions.append("reviewed_workbook_path=?")
+            params.append(str(reviewed_workbook_path))
+
         if status:
 
             conditions.append("status=?")
@@ -814,13 +990,9 @@ class TestCaseRepository:
 
             params.append(automation_type)
 
-        if execution_type:
-            conditions.append("execution_type=?")
-            params.append(execution_type)
-
-        if execution_tool:
-            conditions.append("execution_tool=?")
-            params.append(execution_tool)
+        if execution:
+            conditions.append("execution=?")
+            params.append(normalize_execution({"execution": execution}))
 
         if document_type:
             conditions.append("document_type=?")
@@ -942,18 +1114,15 @@ class TestCaseRepository:
     def update_test_case(self, test_case_id, values):
         allowed = {
             "scenario", "importance", "test_type", "test_case",
-            "pre_conditions", "steps", "expected_result", "status",
-            "execution_type", "execution_tool", "test_case_document_name",
+            "pre_conditions", "steps", "expected_result", "actual_result", "status",
+            "bug_id", "comments", "execution",
+            "execution", "test_case_document_name",
         }
         updates = {key: values[key] for key in allowed if key in values}
         if "test_types" in values:
             updates["test_type"] = self._serialize_test_types(values)
-        if "execution_type" in updates:
-            updates["execution_type"] = self._execution_type(updates)
-            if updates["execution_type"] == "Manual":
-                updates["execution_tool"] = ""
-        if "execution_tool" in updates:
-            updates["execution_tool"] = self._execution_tool(updates)
+        if "execution" in updates:
+            updates["execution"] = normalize_execution(values)
         if not updates:
             return self.get_test_case(test_case_id)
         updates["modified_date"] = datetime.now().isoformat()
@@ -1015,6 +1184,7 @@ class TestCaseRepository:
     @staticmethod
     def _api_config_text(
         bound_api_endpoint_id, api_expected_status_code, env_fingerprint="",
+        manual_config_text="",
     ):
         """
         Canonical "content" for an API Automation asset's readiness
@@ -1039,10 +1209,24 @@ class TestCaseRepository:
         like a request-config change already does. Defaults to ""
         so every non-API caller, and any API caller that hasn't been
         updated to compute one, keeps the exact prior fingerprint.
+
+        `manual_config_text` (API-Automation-Enhancement Phase 5 fix):
+        the test case's raw saved api_request_config_json, folded in
+        so a Manual Source Endpoint test case (bound_api_endpoint_id
+        is None/empty by definition) still gets a fingerprint that
+        actually changes when its manually-typed Method/URL/Headers/
+        Body change — before this, a manual-mode test case's
+        fingerprint depended ONLY on bound_api_endpoint_id/expected
+        status, so editing its manual URL after a successful Validate
+        silently left it looking still-validated. Defaults to "" so
+        every existing bound-endpoint caller's fingerprint is
+        unchanged (endpoint id + expected status already uniquely
+        identify a bound endpoint's config).
         """
         return (
             f"endpoint={bound_api_endpoint_id or ''}"
             f"|expected_status={api_expected_status_code or ''}"
+            f"|manual_config={manual_config_text or ''}"
             f"|env={env_fingerprint or ''}"
         )
 
@@ -1050,13 +1234,34 @@ class TestCaseRepository:
         source = str(source or "AUTO").upper()
         is_api = str(test_case.get("automation_type") or "").upper() == "API"
         if is_api and source == "AUTO":
+            bound_id = test_case.get("bound_api_endpoint_id")
+            manual_config_text = test_case.get("api_request_config_json") or ""
+            # API-Automation-Enhancement Phase 5 fix: a Manual Source
+            # Endpoint test case (no imported Postman endpoint bound at
+            # all — see execute_api()'s own manual_url fallback) has no
+            # bound_api_endpoint_id, so the old `bool(bound_api_endpoint_id)`
+            # gate below made is_script_source_validated() — and
+            # therefore the "request_validated" readiness check and the
+            # whole Validate -> Save -> Execute lifecycle — permanently
+            # False for EVERY manually-configured API test case, no
+            # matter how many times Validate was clicked. A manual URL
+            # saved in the Request Configuration is just as much real,
+            # checkable "content" as a bound endpoint id, so it now
+            # counts too.
+            has_manual_url = False
+            if manual_config_text:
+                try:
+                    has_manual_url = bool((json.loads(manual_config_text) or {}).get("url"))
+                except (TypeError, ValueError):
+                    has_manual_url = False
             content = self._api_config_text(
-                test_case.get("bound_api_endpoint_id"),
+                bound_id,
                 test_case.get("api_expected_status_code"),
                 env_fingerprint,
+                manual_config_text,
             )
             return (
-                bool(test_case.get("bound_api_endpoint_id"))
+                bool(bound_id or has_manual_url)
                 and test_case.get("auto_script_validated_hash")
                 == self.script_fingerprint(content)
             )
@@ -1087,7 +1292,8 @@ class TestCaseRepository:
                 """
                 SELECT automation_script, recorded_script,
                        active_script_source, status, automation_type,
-                       bound_api_endpoint_id, api_expected_status_code
+                       bound_api_endpoint_id, api_expected_status_code,
+                       api_request_config_json
                 FROM test_cases
                 WHERE id=?
                 """,
@@ -1098,12 +1304,15 @@ class TestCaseRepository:
             is_api = str(row.get("automation_type") or "").upper() == "API"
             if is_api and source == "AUTO":
                 # API readiness content is the bound endpoint + expected
-                # status, not the (documentation-only) generated script
-                # text — see _api_config_text() above.
+                # status (or, for a Manual Source Endpoint test case with
+                # no bound endpoint, the saved manual request config) —
+                # not the (documentation-only) generated script text —
+                # see _api_config_text() above.
                 script = self._api_config_text(
                     row.get("bound_api_endpoint_id"),
                     row.get("api_expected_status_code"),
                     env_fingerprint,
+                    row.get("api_request_config_json") or "",
                 )
             else:
                 script = (
@@ -1157,8 +1366,7 @@ class TestCaseRepository:
         now = datetime.now().isoformat()
         cursor.execute(
             f"""
-            SELECT {field},status,active_script_source,automation_type,
-                   execution_type,execution_tool
+            SELECT {field},status,active_script_source,automation_type,execution
             FROM test_cases WHERE id=?
             """,
             (test_case_id,),
@@ -1169,7 +1377,7 @@ class TestCaseRepository:
             return self.get_test_case(test_case_id)
         (
             current_value, current_status, active_source,
-            automation_type, execution_type, execution_tool,
+            automation_type, execution,
         ) = current
         changed = (current_value or None) != (value or None)
         active_changed = changed and (active_source or "AUTO").upper() == "AUTO"
@@ -1190,12 +1398,11 @@ class TestCaseRepository:
         # label in sync so Validate/Execute correctly recognize it as
         # an API test case. This never sets Execution Tool itself —
         # only mirrors a classification the operator already made —
-        # and never touches Playwright/SQL test cases (execution_tool
+        # and never touches Playwright/SQL test cases (canonical execution
         # for those is never "API Automation").
         next_automation_type = automation_type
         if (
-            execution_type == "Automatable"
-            and execution_tool == "API Automation"
+            execution == "API"
             and (automation_type or "None") != "API"
         ):
             next_automation_type = "API"
@@ -1317,8 +1524,7 @@ class TestCaseRepository:
                 automation_script=COALESCE(?, automation_script),
                 status=?,
                 auto_script_validated_hash=CASE WHEN ? THEN '' ELSE auto_script_validated_hash END,
-                execution_type='Automatable',
-                execution_tool=?,
+                execution=?,
                 modified_date=?
             WHERE id=?
             """,
@@ -1327,7 +1533,7 @@ class TestCaseRepository:
                 automation_script,
                 next_status,
                 1 if changed else 0,
-                self.execution_tool_for_automation_type(automation_type),
+                self.execution_for_automation_type(automation_type),
                 now,
                 test_case_id,
             )
@@ -1374,8 +1580,7 @@ class TestCaseRepository:
                 automation_type='Playwright',
                 status=?,
                 manual_script_validated_hash=CASE WHEN ? THEN '' ELSE manual_script_validated_hash END,
-                execution_type='Automatable',
-                execution_tool='Playwright',
+                execution='Playwright',
                 modified_date=?
             WHERE id=?
             """,
@@ -1461,7 +1666,7 @@ class TestCaseRepository:
 
     @staticmethod
     def _with_test_types(row):
-        item = dict(row)
+        item = normalize_test_case(row)
         item["test_types"] = [value.strip() for value in str(item.get("test_type") or "").split(",") if value.strip()]
         try:
             item["source_knowledge_ids"] = json.loads(item.get("source_knowledge_ids") or "[]")
@@ -1478,35 +1683,10 @@ class TestCaseRepository:
         conn.close(); return item
 
     @staticmethod
-    def _execution_type(values):
-        value = str(values.get("execution_type") or "Manual").strip()
-        return value if value in {"Manual", "Automatable"} else "Manual"
-
-    def _execution_tool(self, values, cursor=None):
-        if self._execution_type(values) == "Manual":
-            return ""
-        value = str(values.get("execution_tool") or "").strip()
-        close = False
-        if cursor is None:
-            conn = self.db.get_connection(); cursor = conn.cursor(); close = True
-        rows = cursor.execute(
-            "SELECT label,automation_type FROM qa_execution_tools WHERE enabled=1"
-        ).fetchall()
-        if close: conn.close()
-        aliases = {}
-        for row in rows:
-            label, automation_type = (row.get("label"), row.get("automation_type")) if isinstance(row, dict) else row
-            aliases[label] = label; aliases[automation_type] = label
-        return aliases.get(value, "")
-
-    def execution_tool_for_automation_type(self, automation_type):
-        conn = self.db.get_connection()
-        row = conn.execute(
-            "SELECT label FROM qa_execution_tools WHERE enabled=1 AND automation_type=?",
-            (automation_type,),
-        ).fetchone()
-        conn.close()
-        return row[0] if row else ""
+    def execution_for_automation_type(automation_type):
+        return {"Playwright": "Playwright", "API": "API", "SQL": "SQL"}.get(
+            str(automation_type or ""), "Manual"
+        )
 
 
     def _update_field(self, test_case_id, field, value):

@@ -116,13 +116,15 @@ class MetadataManager:
                 modified_date,
                 last_embedded,
                 domain_id,
-                module_id
+                module_id,
+                source_file_id,
+                repository_relative_path
             )
             VALUES
             (
                 ?,?,?,?,?,?,?,?,?,?,
                 ?,?,?,?,?,?,?,?,?,?,
-                ?,?,?,?,?,?
+                ?,?,?,?,?,?,?,?
             )
             """,
             (
@@ -172,7 +174,9 @@ class MetadataManager:
 
                 domain_id,
 
-                module_id
+                module_id,
+                file_info.get("source_file_id"),
+                file_info.get("repository_relative_path", "")
             )
         )
 
@@ -1255,6 +1259,9 @@ class MetadataManager:
             "category",
             "business_process",
             "status",
+            "repository_path",
+            "repository_relative_path",
+            "source_file_id",
         }
  
         updates = {

@@ -180,6 +180,16 @@ KNOWLEDGE_ITEMS_MIGRATION = [
     ALTER TABLE knowledge_items
     ADD COLUMN module_id INTEGER
     """,
+
+    """
+    ALTER TABLE knowledge_items
+    ADD COLUMN source_file_id TEXT
+    """,
+
+    """
+    ALTER TABLE knowledge_items
+    ADD COLUMN repository_relative_path TEXT
+    """,
 ]
 
 
@@ -608,6 +618,96 @@ CREATE TABLE IF NOT EXISTS api_endpoints
 );
 """
 
+# QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4 Rule 6:
+# "Upload SQL Script" — a physically-uploaded, read-only .sql FILE
+# bound to a Test Cases (TC-*) folder, mirroring api_collections'
+# Rule 5 model exactly (see API_COLLECTIONS_TABLE/API_COLLECTIONS_MIGRATION
+# above and ApiCollectionRepository's module docstring). This is a
+# BRAND NEW, additive table — it does not touch or replace the
+# existing per-test-case inline SQL mechanism already implemented in
+# Core/automation_web_repository.py's SqlAutomationWeb class (which
+# stores SQL as a JSON envelope directly on test_cases.automation_script
+# and is left completely unchanged). The two mechanisms sit side by
+# side: SqlAutomationWeb's is "AI-generate SQL for THIS test case's
+# assertion", this table's is "upload a real, pre-written .sql script
+# and bind it to a TC-* folder" — same relationship Rule 5 gives API
+# Collections vs. per-test-case AI generation.
+#
+# Because this table is created fresh (never ALTERed onto an existing
+# one), a real FOREIGN KEY can be declared from the start — unlike
+# api_collections' test_case_version_id, which could only be added via
+# ALTER TABLE ADD COLUMN and so has no FK constraint. One script per
+# TC-* folder (UNIQUE on test_case_version_id): re-uploading under the
+# same folder is an update-in-place (see SqlScriptRepository), not a
+# second row — this matches how ApiCollectionRepository._save_collection()
+# already treats a second import under the same test_case_version_id
+# as a re-upload/refresh rather than a duplicate.
+#   - repository_path: the real managed path of the original uploaded
+#     .sql under that TC folder's "SQL-TC-*" automation subfolder.
+#   - status: 'Active' / 'Inactive' — soft-delete/unbind, matching
+#     api_collections' own status column; the physical file and its
+#     history are preserved, only Active rows are offered for
+#     Execute/AI grounding.
+SQL_SCRIPTS_TABLE = """
+CREATE TABLE IF NOT EXISTS sql_scripts
+(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    test_case_version_id INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    repository_path TEXT NOT NULL,
+    status TEXT DEFAULT 'Active',
+    created_date TEXT,
+    created_by TEXT,
+    modified_date TEXT,
+    UNIQUE(test_case_version_id),
+    FOREIGN KEY(test_case_version_id)
+        REFERENCES test_case_versions(id)
+        ON DELETE CASCADE
+);
+"""
+
+# Applied on every startup, same pattern/safety as
+# KNOWLEDGE_ITEMS_MIGRATION below — sqlite3.OperationalError (column
+# already exists) is caught and ignored.
+#
+# QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4 Rule 5:
+# an API Collection is an AUTOMATION ASSET bound to a Test Cases
+# (TC-*) folder, never a Knowledge Hub source type/folder. These
+# columns replace `linked_knowledge_item_id` as the real, stable
+# relationship going forward (that column is left in place, untouched,
+# for backward compatibility with any legacy row that still carries
+# it — it is simply no longer used to place a NEW physical folder).
+#   - test_case_version_id: the bound TC-* folder (test_case_versions.id).
+#     NULL until a deterministic binding exists.
+#   - repository_path: the real managed path of the original uploaded
+#     .json under that TC folder's "API-TC-*" automation subfolder.
+#   - association_status: 'linked' once bound to a real TC folder,
+#     'unresolved' for a legacy import with no deterministic TC match
+#     (preserved as-is, never silently guessed into place).
+API_COLLECTIONS_MIGRATION = [
+
+    """
+    ALTER TABLE api_collections
+    ADD COLUMN test_case_version_id INTEGER
+    """,
+
+    """
+    ALTER TABLE api_collections
+    ADD COLUMN repository_path TEXT
+    """,
+
+    """
+    ALTER TABLE api_collections
+    ADD COLUMN association_status TEXT DEFAULT 'unresolved'
+    """,
+
+    """
+    ALTER TABLE api_collections
+    ADD COLUMN test_case_file_id INTEGER
+    """,
+]
+
 
 # ==========================================================
 # Table creation order matters: domains before modules (FK),
@@ -630,6 +730,7 @@ ALL_TABLES = [
     DISCOVERY_PAGES_TABLE,
     API_COLLECTIONS_TABLE,
     API_ENDPOINTS_TABLE,
+    SQL_SCRIPTS_TABLE,
     DISCOVERY_TABS_TABLE,
     DISCOVERY_SECTIONS_TABLE,
     DISCOVERY_ELEMENTS_TABLE,

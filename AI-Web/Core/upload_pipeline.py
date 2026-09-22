@@ -61,7 +61,8 @@ class UploadPipeline:
             module=module,
             knowledge_name=knowledge_name,
             version=version,
-            document_type=document_type
+            document_type=document_type,
+            source_type=source_type,
         )
 
         text = self.extractor.extract_text(
@@ -69,13 +70,37 @@ class UploadPipeline:
         )
 
         if not str(text or "").strip():
-            # A non-empty binary can still contain no extractable knowledge.
-            # Do not report success or leave a managed orphan in that case.
-            try:
-                Path(file_info["repository_path"]).unlink()
-            except OSError:
-                pass
-            raise ValueError("The source contains no extractable text.")
+            extension = file_info.get("extension", "")
+            reason = (
+                "PDF contains no extractable text. It may be scanned/image-only, protected, "
+                "or have an unsupported text layer; the original PDF was preserved but was not indexed."
+                if extension == ".pdf" else
+                "The source contains no extractable text; the original was preserved but was not indexed."
+            )
+            analysis = dict(reviewed_analysis or {})
+            analysis.update({
+                "summary": analysis.get("summary") or reason,
+                "document_type": document_type,
+                "tags": analysis.get("tags") or [],
+                "confidence": analysis.get("confidence") or 0,
+            })
+            knowledge_id = self.metadata.save_knowledge_item(
+                domain=domain, module=module, knowledge_name=knowledge_name,
+                version=version, file_info=file_info, analysis=analysis,
+                source_type=source_type,
+            )
+            self.metadata.update_embedding_status(knowledge_id, "FAILED_NO_TEXT")
+            return {
+                "success": True, "source_saved": True, "indexed": False,
+                "processing_status": "FAILED_NO_TEXT", "processing_error": reason,
+                "knowledge_id": knowledge_id, "domain": domain, "module": module,
+                "knowledge_name": knowledge_name, "version": version,
+                "document_type": document_type, "summary": analysis["summary"],
+                "tags": analysis["tags"], "confidence": analysis["confidence"],
+                "repository_path": file_info["repository_path"],
+                "file_name": file_info["file_name"], "file_type": extension,
+                "total_chunks": 0, "vectors_saved": 0,
+            }
 
         # Smart Upload has already run the real analyzer and allowed an
         # operator to review its result.  Re-analyzing here would waste work
@@ -232,6 +257,9 @@ class UploadPipeline:
 
         return {
             "success": True,
+            "source_saved": True,
+            "indexed": True,
+            "processing_status": "COMPLETED",
 
             "domain": domain,
             "module": module,
@@ -315,27 +343,34 @@ class UploadPipeline:
 
             raise NotADirectoryError(folder)
 
+        # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4
+        # Rule 1/2 investigation: this used to also list .doc, .xls,
+        # .csv, .png, .jpg, .jpeg as "supported" — but
+        # TextExtractor.extract_text() (Core/text_extractor.py) only
+        # actually implements .pdf, .docx, .txt and .xlsx. There is no
+        # image OCR/text pipeline anywhere in this codebase, and no
+        # legacy .doc/.xls or .csv reader either. Every one of those
+        # six extensions would pass this filter, get physically saved
+        # by RepositoryManager.save_file(), and then fail with
+        # "Unsupported file type" the moment extract_text() ran —
+        # a silent per-file failure deep in a batch upload, claiming
+        # support the app doesn't have. Narrowed to exactly what
+        # TextExtractor can process; this also matches the web
+        # Manual Upload folder picker's own accept filter
+        # (Frontend/index.html's khUpHiddenFolder,
+        # accept=".pdf,.docx,.txt,.xlsx"), so both layers now agree.
+        # If image/legacy-Office/CSV support is added to TextExtractor
+        # later, add the extension back here at the same time, not
+        # before.
         supported_extensions = {
 
             ".pdf",
-
-            ".doc",
 
             ".docx",
 
             ".txt",
 
             ".xlsx",
-
-            ".xls",
-
-            ".csv",
-
-            ".png",
-
-            ".jpg",
-
-            ".jpeg"
 
         }
 

@@ -73,6 +73,23 @@ class AutomationExecutionRepository:
     # Schema
     # --------------------------------------------------
 
+    # Rule 6 (QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-
+    # V4) additive columns — a SQL Script Upload run (Validate/Execute
+    # against Core/sql_script_repository.py's uploaded .sql file) is
+    # scoped to a whole TC-* folder (sql_script_id + test_case_version_
+    # id), not one single test_case row the way Playwright/API/inline-
+    # SQL runs are. Every one of these stays NULL on every pre-existing
+    # run row, and every pre-existing column keeps meaning exactly what
+    # it always has — see _relax_test_case_id_not_null() below for why
+    # test_case_id itself had to change from NOT NULL to nullable.
+    _RULE6_COLUMNS = (
+        ("sql_script_id", "INTEGER"),
+        ("test_case_version_id", "INTEGER"),
+        ("sql_run_kind", "TEXT"),
+        ("environment_name", "TEXT"),
+        ("rows_returned", "INTEGER"),
+    )
+
     def ensure_schema(self):
 
         conn = self.db.get_connection()
@@ -87,7 +104,7 @@ class AutomationExecutionRepository:
 
                 run_uuid TEXT NOT NULL UNIQUE,
 
-                test_case_id INTEGER NOT NULL,
+                test_case_id INTEGER,
                 tc_number TEXT,
                 domain TEXT,
                 module TEXT,
@@ -117,6 +134,12 @@ class AutomationExecutionRepository:
 
                 re_run_of INTEGER,
 
+                sql_script_id INTEGER,
+                test_case_version_id INTEGER,
+                sql_run_kind TEXT,
+                environment_name TEXT,
+                rows_returned INTEGER,
+
                 started_at TEXT,
                 finished_at TEXT,
                 created_date TEXT NOT NULL
@@ -124,15 +147,23 @@ class AutomationExecutionRepository:
             """
         )
 
-        columns = {
-            row[1] for row in cursor.execute(
-                "PRAGMA table_info(automation_runs)"
-            ).fetchall()
-        }
+        columns_info = cursor.execute("PRAGMA table_info(automation_runs)").fetchall()
+        columns = {row[1] for row in columns_info}
+        # row layout: (cid, name, type, notnull, dflt_value, pk)
+        test_case_id_not_null = any(
+            row[1] == "test_case_id" and row[3] for row in columns_info
+        )
+
         if "final_message" not in columns:
             cursor.execute("ALTER TABLE automation_runs ADD COLUMN final_message TEXT")
         if "runtime_activity_json" not in columns:
             cursor.execute("ALTER TABLE automation_runs ADD COLUMN runtime_activity_json TEXT")
+        for column_name, column_type in self._RULE6_COLUMNS:
+            if column_name not in columns:
+                cursor.execute(f"ALTER TABLE automation_runs ADD COLUMN {column_name} {column_type}")
+
+        if test_case_id_not_null:
+            self._relax_test_case_id_not_null(conn, cursor)
 
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_automation_runs_tc "
@@ -149,9 +180,102 @@ class AutomationExecutionRepository:
             "ON automation_runs(status)"
         )
 
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automation_runs_sql_script "
+            "ON automation_runs(sql_script_id)"
+        )
+
         conn.commit()
 
         conn.close()
+
+    def _relax_test_case_id_not_null(self, conn, cursor):
+        """
+        One-time migration for a pre-Rule-6 database: SQLite has no
+        ALTER COLUMN, so relaxing test_case_id from NOT NULL to
+        nullable means the standard SQLite recipe — rename the old
+        table aside, create the new one with the desired schema, copy
+        every existing row across by explicit column list (preserving
+        `id` values, so re_run_of and anything else that references a
+        run by id stays valid), then drop the old table. Wrapped in the
+        caller's own transaction (ensure_schema() commits once at the
+        end); nothing here commits early, so this is all-or-nothing.
+        """
+
+        self.logger.warning(
+            "Migrating automation_runs.test_case_id to nullable "
+            "(Rule 6 SQL History: a script/TC-folder-level run has no "
+            "single test_case_id)."
+        )
+
+        cursor.execute("PRAGMA table_info(automation_runs)")
+        existing_cols = [row[1] for row in cursor.fetchall()]
+
+        cursor.execute("ALTER TABLE automation_runs RENAME TO automation_runs_pre_rule6")
+
+        cursor.execute(
+            """
+            CREATE TABLE automation_runs
+            (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_uuid TEXT NOT NULL UNIQUE,
+                test_case_id INTEGER,
+                tc_number TEXT,
+                domain TEXT,
+                module TEXT,
+                knowledge_name TEXT,
+                automation_type TEXT,
+                status TEXT NOT NULL DEFAULT 'Queued',
+                outcome TEXT,
+                success INTEGER,
+                return_code INTEGER,
+                duration_seconds REAL,
+                error_message TEXT,
+                final_message TEXT,
+                runtime_activity_json TEXT,
+                stdout TEXT,
+                stderr TEXT,
+                script_path TEXT,
+                screenshot_path TEXT,
+                slow_mo_ms INTEGER,
+                timeout_ms INTEGER,
+                executed_by_user_id INTEGER,
+                executed_by_username TEXT,
+                re_run_of INTEGER,
+                sql_script_id INTEGER,
+                test_case_version_id INTEGER,
+                sql_run_kind TEXT,
+                environment_name TEXT,
+                rows_returned INTEGER,
+                started_at TEXT,
+                finished_at TEXT,
+                created_date TEXT NOT NULL
+            )
+            """
+        )
+
+        # Only copy columns that actually existed on the old table —
+        # the Rule 6 columns above are brand new on a pre-migration
+        # database and simply default to NULL on every copied row.
+        new_cols = {
+            "id", "run_uuid", "test_case_id", "tc_number", "domain", "module",
+            "knowledge_name", "automation_type", "status", "outcome", "success",
+            "return_code", "duration_seconds", "error_message", "final_message",
+            "runtime_activity_json", "stdout", "stderr", "script_path",
+            "screenshot_path", "slow_mo_ms", "timeout_ms", "executed_by_user_id",
+            "executed_by_username", "re_run_of", "sql_script_id",
+            "test_case_version_id", "sql_run_kind", "environment_name",
+            "rows_returned", "started_at", "finished_at", "created_date",
+        }
+        copy_cols = [c for c in existing_cols if c in new_cols]
+        col_list = ",".join(copy_cols)
+
+        cursor.execute(
+            f"INSERT INTO automation_runs ({col_list}) "
+            f"SELECT {col_list} FROM automation_runs_pre_rule6"
+        )
+
+        cursor.execute("DROP TABLE automation_runs_pre_rule6")
 
     # --------------------------------------------------
     # Startup reconciliation
@@ -427,6 +551,102 @@ class AutomationExecutionRepository:
         return self.get_run(run_uuid)
 
     # --------------------------------------------------
+    # Rule 6 — SQL History (Upload SQL Script Validate/Execute)
+    # --------------------------------------------------
+
+    def record_sql_script_run(
+        self, sql_script_id, test_case_version_id, kind, result,
+        domain=None, module=None, knowledge_name=None,
+        environment_name=None,
+        executed_by_user_id=None, executed_by_username=None,
+    ):
+        """
+        Persists ONE row per Validate/Execute attempt against an
+        uploaded SQL script (Core/sql_script_repository.py), reusing
+        this SAME automation_runs table/History surface rather than a
+        second execution-history store — Rule 6 explicitly forbids a
+        second SQL execution engine, and this is the equivalent rule
+        for its history.
+
+        Unlike create_run()+mark_finished() (the background-job
+        Playwright/API/inline-SQL lifecycle), SqlScriptRepository.
+        validate_script()/execute_script() run synchronously and
+        return immediately, so this writes ONE already-finished row in
+        a single insert.
+
+        `result` is exactly the dict validate_script()/execute_script()
+        already returns. `environment_name` is a caller-supplied
+        DISPLAY LABEL only (see SqlScriptsWeb — built from
+        SqlEnvironmentConfig's db_type/database, never host/username/
+        password) — this method has no access to and never stores the
+        environment's connection profile, so a credential/secret can
+        never end up in execution history even by accident.
+        """
+
+        run_uuid = uuid.uuid4().hex
+
+        now = datetime.now().isoformat()
+
+        success = bool(result.get("success"))
+
+        # Validate never "fails" a test — an invalid script is simply
+        # reported so the operator can fix it, which is an Error
+        # (couldn't judge pass/fail), not a Fail. Execute follows the
+        # same Passed/Failed vocabulary every other automation_runs row
+        # already uses.
+        if success:
+            status = "Passed"
+            outcome = "Pass"
+        elif kind == "Validate":
+            status = "Error"
+            outcome = "Error"
+        else:
+            status = "Failed"
+            outcome = "Fail"
+
+        error_message = None if success else (result.get("error") or "Unknown error.")
+
+        final_message = (
+            f"{kind} completed successfully."
+            if success else (error_message or f"{kind} failed.")
+        )
+
+        conn = self.db.get_connection()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO automation_runs
+            (run_uuid, test_case_id, domain, module, knowledge_name,
+             automation_type, sql_script_id, test_case_version_id,
+             environment_name, sql_run_kind, status, outcome, success,
+             duration_seconds, error_message, final_message,
+             rows_returned, executed_by_user_id, executed_by_username,
+             started_at, finished_at, created_date)
+            VALUES (?, NULL, ?, ?, ?, 'SQL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_uuid, domain, module, knowledge_name,
+                sql_script_id, test_case_version_id,
+                environment_name, kind,
+                status, outcome, 1 if success else 0,
+                result.get("duration_seconds"),
+                error_message,
+                final_message,
+                result.get("row_count"),
+                executed_by_user_id, executed_by_username,
+                now, now, now,
+            ),
+        )
+
+        conn.commit()
+
+        conn.close()
+
+        return self.get_run(run_uuid)
+
+    # --------------------------------------------------
     # Read
     # --------------------------------------------------
 
@@ -460,15 +680,92 @@ class AutomationExecutionRepository:
                 row["runtime_activity"] = []
         return row
 
+    def delete_runs(self, run_uuids):
+        """
+        Phase 8 (API-Automation-Enhancement) — backs the History
+        popup's "Clear" action (moved here from the old main-page
+        "clear the displayed Execution Log table only" button, which
+        never touched persisted history at all). Deletes ONLY the
+        explicit run_uuids the caller passes — exactly the rows the
+        operator saw, filtered, and confirmed in the History popup —
+        never a server-recomputed scope/date re-filter, so a delete
+        can never remove more than what was actually shown and
+        confirmed. Best-effort removes each deleted run's own
+        screenshot file (if any); a missing/unreadable file is not an
+        error. Returns the number of rows actually deleted.
+        """
+
+        run_uuids = [str(u) for u in (run_uuids or []) if u]
+
+        if not run_uuids:
+
+            return 0
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        placeholders = ",".join("?" for _ in run_uuids)
+
+        cursor.execute(
+            f"SELECT run_uuid, screenshot_path FROM automation_runs "
+            f"WHERE run_uuid IN ({placeholders})",
+            run_uuids,
+        )
+
+        rows = cursor.fetchall()
+
+        cursor.execute(
+            f"DELETE FROM automation_runs WHERE run_uuid IN ({placeholders})",
+            run_uuids,
+        )
+
+        deleted = cursor.rowcount
+
+        conn.commit()
+
+        conn.close()
+
+        for row in rows:
+
+            path = row.get("screenshot_path")
+
+            if not path:
+
+                continue
+
+            try:
+
+                Path(path).unlink()
+
+            except Exception:
+
+                pass
+
+        return deleted
+
     def list_runs(
         self, domain=None, module=None, knowledge_name=None,
         test_case_id=None, test_case_ids=None, status=None, automation_type=None, q=None,
+        start_date=None, end_date=None,
+        sql_script_id=None, test_case_version_id=None,
         limit=50, offset=0,
     ):
         """
         Returns {"runs": [...], "total": N} — total is the count
         BEFORE limit/offset, so the frontend can render real
         pagination instead of guessing from a possibly-short page.
+
+        Reports & Analytics (Requirement 9) reuses this exact method
+        (via TestCasesWeb.list_runs() -> the existing
+        GET /api/automation/runs endpoint) for its date-range filter —
+        `start_date`/`end_date` are the only two params added here;
+        every other filter already existed and is unchanged. Dates are
+        compared against `created_date` (an ISO `datetime.now().isoformat()`
+        string — see create_run()), so a plain "YYYY-MM-DD" boundary
+        still compares correctly against it lexicographically.
         """
 
         conditions = []
@@ -506,6 +803,17 @@ class AutomationExecutionRepository:
             conditions.append("test_case_id IN ({})".format(",".join("?" for _ in ids)))
             params.extend(ids)
 
+        # Rule 6 — SQL History: a script/TC-folder-level Validate/
+        # Execute run (no single test_case_id) is looked up by these
+        # two instead.
+        if sql_script_id:
+            conditions.append("sql_script_id=?")
+            params.append(sql_script_id)
+
+        if test_case_version_id:
+            conditions.append("test_case_version_id=?")
+            params.append(test_case_version_id)
+
         if status:
 
             conditions.append("status=?")
@@ -525,6 +833,21 @@ class AutomationExecutionRepository:
             like = f"%{q}%"
 
             params.extend([like, like])
+
+        if start_date:
+
+            conditions.append("created_date >= ?")
+
+            params.append(start_date)
+
+        if end_date:
+
+            # Inclusive of the whole end day even though created_date
+            # carries a time component — a bare "YYYY-MM-DD" end_date
+            # would otherwise exclude every run from that day.
+            conditions.append("created_date <= ?")
+
+            params.append(end_date if len(str(end_date)) > 10 else f"{end_date}T23:59:59.999999")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -548,6 +871,8 @@ class AutomationExecutionRepository:
                    success, return_code, duration_seconds, script_path,
                    screenshot_path, executed_by_username, re_run_of,
                    error_message, final_message,
+                   sql_script_id, test_case_version_id, sql_run_kind,
+                   environment_name, rows_returned,
                    started_at, finished_at, created_date
             FROM automation_runs
             {where_clause}
@@ -605,3 +930,112 @@ class AutomationExecutionRepository:
         conn.close()
 
         return {row["test_case_id"]: row for row in rows}
+
+    # --------------------------------------------------
+    # Requirement 9 — Dashboard "Test Execution" tab + Reports &
+    # Analytics aggregates. All three read the SAME `automation_runs`
+    # table every other method in this file already reads/writes — no
+    # second, parallel execution-history store, and no fabricated
+    # numbers: every value here is a real COUNT/AVG over real rows.
+    # --------------------------------------------------
+
+    def execution_trend(self, days=14, automation_type=None):
+        """
+        Real runs-per-day for the last `days` days (including today),
+        optionally scoped to one automation_type. One row per day that
+        had at least one run; a day with zero runs is simply absent —
+        the caller (DashboardRepository) fills the gaps with 0 so the
+        frontend can plot a continuous trend line without the backend
+        ever inventing a data point that didn't happen.
+        """
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        # Rule 6 — a SQL Script Upload Validate/Execute row (test_case_id
+        # IS NULL; see record_sql_script_run()) is a script/TC-folder-
+        # level action, not a per-test-case execution — Dashboard/
+        # Reports trends stay scoped to real test-case runs exactly as
+        # before Rule 6, unaffected by SQL History's new activity.
+        conditions = ["date(created_date) >= date('now', ?)", "test_case_id IS NOT NULL"]
+
+        params = [f"-{max(int(days) - 1, 0)} days"]
+
+        if automation_type:
+
+            conditions.append("automation_type=?")
+
+            params.append(automation_type)
+
+        cursor.execute(
+            f"""
+            SELECT date(created_date) AS run_date,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status='Passed' THEN 1 ELSE 0 END) AS passed,
+                   SUM(CASE WHEN status='Failed' THEN 1 ELSE 0 END) AS failed
+            FROM automation_runs
+            WHERE {' AND '.join(conditions)}
+            GROUP BY date(created_date)
+            ORDER BY date(created_date)
+            """,
+            params,
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        return rows
+
+    def duration_stats(self, automation_type=None):
+        """
+        Real average/min/max run duration (seconds) from
+        automation_runs.duration_seconds, grouped by automation_type
+        (or for one type if given). Runs with no recorded duration
+        (e.g. a hard connection error before anything could time
+        itself) are excluded via the NOT NULL filter rather than
+        counted as 0 seconds, which would silently understate the
+        average.
+        """
+
+        conn = self.db.get_connection()
+
+        conn.row_factory = self._dict_factory
+
+        cursor = conn.cursor()
+
+        # Rule 6 — same reasoning as execution_trend() above: exclude
+        # script/TC-folder-level SQL History rows from this per-test-
+        # case duration aggregate.
+        conditions = ["duration_seconds IS NOT NULL", "test_case_id IS NOT NULL"]
+
+        params = []
+
+        if automation_type:
+
+            conditions.append("automation_type=?")
+
+            params.append(automation_type)
+
+        cursor.execute(
+            f"""
+            SELECT automation_type,
+                   COUNT(*) AS sample_count,
+                   AVG(duration_seconds) AS avg_seconds,
+                   MIN(duration_seconds) AS min_seconds,
+                   MAX(duration_seconds) AS max_seconds
+            FROM automation_runs
+            WHERE {' AND '.join(conditions)}
+            GROUP BY automation_type
+            """,
+            params,
+        )
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        return rows

@@ -180,6 +180,16 @@ KNOWLEDGE_ITEMS_MIGRATION = [
     ALTER TABLE knowledge_items
     ADD COLUMN module_id INTEGER
     """,
+
+    """
+    ALTER TABLE knowledge_items
+    ADD COLUMN source_file_id TEXT
+    """,
+
+    """
+    ALTER TABLE knowledge_items
+    ADD COLUMN repository_relative_path TEXT
+    """,
 ]
 
 

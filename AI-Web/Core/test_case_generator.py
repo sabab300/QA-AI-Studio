@@ -360,24 +360,19 @@ class TestCaseGenerator:
 
     def _add_execution_metadata(self, row):
         """Normalize the model suggestion without equating it with script state."""
-        execution_type = str(row.get("execution_type") or "").strip()
-        execution_tool = str(row.get("execution_tool") or "").strip()
-        if execution_type not in {"Manual", "Automatable"}:
+        execution = str(row.get("execution") or "").strip()
+        aliases = {"API Automation": "API", "SQL Automation": "SQL"}
+        execution = aliases.get(execution, execution)
+        if execution not in {"Manual", "Playwright", "API", "SQL"}:
             types = {
                 value.strip() for value in str(row.get("test_type") or "").split(",")
             }
             if "API" in types:
-                execution_type, execution_tool = "Automatable", "API Automation"
+                execution = "API"
             elif "Database" in types:
-                execution_type, execution_tool = "Automatable", "SQL Automation"
+                execution = "SQL"
             elif types.intersection({"UI", "Functional", "Regression", "Validation"}):
-                execution_type, execution_tool = "Automatable", "Playwright"
+                execution = "Playwright"
             else:
-                execution_type, execution_tool = "Manual", ""
-        labels = {item["label"] for item in self.repository.list_execution_tools()}
-        aliases = {item["automation_type"]: item["label"] for item in self.repository.list_execution_tools()}
-        execution_tool = aliases.get(execution_tool, execution_tool)
-        if execution_type == "Manual" or execution_tool not in labels:
-            execution_tool = ""
-        row["execution_type"] = execution_type
-        row["execution_tool"] = execution_tool
+                execution = "Manual"
+        row["execution"] = execution

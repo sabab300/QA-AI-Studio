@@ -43,6 +43,20 @@ from Core.version_compare import VersionCompare
 from Core.smart_upload import SmartUpload
 
 
+# QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4 Rule 1:
+# Knowledge Hub = source knowledge only. These Document Types are
+# automation assets (API Collection -> Rule 5, SQL/SQA Script ->
+# Rule 6) and must never be newly assigned to a Knowledge Hub item —
+# neither on upload() (pure creation) nor via update_item() (which
+# would otherwise let someone re-introduce/reassign the value on an
+# existing row). A row that already legitimately carries one of these
+# values from before this rule existed stays fully readable, and
+# update_item() below only blocks CHANGING a row's document_type to
+# one of these values, not saving other fields on a row that already
+# has it — see the check in update_item() for exactly why.
+DISALLOWED_NEW_DOCUMENT_TYPES = {"API Documentation"}
+
+
 def _row_to_dict(row):
 
     if row is None:
@@ -120,6 +134,33 @@ class KnowledgeRepository:
         )
 
         items = [_row_to_dict(row) for row in rows]
+        connection = self.metadata.db.get_connection()
+        connection.row_factory = lambda cursor, row: {
+            column[0]: row[index] for index, column in enumerate(cursor.description)
+        }
+        try:
+            for item in items:
+                versions = connection.execute(
+                    "SELECT id,version_number,source_file_id,folder_path,workbook_path,created_date "
+                    "FROM test_case_versions WHERE source_knowledge_id=? ORDER BY version_number,id",
+                    (item["id"],),
+                ).fetchall()
+                item["test_case_folders"] = []
+                for version in versions:
+                    folder = dict(version)
+                    folder["name"] = Path(folder.get("folder_path") or "").name
+                    folder["files"] = [dict(row) for row in connection.execute(
+                        "SELECT id,file_name,workbook_path,sha256,created_date FROM test_case_files "
+                        "WHERE test_case_version_id=? ORDER BY id",
+                        (folder["id"],),
+                    ).fetchall()]
+                    item["test_case_folders"].append(folder)
+        except Exception:
+            # Databases predating QA Engineering versions still remain browsable.
+            for item in items:
+                item.setdefault("test_case_folders", [])
+        finally:
+            connection.close()
         api_repository = None
         discovery_repository = None
         for item in items:
@@ -174,7 +215,9 @@ class KnowledgeRepository:
                     "source": item.get("file_name"),
                     "status": item.get("status"),
                     "document_type": item.get("document_type"),
-                    "storage_location": self._managed_storage_location(item.get("repository_path")),
+                    "storage_location": self._managed_storage_location(
+                        item.get("repository_path"), item.get("repository_relative_path")
+                    ),
                     "created_date": item.get("created_date"),
                 })
         return sorted(versions, key=lambda row: (str(row["version"]), str(row["source"])))
@@ -188,20 +231,20 @@ class KnowledgeRepository:
 
         vector_ids = self._vector_ids_for_item(item)
         item["storage_location"] = self._managed_storage_location(
-            item.get("repository_path")
+            item.get("repository_path"), item.get("repository_relative_path")
         )
         item["chunks"] = len(vector_ids)
         item["vectors"] = len(vector_ids)
 
         return item
 
-    def _managed_storage_location(self, path):
+    def _managed_storage_location(self, path, relative_path=""):
 
         if not path:
             return ""
 
         try:
-            resolved = Path(path).resolve()
+            resolved = self.repository.central.resolve_managed(path, relative_path)
             return str(resolved.relative_to(self.repository.repository_root.resolve()))
         except (OSError, ValueError):
             return "External or unavailable"
@@ -274,6 +317,23 @@ class KnowledgeRepository:
         if missing:
             raise ValueError("Required and missing: " + ", ".join(missing) + ".")
 
+        # Rule 1: block CHANGING document_type to a disallowed value.
+        # A row that already has one of these values (from before this
+        # rule existed) can still be saved unchanged — the frontend's
+        # edit dropdown injects the row's current value as an option
+        # precisely so "save this row with everything else edited"
+        # keeps working — this only rejects actually assigning the
+        # disallowed value to a row that didn't already have it.
+        if (
+            "document_type" in fields
+            and fields["document_type"] in DISALLOWED_NEW_DOCUMENT_TYPES
+            and fields["document_type"] != existing.get("document_type")
+        ):
+            raise ValueError(
+                f"'{fields['document_type']}' is an automation asset type, not "
+                "a Knowledge Hub Document Type, and cannot be newly assigned here."
+            )
+
         vector_updates = {
             key: fields[key]
             for key in (
@@ -289,6 +349,43 @@ class KnowledgeRepository:
         store = VectorStore()
         vector_ids = self._vector_ids_for_item(existing)
         vector_snapshot = store.update_metadata(vector_ids, vector_updates)
+        old_source_folder = None
+        new_source_folder = None
+        managed_file = self._managed_file(
+            existing.get("repository_path"), existing.get("repository_relative_path")
+        )
+        source_file_id = str(existing.get("source_file_id") or "").strip()
+        hierarchy_changed = any(
+            key in fields for key in
+            ("domain", "module", "knowledge_name", "version", "document_type")
+        )
+        try:
+            if managed_file and managed_file.is_file() and source_file_id and hierarchy_changed:
+                old_source_folder = managed_file.parent
+                new_source_folder = self.repository.central.build_source_path(
+                    domain=required["domain"], module=required["module"],
+                    knowledge_name=required["knowledge_name"], version=required["version"],
+                    document_type=required["document_type"],
+                    source_type=existing.get("source_type") or "Files",
+                    source_file_id=source_file_id,
+                )
+                if new_source_folder != old_source_folder:
+                    if new_source_folder.exists():
+                        raise ValueError("The target managed hierarchy already exists.")
+                    new_source_folder.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        old_source_folder.replace(new_source_folder)
+                    except FileNotFoundError as error:
+                        raise ValueError(
+                            "Managed source location could not be resolved. "
+                            "The hierarchy was not changed."
+                        ) from error
+                    moved_file = new_source_folder / managed_file.name
+                    fields["repository_path"] = str(moved_file)
+                    fields["repository_relative_path"] = self.repository.central.relative(moved_file)
+        except Exception:
+            store.restore_metadata(vector_snapshot)
+            raise
 
         # Tags arrive from the web as a list; the column stores JSON
         # text, same encoding save_knowledge_item() already uses.
@@ -304,6 +401,9 @@ class KnowledgeRepository:
 
         except Exception:
             store.restore_metadata(vector_snapshot)
+            if new_source_folder and new_source_folder.exists() and old_source_folder:
+                old_source_folder.parent.mkdir(parents=True, exist_ok=True)
+                new_source_folder.replace(old_source_folder)
             raise
 
         result = self.get_item_details(knowledge_id)
@@ -325,7 +425,28 @@ class KnowledgeRepository:
 
             return None
 
-        managed_file = self._managed_file(item.get("repository_path"))
+        connection = self.metadata.db.get_connection()
+        try:
+            dependent_cases = connection.execute(
+                "SELECT COUNT(*) FROM test_case_sources WHERE knowledge_source_id=?",
+                (knowledge_id,),
+            ).fetchone()[0]
+            dependent_versions = connection.execute(
+                "SELECT COUNT(*) FROM test_case_versions WHERE source_knowledge_id=?",
+                (knowledge_id,),
+            ).fetchone()[0]
+        except Exception:
+            dependent_cases = dependent_versions = 0
+        finally:
+            connection.close()
+        if dependent_cases or dependent_versions:
+            raise ValueError(
+                "This Source File has dependent Test Cases or automation artifacts and cannot be deleted."
+            )
+
+        managed_file = self._managed_file(
+            item.get("repository_path"), item.get("repository_relative_path")
+        )
         other_references = [
             row for row in self.list_items()
             if row["id"] != knowledge_id
@@ -378,13 +499,13 @@ class KnowledgeRepository:
             **db_summary,
         }
 
-    def _managed_file(self, path):
+    def _managed_file(self, path, relative_path=""):
 
         if not path:
             return None
 
         try:
-            resolved = Path(path).resolve()
+            resolved = self.repository.central.resolve_managed(path, relative_path)
             resolved.relative_to(self.repository.repository_root.resolve())
             return resolved
         except (OSError, ValueError):
@@ -464,6 +585,16 @@ class KnowledgeRepository:
         if source_type not in allowed_source_types:
             raise ValueError("Unsupported document source type.")
 
+        # Rule 1: a brand-new Knowledge Hub item can never be created
+        # with a disallowed Document Type — there is no existing row
+        # here to be "already legitimate", unlike update_item()'s
+        # narrower check above.
+        if (document_type or "").strip() in DISALLOWED_NEW_DOCUMENT_TYPES:
+            raise ValueError(
+                f"'{document_type}' is an automation asset type, not a "
+                "Knowledge Hub Document Type, and cannot be used here."
+            )
+
         missing = [
             label
             for label, value in (
@@ -481,24 +612,6 @@ class KnowledgeRepository:
             raise ValueError(f"Required and missing: {problem}.")
 
         safe_name = Path(original_filename or "upload").name or "upload"
-        duplicate = next(
-            (
-                item for row in self.metadata.list_all()
-                if (item := _row_to_dict(row))
-                if item.get("domain") == domain
-                and item.get("module") == module
-                and item.get("knowledge_name") == knowledge_name
-                and item.get("version") == version
-                and item.get("file_name") == safe_name
-            ),
-            None,
-        )
-        if duplicate:
-            raise ValueError(
-                "This source already exists in the selected Knowledge version. "
-                "Use a new version or remove the existing source first."
-            )
-
         # A plain NamedTemporaryFile gets a random generated basename
         # (e.g. "tmpXXXXXX.txt") — RepositoryManager.save_file() names
         # the file it copies into the repo after whatever path it's

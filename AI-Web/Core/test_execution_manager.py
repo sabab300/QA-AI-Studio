@@ -119,8 +119,7 @@ class TestExecutionManager:
         ),
         "steps": ("steps", "teststeps"),
         "expected_result": ("expectedresult", "expected"),
-        "execution_type": ("executiontype", "executionmode"),
-        "execution_tool": ("executiontool", "automationtool", "tool"),
+        "execution": ("execution", "executiontype", "executionmode", "executiontool", "automationtool", "tool"),
     }
 
     def import_test_cases_from_excel(
@@ -155,12 +154,12 @@ class TestExecutionManager:
         default — this only fills in what the workbook left blank.
         """
 
-        default_execution_tool = ""
+        default_execution = ""
 
         if default_automation_type:
 
-            default_execution_tool = (
-                self.repository.execution_tool_for_automation_type(
+            default_execution = (
+                self.repository.execution_for_automation_type(
                     default_automation_type
                 ) or ""
             )
@@ -260,15 +259,12 @@ class TestExecutionManager:
                 + ", ".join(missing) + "."
             )
             return summary
-        has_execution_type_column = "execution_type" in column_fields.values()
-
         parsed_rows = []
-        tool_aliases = {}
-        for tool in self.repository.list_execution_tools():
-            label = str(tool.get("label") or "").strip()
-            for value in (tool.get("code"), label, tool.get("automation_type")):
-                if value:
-                    tool_aliases[normalize(value)] = label
+        execution_aliases = {
+            "manual": "Manual", "manualexecution": "Manual",
+            "playwright": "Playwright", "api": "API",
+            "apiautomation": "API", "sql": "SQL", "sqlautomation": "SQL",
+        }
 
         for row_number, data_row in enumerate(rows_iter, start=2):
 
@@ -296,53 +292,14 @@ class TestExecutionManager:
                     row_errors.append(
                         f'field "{label}", value "": is required'
                     )
-            raw_execution_type = (
-                str(row.get("execution_type") or "").strip().lower()
-                if has_execution_type_column else ""
-            )
-            if raw_execution_type:
-                # An explicit workbook value -- present and non-blank
-                # -- always wins and is validated exactly as before,
-                # regardless of default_automation_type.
-                if raw_execution_type not in {"manual", "automatable"}:
-                    row_errors.append(
-                        f'field "Execution Type", value "{row.get("execution_type") or ""}": '
-                        "must be Manual or Automatable"
-                    )
-                    execution_type = None
-                else:
-                    execution_type = raw_execution_type
-                    row["execution_type"] = raw_execution_type.title()
+            raw_execution = str(row.get("execution") or "").strip()
+            mapped_execution = execution_aliases.get(normalize(raw_execution)) if raw_execution else (default_execution or "Manual")
+            if not mapped_execution:
+                row_errors.append(
+                    f'field "Execution", value "{raw_execution}": must be Manual, Playwright, API, or SQL'
+                )
             else:
-                # No Execution Type column at all, OR the column is
-                # present but this row's cell is blank -- section B:
-                # default from the active tab's automation type when
-                # one was given (Automatable + that tab's own
-                # registered tool), else fall back to the original
-                # Manual default so a plain/legacy import is unchanged.
-                execution_type = "automatable" if default_execution_tool else "manual"
-                row["execution_type"] = execution_type.title()
-
-            if execution_type is not None:
-                raw_tool = str(row.get("execution_tool") or "").strip()
-                if execution_type == "automatable":
-                    if not raw_tool:
-                        if default_execution_tool:
-                            row["execution_tool"] = default_execution_tool
-                        else:
-                            row_errors.append(
-                                'field "Execution Tool", value "": is required for an Automatable Test Case'
-                            )
-                    else:
-                        mapped_tool = tool_aliases.get(normalize(raw_tool))
-                        if not mapped_tool:
-                            row_errors.append(
-                                f'field "Execution Tool", value "{raw_tool}": is not registered'
-                            )
-                        else:
-                            row["execution_tool"] = mapped_tool
-                else:
-                    row["execution_tool"] = ""
+                row["execution"] = mapped_execution
             if row_errors:
                 summary["rejected"] += 1
                 summary["errors"].append(
@@ -1126,8 +1083,22 @@ class TestExecutionManager:
         from Core.api_collection_repository import (
             ApiCollectionRepository,
         )
+        repository = ApiCollectionRepository()
+        workbook_path = str(test_case.get("reviewed_workbook_path") or "").strip()
+        version_id = test_case.get("test_case_version_id")
+        if workbook_path and version_id:
+            connection = self.repository.db.get_connection()
+            file_row = connection.execute(
+                "SELECT id FROM test_case_files WHERE test_case_version_id=? AND workbook_path=?",
+                (int(version_id), workbook_path),
+            ).fetchone()
+            connection.close()
+            if file_row:
+                return repository.get_endpoints_for_test_case_file(file_row[0])
 
-        return ApiCollectionRepository().get_endpoints_for_scope(
+        # Legacy collections without workbook ownership retain the old scope
+        # lookup; new workbook-bound collections are excluded by that query.
+        return repository.get_endpoints_for_scope(
             test_case.get("domain", ""),
             test_case.get("module", ""),
             test_case.get("knowledge_name", ""),
@@ -1444,8 +1415,7 @@ class TestExecutionManager:
                             "The endpoint returns a successful "
                             "response, per the imported collection."
                         ),
-                        "execution_type": "Automatable",
-                        "execution_tool": "API Automation",
+                        "execution": "API",
                     }
 
                     saved_ids = self.repository.save_generated_cases(

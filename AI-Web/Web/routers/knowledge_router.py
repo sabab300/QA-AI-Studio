@@ -315,7 +315,10 @@ def delete_item(
 
     repository = KnowledgeRepository()
 
-    result = repository.delete_item(knowledge_id)
+    try:
+        result = repository.delete_item(knowledge_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
     if result is None:
 

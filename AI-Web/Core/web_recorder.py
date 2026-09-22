@@ -431,6 +431,29 @@ RECORDER_JS = r"""
       + el.tagName.toLowerCase() + '[normalize-space(.)=' + xpathLiteral(text) + ']';
   }
 
+  // Generic locator for SPA navigation items whose clickable React/Vue
+  // wrapper is not a native <a>/<button>.  Scope the text to a real navigation
+  // surface so duplicate dashboard-card labels do not collide with sidebar
+  // entries (for example, the same feature name appearing in both places).
+  function navigationContextXpathFor(el) {
+    if (!el || el.nodeType !== 1) return null;
+    var surface = el.closest && el.closest('nav,aside,[role="navigation"],[role="menu"],.sidebar,.side-menu,.sidenav,.navigation,.navbar,.nav,.menu,.list-group');
+    if (!surface) return null;
+    var text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 120) return null;
+    var surfacePredicate = 'self::nav or self::aside or @role="navigation" or @role="menu"'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," sidebar ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," side-menu ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," sidenav ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," navigation ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," navbar ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," nav ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," menu ")'
+      + ' or contains(concat(" ",normalize-space(@class)," ")," list-group ")';
+    var tag = el.tagName.toLowerCase();
+    return '//*[' + surfacePredicate + ']//' + tag + '[normalize-space(.)=' + xpathLiteral(text) + ']';
+  }
+
   function fieldContextXpathFor(el) {
     var container = el.closest('.k-form-field,.form-group,.field,[class*="form-field"],[class*="field-wrap"],[class*="input-group"]');
     if (!container) return null;
@@ -538,6 +561,11 @@ RECORDER_JS = r"""
       var textLocator = { strategy: 'text', value: text };
       if (locatorMatchCount(textLocator) === 1) return textLocator;
     }
+    var navigationXpath = navigationContextXpathFor(el);
+    if (navigationXpath) {
+      var navigationContext = {strategy:'xpath', value:navigationXpath};
+      if (locatorMatchCount(navigationContext) === 1) return navigationContext;
+    }
     var contextualXpath = contextualXpathFor(el);
     if (contextualXpath) {
       var contextual = {strategy:'xpath', value:contextualXpath};
@@ -614,12 +642,50 @@ RECORDER_JS = r"""
     if (title) add({strategy:'title', value:title});
     if (el.id && !looksDynamic(el.id)) add({strategy:'id', value:el.id});
     var cssInfo = cssPathInfo(el);
+    var navigationXpath = navigationContextXpathFor(el);
+    if (navigationXpath) add({strategy:'xpath', value:navigationXpath});
     var contextualXpath = contextualXpathFor(el);
     if (contextualXpath) add({strategy:'xpath', value:contextualXpath});
     var fieldXpath = fieldContextXpathFor(el);
     if (fieldXpath) add({strategy:'xpath', value:fieldXpath});
     if (cssInfo.path && cssInfo.fragileCount === 0 && !isLayoutDependentCss(cssInfo.path) && cssInfo.path.length <= 180) add({strategy:'css', value:cssInfo.path});
     return {locator: primary, fallback_locators: fallbacks, xpath: xpathFor(el)};
+  }
+
+  function closestCustomClickable(el) {
+    // Many SPAs implement side-menu/cards as DIV/LI/SPAN nodes with a
+    // framework click handler instead of a native <a>/<button>.  Those are
+    // real user actions and must not disappear from the recorded journey.
+    // Keep this bounded and require visible click affordance/evidence; the
+    // locator layer below still requires a UNIQUE stable/relative locator.
+    var node = el, depth = 0;
+    while (node && node !== document.body && depth < 7) {
+      var role = attr(node, 'role') || '';
+      var tabIndex = attr(node, 'tabindex');
+      var cls = String(node.className || '');
+      // Navigation frameworks often attach the click handler to a React/Vue
+      // ancestor (so node.onclick is empty) and some Bootstrap sidebars do not
+      // expose cursor:pointer on the exact text node.  Treat a compact item
+      // inside an explicit navigation surface as real click evidence too.
+      var navigationSurface = node.closest && node.closest(
+        'nav,aside,[role=\"navigation\"],[role=\"menu\"],.sidebar,.side-menu,.sidenav,.navigation,.navbar,.nav,.menu,.list-group'
+      );
+      var navigationClass = /(?:^|\s)(?:menu-item|menu-link|nav-item|nav-link|sidebar-item|sidebar-link|sidenav-item|sidenav-link|list-group-item|tree-item|treeitem)(?:\s|$)/i.test(cls);
+      var clickEvidence = !!node.onclick
+        || ['button','link','menuitem','tab','treeitem'].indexOf(role) !== -1
+        || (tabIndex !== null && tabIndex !== '-1')
+        || getComputedStyle(node).cursor === 'pointer'
+        || navigationClass
+        || !!navigationSurface;
+      var text = (node.innerText || '').replace(/\s+/g, ' ').trim();
+      // A navigation container can contain many labels. Never record that
+      // container as one action; require a compact leaf/item-like candidate.
+      var compactNavigationItem = !navigationSurface || navigationClass || role || node.tagName === 'LI' || node.tagName === 'SPAN' || text.length <= 60;
+      if (clickEvidence && compactNavigationItem && text && text.length <= 120) return node;
+      node = node.parentElement;
+      depth++;
+    }
+    return null;
   }
 
   function capturedAction(el, kind, extra) {
@@ -634,7 +700,8 @@ RECORDER_JS = r"""
         ? (el.closest('button,[role="button"]') || widget.querySelector('input[aria-controls],input[aria-owns],button,[role="button"],input') || widget)
         : (widget.querySelector('input,[role="combobox"],button') || widget);
     }
-    if (!target) target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"]');
+    if (!target) target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"],[role="menuitem"],[role="tab"]');
+    if (!target && kind === 'click') target = closestCustomClickable(el);
     if (!target && el.querySelectorAll && (
         getComputedStyle(el).cursor === 'pointer' ||
         /(?:k-input|k-picker|k-dropdown|k-combobox|input-group|button-wrap)/i.test(el.className || '')
@@ -645,7 +712,8 @@ RECORDER_JS = r"""
     if (!target) return null;
     var targetRole = attr(target, 'role') || implicitRole(target) || '';
     var semanticLeaf = ['button','link','combobox','option','gridcell','menuitem','tab'].indexOf(targetRole) !== -1;
-    if (!semanticLeaf && (/^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(target.tagName) ||
+    var customClickable = kind === 'click' && closestCustomClickable(target) === target;
+    if (!semanticLeaf && !customClickable && (/^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(target.tagName) ||
         /(?:k-header|k-dialog|k-popup|wrapper|container|(?:^|\s)(?:row|col(?:-|\s)))/i.test(target.className || ''))) return null;
     var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
     if (kind === 'click' && /(?:k-icon|k-svg-icon|k-input-button)/i.test(el.className || '') && el.closest('.k-datepicker,.k-picker')) {
@@ -847,6 +915,62 @@ RECORDER_JS = r"""
     }, 120);
   }
 
+  // Route-aware fallback for framework navigation.  The old recorder made a
+  // final decision synchronously from e.target; when React attached routing to
+  // a non-native wrapper and computeLocator() returned null, the click vanished
+  // forever.  Preserve the composed event path while the old DOM still exists,
+  // then confirm the interaction by observing an SPA URL/DOM transition.
+  var DOM_MUTATION_VERSION = 0;
+  try {
+    new MutationObserver(function (records) {
+      if (records && records.length) DOM_MUTATION_VERSION += records.length;
+    }).observe(document.documentElement, {subtree:true, childList:true});
+  } catch (e) {}
+
+  function routeFallbackAction(event) {
+    var path = event.composedPath ? event.composedPath() : [];
+    if (!path || !path.length) {
+      var n = event.target;
+      while (n && n.nodeType === 1 && path.length < 10) { path.push(n); n = n.parentElement; }
+    }
+    for (var i = 0; i < path.length && i < 10; i++) {
+      var node = path[i];
+      if (!node || node.nodeType !== 1 || node === document.body || node === document.documentElement) continue;
+      var navSurface = node.closest && node.closest('nav,aside,[role="navigation"],[role="menu"],.sidebar,.side-menu,.sidenav,.navigation,.navbar,.nav,.menu,.list-group');
+      if (!navSurface) continue;
+      var text = (node.innerText || '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 120) continue;
+      var meta = locatorMetadata(node);
+      if (!meta.locator) continue;
+      var action = Object.assign({kind:'click'}, meta, fieldMetadata(node, 'click'));
+      action.field_type = 'navigation';
+      action.control_role = attr(node, 'role') || implicitRole(node) || 'navigation-item';
+      action.control_context = sectionFor(node).name || 'Navigation';
+      action.expected_post_state = 'application route or navigation content changes';
+      action.capture_evidence = 'composedPath navigation candidate; outcome-confirmed';
+      return action;
+    }
+    return null;
+  }
+
+  function confirmRouteFallback(action, beforeUrl, beforeMutationVersion) {
+    if (!action) return;
+    var attempts = 0;
+    function check() {
+      attempts++;
+      var urlChanged = String(location.href) !== String(beforeUrl);
+      var domChanged = DOM_MUTATION_VERSION > beforeMutationVersion;
+      if (urlChanged || domChanged) {
+        action.navigation_outcome = urlChanged ? 'url_changed' : 'dom_changed';
+        action.destination_url = String(location.href);
+        report(action);
+        return;
+      }
+      if (attempts < 6) setTimeout(check, 100);
+    }
+    setTimeout(check, 0);
+  }
+
   document.addEventListener('click', function (e) {
     var el = e.target;
     if (!el || el.nodeType !== 1) return;
@@ -856,8 +980,14 @@ RECORDER_JS = r"""
       if (!el) return;
     }
     if (isTextEntry(el) && !isDynamicTextControl(el)) return;
+    var beforeUrl = String(location.href);
+    var beforeMutationVersion = DOM_MUTATION_VERSION;
+    var routeFallback = routeFallbackAction(e);
     var action = capturedAction(el, 'click');
-    if (!action) return;
+    if (!action) {
+      confirmRouteFallback(routeFallback, beforeUrl, beforeMutationVersion);
+      return;
+    }
     if (action.field_type === 'dropdown' || action.field_type === 'autocomplete') { action.kind = 'open_dropdown'; action.expected_post_state = 'owning popup visible or aria-expanded=true'; }
     else if (action.field_type === 'calendar') { action.kind = 'open_calendar'; action.expected_post_state = 'owning calendar visible'; }
     else if (action.field_type === 'option') { action.kind = 'select_option'; action.expected_value = action.field_name; action.expected_post_state = 'owning field reflects value or popup closes'; }

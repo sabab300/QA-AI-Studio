@@ -117,13 +117,15 @@ class MetadataManager:
                 modified_date,
                 last_embedded,
                 domain_id,
-                module_id
+                module_id,
+                source_file_id,
+                repository_relative_path
             )
             VALUES
             (
                 ?,?,?,?,?,?,?,?,?,?,
                 ?,?,?,?,?,?,?,?,?,?,
-                ?,?,?,?,?,?
+                ?,?,?,?,?,?,?,?
             )
             """,
             (
@@ -173,7 +175,9 @@ class MetadataManager:
 
                 domain_id,
 
-                module_id
+                module_id,
+                file_info.get("source_file_id"),
+                file_info.get("repository_relative_path", "")
             )
         )
 
@@ -1366,6 +1370,9 @@ class MetadataManager:
             "category",
             "business_process",
             "status",
+            "repository_path",
+            "repository_relative_path",
+            "source_file_id",
         }
  
         updates = {
@@ -1421,6 +1428,11 @@ class MetadataManager:
                 cursor.execute(
                     "UPDATE knowledge_versions SET version=? WHERE knowledge_item_id=?",
                     (resolved_version, knowledge_id),
+                )
+            if "repository_path" in updates:
+                cursor.execute(
+                    "UPDATE knowledge_versions SET repository_path=? WHERE knowledge_item_id=?",
+                    (updates["repository_path"], knowledge_id),
                 )
 
             # Placeholder Knowledge rows are the authoritative logical scope

@@ -21,6 +21,7 @@ from Database.schema import (
     ALL_TABLES,
     KNOWLEDGE_ITEMS_MIGRATION,
     DISCOVERY_VARIANTS_MIGRATION,
+    API_COLLECTIONS_MIGRATION,
 )
 
 
@@ -67,7 +68,11 @@ class DatabaseManager:
 
                 cursor.execute(statement)
 
-            for migration in KNOWLEDGE_ITEMS_MIGRATION + DISCOVERY_VARIANTS_MIGRATION:
+            for migration in (
+                KNOWLEDGE_ITEMS_MIGRATION
+                + DISCOVERY_VARIANTS_MIGRATION
+                + API_COLLECTIONS_MIGRATION
+            ):
 
                 try:
 

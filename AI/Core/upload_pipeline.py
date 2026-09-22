@@ -51,7 +51,8 @@ class UploadPipeline:
             module=module,
             knowledge_name=knowledge_name,
             version=version,
-            document_type=document_type
+            document_type=document_type,
+            source_type=source_type,
         )
 
         text = self.extractor.extract_text(

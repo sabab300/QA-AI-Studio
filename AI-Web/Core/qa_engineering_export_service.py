@@ -7,24 +7,12 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from openpyxl import Workbook
+from Core.test_case_workbook import COLUMNS as EXPORT_FIELDS, stage_workbook
 
 
 AI_WEB_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXPORT_DIR = AI_WEB_ROOT / "Output" / "Test Cases"
 CONFIG_FILE = AI_WEB_ROOT / "Config" / "qa_engineering_export.json"
-EXPORT_FIELDS = [
-    ("tc_number", "Test Case ID"), ("domain", "Domain"),
-    ("module", "Module"), ("knowledge_name", "Knowledge"),
-    ("version", "Version"), ("scenario", "Scenario"),
-    ("test_type", "Test Types"), ("pre_conditions", "Preconditions"),
-    ("test_case", "Test Case"), ("steps", "Test Steps"),
-    ("expected_result", "Expected Result"), ("importance", "Importance"),
-    ("execution_type", "Execution Type"),
-    ("execution_tool", "Execution Tool"),
-]
-
-
 class QaEngineeringExportService:
     def get_location(self, relative_folder=None):
         if not relative_folder:
@@ -46,13 +34,14 @@ class QaEngineeringExportService:
         CONFIG_FILE.write_text(json.dumps({"path": str(location)}, indent=2), encoding="utf-8")
         return location
 
-    def export(self, rows, file_format, scope, file_name=None, relative_folder=None, allow_empty=False):
+    def export(self, rows, file_format, scope, file_name=None, relative_folder=None,
+               allow_empty=False, output_folder=None, overwrite_path=None):
         fmt = file_format.lower()
         if fmt not in {"xlsx", "csv", "pdf", "html"}:
             raise ValueError("Unsupported export format.")
         if not rows and not allow_empty:
             raise ValueError("No saved test cases match the selected scope or filter.")
-        folder = self.get_location(relative_folder)
+        folder = Path(output_folder).resolve() if output_folder else self.get_location(relative_folder)
         folder.mkdir(parents=True, exist_ok=True)
         default_stem = "TC_" + "_".join(
             str(scope.get(key) or "NA")
@@ -63,7 +52,9 @@ class QaEngineeringExportService:
         if requested.lower().endswith(suffix):
             requested = requested[:-len(suffix)]
         stem = self._safe_name(requested)
-        path = self._available_path(folder, stem, fmt)
+        path = Path(overwrite_path).resolve() if overwrite_path else self._available_path(folder, stem, fmt)
+        if path.parent != folder.resolve():
+            raise ValueError("Export file must remain inside its selected managed folder.")
         if fmt == "xlsx":
             self._xlsx(rows, path)
         elif fmt == "csv":
@@ -74,7 +65,10 @@ class QaEngineeringExportService:
             self._html(rows, path, scope)
         if not path.is_file() or path.stat().st_size == 0:
             raise RuntimeError("Export file was not created successfully.")
-        relative_path = str(path.relative_to((AI_WEB_ROOT / "Output").resolve()))
+        try:
+            relative_path = str(path.relative_to((AI_WEB_ROOT / "Output").resolve()))
+        except ValueError:
+            relative_path = str(path)
         return {"format": fmt.upper(), "file_name": path.name,
                 "relative_path": relative_path,
                 "saved_location": str(folder), "count": len(rows)}
@@ -123,15 +117,8 @@ class QaEngineeringExportService:
 
     @staticmethod
     def _xlsx(rows, path):
-        book, sheet = Workbook(), None
-        sheet = book.active
-        sheet.title = "Test Cases"
-        sheet.append([label for _, label in EXPORT_FIELDS])
-        for row in rows:
-            sheet.append([row.get(key, "") for key, _ in EXPORT_FIELDS])
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        book.save(path)
+        temporary = stage_workbook(rows, path)
+        temporary.replace(path)
 
     @staticmethod
     def _csv(rows, path):

@@ -712,9 +712,27 @@ class ApiAutomationRunner:
                     self._guess_content_type(endpoint, substituted_body),
                 )
 
-        timeout = self._parse_timeout(config.get("api_timeout_seconds"))
+        # API-Automation Requirement 1 (Add Token "Settings" tab): an
+        # explicit per-request timeout/SSL override — used by the Add
+        # Token request builder's Settings tab — takes precedence over
+        # the Environment-level default; absent/blank falls back to
+        # the Environment setting exactly as before, so every existing
+        # caller (which never sets these override keys) is unaffected.
+        timeout_override = request_overrides.get("timeout_seconds")
 
-        verify = config.get("api_verify_ssl", True)
+        timeout = (
+            self._parse_timeout(timeout_override)
+            if timeout_override not in (None, "")
+            else self._parse_timeout(config.get("api_timeout_seconds"))
+        )
+
+        verify_override = request_overrides.get("verify_ssl")
+
+        verify = (
+            verify_override
+            if verify_override is not None
+            else config.get("api_verify_ssl", True)
+        )
 
         return {
             "method": method,

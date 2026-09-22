@@ -59,6 +59,14 @@ class QaEngineeringWeb:
 
     def list_scope(self, domain=None, module=None):
         items = KnowledgeRepository().list_items()
+        from Core.qa_engineering_version_service import QaEngineeringVersionService
+        version_service = QaEngineeringVersionService()
+        items = [
+            version_service.get_source(item["id"])
+            if not item.get("source_file_id") and item.get("source_type") not in {"API_COLLECTION", "API Collection"}
+            else item
+            for item in items
+        ]
         if domain:
             items = [item for item in items if item.get("domain") == domain]
         if module:
@@ -128,6 +136,7 @@ class QaEngineeringWeb:
         return None
 
     def start_generation(self, payload):
+        self.preflight_generation(payload)
         job_id = uuid.uuid4().hex
         now = datetime.now().isoformat()
         logs = [self._event("Preparing", "Generation request accepted.")]
@@ -145,6 +154,36 @@ class QaEngineeringWeb:
         conn.close()
         threading.Thread(target=self._generate, args=(job_id, payload), daemon=True).start()
         return {"job_id": job_id, "status": "queued"}
+
+    def preflight_generation(self, payload):
+        """Reject unusable selected Knowledge before starting the costly LLM job."""
+        from Core.qa_engineering_version_service import QaEngineeringVersionService
+        source_ids = payload.get("knowledge_source_ids") or []
+        if len(source_ids) != 1:
+            raise ValueError("AI generation requires exactly one selected source document.")
+        source = QaEngineeringVersionService().get_source(source_ids[0])
+        expected = {
+            "domain": payload.get("domain"), "module": payload.get("module"),
+            "knowledge_name": payload.get("knowledge_name"), "version": payload.get("version"),
+            "document_type": payload.get("document_type"),
+        }
+        if any(str(source.get(key) or "") != str(value or "") for key, value in expected.items()):
+            raise ValueError("The selected source document does not belong to the selected Knowledge hierarchy.")
+        if str(source.get("status") or "").upper() == "FAILED_NO_TEXT":
+            raise ValueError(
+                "The selected source document is stored in Knowledge Hub but contains no indexed knowledge. "
+                "Test Cases cannot be generated from this document."
+            )
+        from Core.vector_store import VectorStore
+        if not VectorStore().has_source_vectors(
+            domain=source.get("domain"), module=source.get("module"),
+            knowledge_name=source.get("knowledge_name"), version=source.get("version"),
+            file_name=source.get("file_name"),
+        ):
+            raise ValueError(
+                "The selected indexed source has no retrievable vectors. Re-index this source before generating Test Cases."
+            )
+        return source
 
     def get_job(self, job_id):
         conn = self.db.get_connection()
@@ -245,16 +284,28 @@ class QaEngineeringWeb:
                 provider, model = result.get("provider"), result.get("model")
                 self._set_job(job_id, generated_count=len(all_rows))
                 self._append_log(job_id, "Validated", f"{label} returned {len(rows)} structured test case(s).")
+            if len(source_ids) != 1:
+                raise RuntimeError("AI generation requires one managed Source File/Source Doc context.")
+            from Core.qa_engineering_version_service import QaEngineeringVersionService
+            version_service = QaEngineeringVersionService()
+            created = version_service.create_generated_set(
+                source_ids[0], all_rows, payload.get("test_case_document_name") or ""
+            )
+            persisted = version_service.load_version(
+                created["test_case_version_id"], created["test_case_file_id"]
+            )
             final_result = {
                 "success": True, "test_types": payload["test_types"],
-                "case_count": len(all_rows), "rows": all_rows, "test_case_ids": [],
+                "case_count": len(all_rows), "rows": persisted["test_cases"],
+                "test_case_ids": created["test_case_ids"], "created": created,
                 "references": references, "provider": provider, "model": model,
             }
-            self._append_log(job_id, "Saving Draft Result", f"Stored {len(all_rows)} generated row(s) in the job result for review.")
+            self._append_log(job_id, "Persisted", f"Created Test Cases V{created['version_number']} with {len(all_rows)} row(s).")
             self._set_job(job_id, status="finished", message="Completed",
                           generated_count=len(all_rows), result=final_result,
+                          saved_ids=created["test_case_ids"],
                           finished_at=datetime.now().isoformat())
-            self._append_log(job_id, "Completed", f"Generated {len(all_rows)} draft test case(s).")
+            self._append_log(job_id, "Completed", f"Generated and persisted {len(all_rows)} test case(s).")
         except Exception as error:
             message = str(error) or "Generation failed."
             self._set_job(job_id, status="error", message="Failed", error=message,
@@ -275,8 +326,9 @@ class QaEngineeringWeb:
     def _set_job(self, job_id, **values):
         columns, params = [], []
         for key, value in values.items():
-            columns.append(f"{'result_json' if key == 'result' else key}=?")
-            params.append(json.dumps(value) if key == "result" else value)
+            column = {"result": "result_json", "saved_ids": "saved_ids_json"}.get(key, key)
+            columns.append(f"{column}=?")
+            params.append(json.dumps(value) if key in {"result", "saved_ids"} else value)
         params.append(job_id)
         conn = self.db.get_connection()
         conn.execute(f"UPDATE qa_generation_jobs SET {', '.join(columns)} WHERE job_id=?", params)

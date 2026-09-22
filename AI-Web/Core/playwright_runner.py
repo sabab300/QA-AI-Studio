@@ -328,6 +328,7 @@ from playwright.sync_api import sync_playwright
 _QA_MAX_REPAIR_ROUNDS = __MAX_REPAIR_ROUNDS__
 _QA_SELECTION_TIMEOUT_MS = __SELECTION_TIMEOUT_MS__
 _QA_DISCOVERY_TIMEOUT_MS = __DISCOVERY_TIMEOUT_MS__
+_QA_STATE_READINESS_TIMEOUT_MS = __STATE_READINESS_TIMEOUT_MS__
 _QA_TOTAL_STEPS = __TOTAL_STEPS__
 
 _QA_REPAIRS = []
@@ -834,7 +835,12 @@ def _qa_semantic_compatibility(capture, metadata):
         "autocomplete": {"combobox", "textbox"}, "option": {"option"},
         "date": {"gridcell", "textbox", "button"}, "calendar": {"gridcell", "button"},
         "checkbox": {"checkbox"}, "radio": {"radio"},
-        "button": {"button", "link"},
+        # Framework SPAs often implement genuine clickable navigation/menu
+        # controls as DIV/LI/SPAN with pointer/onclick/tabindex evidence.
+        # _qa_verify_code already requires those nodes to be actionable, so
+        # permit them for recorded click/button semantics without weakening
+        # uniqueness, visibility, or name matching.
+        "button": {"button", "link", "div", "li", "span"},
     }
     effective_role = actual_role or ({"input": "textbox", "select": "combobox", "button": "button", "a": "link"}.get(actual_tag) or actual_tag)
     allowed = type_roles.get(expected_type)
@@ -1292,15 +1298,55 @@ def _qa_resolution_candidates(code_text, metadata):
 
 
 def _qa_resolve_action(code_text, metadata):
-    attempts = []
-    for candidate in _qa_resolution_candidates(code_text, metadata):
-        check = _qa_verify_code(candidate["code"], metadata)
-        candidate.update(check)
-        attempts.append(candidate)
-        if (check.get("count") == 1 and check.get("visible")
-                and check.get("actionable") and check.get("semantic_compatible")):
-            return candidate["code"], candidate, attempts
-    return None, None, attempts
+    """Resolve a locator only after giving the application time to reach this step.
+
+    A recorded journey is stateful: login, role switches, menu selections and saves can
+    trigger client-side routing/rendering without a traditional navigation event.  A
+    single instantaneous locator probe therefore creates false "locator not found"
+    repairs while the next screen is still rendering.  Keep the short per-candidate
+    discovery probe, but retry the *whole saved candidate set* for a bounded readiness
+    window before escalating to repair/manual selection.
+    """
+    import time
+
+    candidates = _qa_resolution_candidates(code_text, metadata)
+    deadline = time.monotonic() + (_QA_STATE_READINESS_TIMEOUT_MS / 1000.0)
+    last_attempts = []
+    readiness_round = 0
+
+    while True:
+        readiness_round += 1
+        attempts = []
+        for base_candidate in candidates:
+            # Never retain live Locator state between rounds; only immutable code/source.
+            candidate = dict(base_candidate)
+            check = _qa_verify_code(candidate["code"], metadata)
+            candidate.update(check)
+            candidate["readiness_round"] = readiness_round
+            attempts.append(candidate)
+            if (check.get("count") == 1 and check.get("visible")
+                    and check.get("actionable") and check.get("semantic_compatible")):
+                return candidate["code"], candidate, attempts
+
+        last_attempts = attempts
+        if time.monotonic() >= deadline:
+            return None, None, last_attempts
+
+        if readiness_round == 1:
+            _qa_send_event({
+                "event": "application_readiness_wait",
+                "step": _QA_STATE.get("current_step"),
+                "total_steps": _QA_TOTAL_STEPS,
+                "timeout_ms": _QA_STATE_READINESS_TIMEOUT_MS,
+                "message": "Saved locators are not ready yet; waiting for the application state before repair."
+            })
+
+        # Allow SPA route changes, async data binding and framework rendering to settle.
+        # This is deliberately a short poll, not another Playwright action timeout.
+        try:
+            _qa_active_page().wait_for_timeout(300)
+        except Exception:
+            time.sleep(0.3)
 
 
 def _qa_locator_code(display_value):
@@ -2376,6 +2422,8 @@ class PlaywrightRunner:
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
         ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace(
             "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
+        ).replace(
+            "__STATE_READINESS_TIMEOUT_MS__", str(max(5000, min(timeout_ms // 3, 15000)))
         ).replace("__TOTAL_STEPS__", str(len(lines)))
 
         steps_code = "\n".join(
@@ -2570,6 +2618,8 @@ class PlaywrightRunner:
             "__MAX_REPAIR_ROUNDS__", str(max_repair_rounds)
         ).replace("__SELECTION_TIMEOUT_MS__", str(max(5000, min(timeout_ms * 2, 120000)))).replace(
             "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
+        ).replace(
+            "__STATE_READINESS_TIMEOUT_MS__", str(max(5000, min(timeout_ms // 3, 15000)))
         )
 
         shim = SPEED_SHIM_TEMPLATE.format(

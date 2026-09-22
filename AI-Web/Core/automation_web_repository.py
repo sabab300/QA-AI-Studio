@@ -70,6 +70,7 @@ from Core.secret_masking import mask_headers, is_sensitive_key, MASK
 from Core.sql_environment_config import SqlEnvironmentConfig
 from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
 from Core.sql_generator import SQLGenerator
+from Core.sql_script_repository import SqlScriptRepository
 
 GIT_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "Output" / "GitWorkspaces"
 
@@ -125,7 +126,19 @@ class ApiCollectionsWeb:
     def import_collection(
         self, file_bytes, original_filename, domain=None, module=None,
         knowledge_name=None, version=None, document_type=None,
+        test_case_version_id=None, test_case_file_id=None,
     ):
+        # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4
+        # Rule 5: test_case_version_id is new and OPTIONAL — added
+        # additively so the pre-existing call shape keeps working
+        # unchanged for anything that doesn't pass it. When given, it
+        # binds the upload to a real TC-* folder (see
+        # ApiCollectionRepository.import_postman_collection()'s own
+        # docstring for the storage model this enables); the frontend's
+        # rebuilt "API Collection Upload" modal (Frontend/index.html)
+        # always sends it now, since Source Files there only offers
+        # TC-* folders — but this method itself stays usable by any
+        # other caller that doesn't have one yet.
 
         if not file_bytes:
 
@@ -147,6 +160,8 @@ class ApiCollectionsWeb:
                 knowledge_name=knowledge_name,
                 version=version,
                 document_type=document_type,
+                test_case_version_id=test_case_version_id,
+                test_case_file_id=test_case_file_id,
             )
 
         finally:
@@ -535,6 +550,207 @@ class EnvironmentConfigWeb:
 
         return self.get()
 
+    # These are the ONLY request_config keys forwarded to
+    # ApiAutomationRunner.build_request()/send() — deliberately the
+    # same override vocabulary the per-Test-Case Request Configuration
+    # tabs already use (TestCasesWeb._API_REQUEST_CONFIG_KEYS), plus
+    # the two Settings-tab-only overrides (timeout_seconds/verify_ssl)
+    # build_request() now also understands. Anything else in the
+    # payload (e.g. an unrelated field) is silently dropped rather
+    # than forwarded, so this can never become a second, looser
+    # request-building path.
+    _TOKEN_REQUEST_CONFIG_KEYS = (
+        "method", "url", "query_params", "path_params", "headers",
+        "auth", "body", "body_mode", "body_params",
+        "timeout_seconds", "verify_ssl",
+    )
+
+    def generate_token(
+        self, request_config=None,
+        extract_type="json_path", extract_path="", save_to_variable="",
+    ):
+        """
+        API-Automation Requirement 1 — "Add Token" full Postman-style
+        request builder (Params/Authorization/Headers/Body/Settings).
+        Actually SENDS the configured request via the SAME
+        ApiAutomationRunner.send()/build_request() every other real
+        API execution in this app uses (never a second, parallel
+        HTTP-calling mechanism) — `request_config` is the exact same
+        method/url/query_params/path_params/headers/auth/body/
+        body_mode/body_params shape the per-Test-Case Request
+        Configuration tabs already produce, so this reuses that same
+        builder end to end rather than a bespoke token-only one.
+
+        Unlike the original (Phase 3) design, the full real response
+        (status, headers, body text, duration, masked request) is now
+        ALWAYS returned to the caller — exactly like a normal Postman
+        Send — since the operator needs to actually see the response
+        to configure/debug the extraction path in the first place, and
+        the response body is what they're inspecting anyway. The one
+        thing still never returned is the individually-extracted
+        token VALUE itself post-extraction as a separate field — it is
+        only ever visible as part of the response body the operator
+        already asked to see, and is persisted straight into the
+        destination variable server-side.
+
+        On any failure (network error, timeout, non-2xx response,
+        invalid JSON where a JSON-path extraction was configured, or a
+        successful-and-valid response the extraction rule still
+        couldn't find a value in) the destination variable is left
+        completely untouched — never cleared, never overwritten with
+        a blank — and `response["response_error"]` carries a specific,
+        distinguishing message for each of those cases.
+        """
+
+        save_to_variable = (save_to_variable or "").strip()
+
+        if not save_to_variable:
+
+            raise ValueError("'Save to variable' is required.")
+
+        request_config = request_config or {}
+
+        overrides = {
+            key: request_config[key]
+            for key in self._TOKEN_REQUEST_CONFIG_KEYS
+            if key in request_config and request_config[key] is not None
+        }
+
+        if not (overrides.get("url") or "").strip():
+
+            raise ValueError("Request URL is required.")
+
+        config = self.config.load()
+
+        runner = ApiAutomationRunner()
+
+        endpoint = {}
+
+        result = runner.send(endpoint, config, request_overrides=overrides)
+
+        response = {
+            "status_code": result.get("status_code"),
+            "elapsed_ms": result.get("elapsed_ms"),
+            "response_headers": result.get("response_headers") or {},
+            "response_body_text": result.get("response_body_text") or "",
+            "request": result.get("request") or {},
+        }
+
+        if result.get("error"):
+
+            response["success"] = False
+
+            response["error"] = result["error"]
+
+            response["response_error"] = "connection_error"
+
+            return response
+
+        status_code = result.get("status_code")
+
+        if status_code is not None and status_code >= 400:
+
+            response["success"] = False
+
+            response["error"] = (
+                "Request completed with HTTP " + str(status_code) +
+                " — a non-2xx/3xx response is treated as a failed "
+                "token request; the destination variable was left "
+                "unchanged."
+            )
+
+            response["response_error"] = "non_2xx"
+
+            return response
+
+        extract_type = extract_type or "json_path"
+
+        extract_path = (extract_path or "").strip()
+
+        if extract_type == "json_path":
+
+            # API-Automation Requirement 5 — reviewed the extraction
+            # controls against the real token flow: for a normal OAuth/
+            # token response (`{"access_token": "..."}` at the top
+            # level) requiring the operator to type "access_token" by
+            # hand added a step with only one realistic value. Default
+            # it here, server-side, so the behavior holds however the
+            # request reaches this method (not just when the frontend
+            # happens to prefill it). An operator with a non-standard
+            # response shape can still type a different path — that
+            # advanced path is preserved, just no longer mandatory.
+            if not extract_path:
+
+                extract_path = "access_token"
+
+        elif extract_type == "header" and not extract_path:
+
+            raise ValueError(
+                "Header name is required when extracting from a "
+                "response header — there is no default header name."
+            )
+
+        if extract_type == "json_path":
+
+            try:
+
+                json.loads(result.get("response_body_text") or "")
+
+            except (TypeError, ValueError):
+
+                response["success"] = False
+
+                response["error"] = (
+                    "Response is not valid JSON — cannot resolve a "
+                    "JSON path from it. Switch Extract From to "
+                    "'Response header', or fix the request so it "
+                    "returns JSON."
+                )
+
+                response["response_error"] = "invalid_json"
+
+                return response
+
+        extracted = runner.extract_variables(
+            [{
+                "type": extract_type,
+                "path": extract_path,
+                "header": extract_path,
+                "variable": save_to_variable,
+            }],
+            result,
+        )
+
+        value = extracted.get(save_to_variable)
+
+        if value is None or value == "":
+
+            response["success"] = False
+
+            response["error"] = (
+                "Request completed (HTTP " + str(status_code) +
+                ") but no value could be extracted at "
+                + ("JSON path" if extract_type == "json_path" else "header")
+                + " '" + str(extract_path) + "' — the destination variable was left unchanged."
+            )
+
+            response["response_error"] = "extraction_missing"
+
+            return response
+
+        # Save ONLY the raw extracted value — e.g. "eyJhb..." — never
+        # prefixed with "Bearer " or any other scheme text; the
+        # variable is a plain credential value that Authorization
+        # configuration elsewhere (Auth type = Bearer Token) adds the
+        # scheme prefix to at request-build time, not storage time.
+        self.upsert_variable(save_to_variable, str(value), secret=True)
+
+        response["success"] = True
+
+        response["saved_to_variable"] = save_to_variable
+
+        return response
+
 
 # ============================================================
 # Test Cases + Scripts + Execute (background job, persisted) +
@@ -558,9 +774,9 @@ _RUNNING_MANAGERS_LOCK = threading.Lock()
 
 class TestCasesWeb:
 
-    def __init__(self):
+    def __init__(self, repository=None):
 
-        self.repository = TestCaseRepository()
+        self.repository = repository or TestCaseRepository()
 
         self.runs = AutomationExecutionRepository()
 
@@ -573,12 +789,13 @@ class TestCasesWeb:
         rows = self.repository.list_test_cases(domain, module, knowledge_name)
         if not automation_type:
             return rows
-        tool = self.repository.execution_tool_for_automation_type(automation_type)
-        return [row for row in rows if row.get("execution_type") == "Automatable" and row.get("execution_tool") == tool]
+        execution = self.repository.execution_for_automation_type(automation_type)
+        return [row for row in rows if row.get("execution") == execution]
 
     def list_workspace(
         self, domain=None, module=None, knowledge_name=None, version=None,
         document_type=None, source_knowledge_ids=None, test_case_document=None,
+        test_case_version_id=None, test_case_file_id=None,
         status=None, automation_type=None, q=None, limit=50, offset=0,
     ):
         """
@@ -586,27 +803,37 @@ class TestCasesWeb:
         asset across every scope, each with its latest execution
         result/time attached (a single extra query, not one per row —
         see AutomationExecutionRepository.latest_runs_for_test_cases()).
+
+        test_case_version_id — Rule 4's exact hierarchy ("Source Files"
+        = a TC-* folder). When given, it is authoritative: the SQL-level
+        filter in list_all_test_cases() already scopes the rows to that
+        folder, so the legacy source_knowledge_ids/test_case_document
+        narrowing below (the abbreviated selector's grouping) is skipped
+        rather than applied on top of it.
         """
 
-        execution_tool = (
-            self.repository.execution_tool_for_automation_type(automation_type)
+        execution = (
+            self.repository.execution_for_automation_type(automation_type)
             if automation_type else None
         )
 
         result = self.repository.list_all_test_cases(
             domain=domain, module=module, knowledge_name=knowledge_name,
             version=version, document_type=document_type,
+            test_case_version_id=test_case_version_id,
+            reviewed_workbook_path=self._workbook_path(test_case_file_id, test_case_version_id),
             status=status,
-            execution_type="Automatable", execution_tool=execution_tool, q=q,
+            execution=execution, q=q,
             limit=10000, offset=0,
         )
 
-        selected_sources = {int(value) for value in (source_knowledge_ids or [])}
         rows = result["test_cases"]
-        if selected_sources:
-            rows = [row for row in rows if set(row.get("source_knowledge_ids") or []) == selected_sources]
-        if test_case_document:
-            rows = [row for row in rows if self._document_key(row) == test_case_document]
+        if not test_case_version_id:
+            selected_sources = {int(value) for value in (source_knowledge_ids or [])}
+            if selected_sources:
+                rows = [row for row in rows if set(row.get("source_knowledge_ids") or []) == selected_sources]
+            if test_case_document:
+                rows = [row for row in rows if self._document_key(row) == test_case_document]
         total = len(rows)
         rows = rows[offset:offset + limit]
         result = {"test_cases": rows, "total": total}
@@ -653,29 +880,66 @@ class TestCasesWeb:
 
                 name = endpoint.get("name") or ""
 
-                test_case["bound_endpoint_name"] = (
-                    f"{method} {name}".strip() if method else name
-                )
+                # Phase 8-grid (API-Automation-Enhancement) — API TITLE
+                # is the endpoint NAME ONLY (never method + full URL,
+                # which made the column unreadable and duplicated the
+                # request's own Method/URL already shown in Request
+                # Configuration). bound_endpoint_method is exposed
+                # separately so the grid's TEST CASE column can build a
+                # deterministic (non-AI) title from method + name — see
+                # the frontend's apiDeterministicTestCaseTitle().
+                test_case["bound_endpoint_name"] = name
 
-                # FINAL-END-TO-END-WORKSPACE-V2 section 3: "API Title
-                # must show the COMPLETE API URL" — bound_endpoint_name
-                # alone (method + endpoint name) doesn't include it.
+                test_case["bound_endpoint_method"] = method
+
                 test_case["bound_endpoint_url"] = (
                     endpoint.get("url_resolved") or endpoint.get("url_raw") or ""
                 )
 
         return result
 
+    def _workbook_path(self, test_case_file_id, test_case_version_id):
+        if not test_case_file_id:
+            return None
+        conn = self.repository.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT workbook_path FROM test_case_files WHERE id=? AND test_case_version_id=?",
+                (int(test_case_file_id), int(test_case_version_id or 0)),
+            ).fetchone()
+        finally:
+            conn.close()
+        return str(row[0]) if row else "__invalid_workbook__"
+
     def list_scopes(self):
         sources = []
+        seen_containers = set()
         for item in QaEngineeringWeb().list_scope():
             if not item.get("display_name"):
                 continue
+            # V5-01: QA Automation's "Source Document" level must
+            # represent the SD-* managed CONTAINER folder, never an
+            # individual physical DOCX/PDF inside it. Several
+            # knowledge_items rows can legitimately share one SD folder
+            # (CentralRepository.resolve_unique_segment() reuses the
+            # same folder for repeat uploads of the same document
+            # identity), so collapse every sibling to the ONE dropdown
+            # entry representing their shared container, and show the
+            # container's own clean name (its "SD-" prefix stripped)
+            # instead of a physical file name. The QA Engineering
+            # screen's own per-file picker (QaEngineeringWeb.list_scope
+            # consumed directly by qa_engineering_router.py) is
+            # DELIBERATELY left untouched — grouping only applies here,
+            # to the automation hierarchy's Source Document level.
+            container_key, display_name = self._source_document_container(item)
+            if container_key in seen_containers:
+                continue
+            seen_containers.add(container_key)
             sources.append({
                 "id": item.get("id"), "domain": item.get("domain") or "",
                 "module": item.get("module") or "", "knowledge_name": item.get("knowledge_name") or "",
                 "version": item.get("version") or "", "document_type": item.get("document_type") or "",
-                "display_name": item.get("display_name"), "source_type": item.get("source_type") or "",
+                "display_name": display_name, "source_type": item.get("source_type") or "",
             })
         rows = self.repository.list_all_test_cases(limit=10000, offset=0)["test_cases"]
         documents = {}
@@ -695,10 +959,39 @@ class TestCasesWeb:
                 "counts": {"Playwright": 0, "API": 0, "SQL": 0}, "total": 0,
             })
             group["total"] += 1
-            tool = {"Playwright": "Playwright", "API Automation": "API", "SQL Automation": "SQL"}.get(row.get("execution_tool"))
-            if row.get("execution_type") == "Automatable" and tool:
+            tool = row.get("execution") if row.get("execution") in {"Playwright", "API", "SQL"} else None
+            if tool:
                 group["counts"][tool] += 1
         return {"sources": sources, "documents": list(documents.values())}
+
+    @staticmethod
+    def _source_document_container(item):
+        """Return (container_key, clean_display_name) for a QA
+        Engineering scope item, per V5-01.
+
+        container_key groups sibling knowledge_items rows that
+        physically live inside the SAME managed SD-* folder into one
+        Source Document entry — derived from the item's own physical
+        parent folder, which is the actual container on disk,
+        regardless of how many files it holds.
+
+        clean_display_name is that SD folder's own name with a leading
+        "SD-" stripped for display (e.g. "SD-V0.3 CRF-DPP" ->
+        "V0.3 CRF-DPP"). Items with no real managed path on disk (API
+        Collection placeholders, or a legacy row that never migrated
+        into a Central Repository folder) fall back to remaining their
+        own standalone container, keyed by id, exactly as they behaved
+        before this fix — nothing selectable disappears.
+        """
+        for path_key in ("repository_path", "original_path"):
+            raw_path = str(item.get(path_key) or "").strip()
+            if not raw_path:
+                continue
+            folder = Path(raw_path).parent
+            folder_name = folder.name
+            display = folder_name[3:] if folder_name[:3].upper() == "SD-" else folder_name
+            return str(folder), (display.strip() or item.get("display_name"))
+        return f"id:{item.get('id')}", item.get("display_name")
 
     @staticmethod
     def _document_key(row):
@@ -757,7 +1050,7 @@ class TestCasesWeb:
             raise ValueError(result["error"])
 
         result["document"] = safe_name
-        result["automation_target"] = self.repository.execution_tool_for_automation_type(
+        result["automation_target"] = self.repository.execution_for_automation_type(
             automation_type
         )
         return result
@@ -824,12 +1117,60 @@ class TestCasesWeb:
         return manager.suggest_automation_type(test_case_id)
 
     # --------------------------------------------------
-    # Script management
+    # V5-04 — Playwright "Upload Playwright Scripts" mapping import.
+    # Reuses the SAME script/test-case binding architecture as the
+    # existing "View Script" -> Edit -> Save flow (update_script()
+    # below, also called by PUT /test-cases/{id}/script) — no second
+    # Playwright execution engine, no separate storage model.
     # --------------------------------------------------
+
+    def import_playwright_mapping(self, file_bytes, filename, test_case_version_id, test_case_file_id):
+        from Core.automation_import_service import (
+            AutomationImportService, PLAYWRIGHT_CONTENT_ALIASES, PLAYWRIGHT_CONTENT_LABEL,
+        )
+        service = AutomationImportService(self.repository)
+        result = service.validate(
+            file_bytes, filename, test_case_version_id, test_case_file_id,
+            PLAYWRIGHT_CONTENT_ALIASES, PLAYWRIGHT_CONTENT_LABEL,
+        )
+        response = result.to_response()
+        if not result.ok:
+            # Atomic per V5: a validation failure (unknown/duplicate
+            # Test Case ID, malformed row, or nothing usable at all)
+            # saves NOTHING — the caller shows this breakdown instead
+            # of a bare 400.
+            return response
+
+        saved_ids = []
+        mapped_without_script_ids = []
+        for row in result.valid_rows:
+            test_case_id = row["matched_test_case"]["id"]
+            if row["content"]:
+                # Exactly the same call PUT /test-cases/{id}/script makes
+                # — the imported script lands in the identical field
+                # "View Script" already reads, is immediately viewable/
+                # editable/executable there, with no parallel storage.
+                self.update_script(test_case_id, row["content"])
+                saved_ids.append(row["test_case_id"])
+            else:
+                # Script is optional (V5-04): a Test Case ID with no
+                # script text still counts as a valid, accepted mapping
+                # row (it passed validation above), but nothing is
+                # written to automation_script — there is no existing
+                # "bound with no script" concept in the current schema
+                # to safely repurpose here, and writing an empty script
+                # would make Execute find nothing to run while looking
+                # like it succeeded. Reported separately so the import
+                # summary is honest about what was and wasn't saved.
+                mapped_without_script_ids.append(row["test_case_id"])
+        response["saved_test_case_ids"] = saved_ids
+        response["mapped_without_script_ids"] = mapped_without_script_ids
+        return response
 
     def update_script(self, test_case_id, script_text):
 
-        manager = TestExecutionManager()
+        manager = TestExecutionManager(initialize_automation=False)
+        manager.repository = self.repository
 
         test_case = manager.repository.get_test_case(test_case_id)
 
@@ -931,14 +1272,13 @@ class TestCasesWeb:
                 "The selected script source is empty and cannot be activated."
             )
 
-        expected_tool = self.repository.execution_tool_for_automation_type(
+        expected_tool = self.repository.execution_for_automation_type(
             test_case.get("automation_type")
         )
 
         if (
-            test_case.get("execution_type") != "Automatable"
-            or not expected_tool
-            or test_case.get("execution_tool") != expected_tool
+            not expected_tool
+            or test_case.get("execution") != expected_tool
         ):
 
             raise ValueError(
@@ -1026,8 +1366,7 @@ class TestCasesWeb:
         # SQL test cases.
         if (
             (test_case.get("automation_type") or "None") != "API"
-            and test_case.get("execution_type") == "Automatable"
-            and test_case.get("execution_tool") == "API Automation"
+            and test_case.get("execution") == "API"
         ):
 
             self.repository.update_automation(test_case_id, "API")
@@ -1064,24 +1403,22 @@ class TestCasesWeb:
 
         validating_selected_source = source in ("AUTO", "MANUAL")
 
-        def add_execution_tool_configured():
+        def add_execution_configured():
 
-            expected_tool = self.repository.execution_tool_for_automation_type(
+            expected_tool = self.repository.execution_for_automation_type(
                 automation_type
             )
 
             add(
-                "execution_tool_configured",
-                test_case.get("execution_type") == "Automatable"
-                and bool(expected_tool)
-                and test_case.get("execution_tool") == expected_tool,
-                "" if test_case.get("execution_type") == "Automatable" else
-                "The central Test Case is not classified as Automatable.",
+                "execution_configured",
+                bool(expected_tool) and test_case.get("execution") == expected_tool,
+                "" if test_case.get("execution") in {"Playwright", "API", "SQL"} else
+                "The central Test Case has no automation execution selected.",
             )
 
         if not validating_selected_source:
 
-            add_execution_tool_configured()
+            add_execution_configured()
 
             # REMOVE-SCRIPT-LIFECYCLE item 4/7: API Automation has no
             # Set Active step and no "active_script_source" concept —
@@ -1142,7 +1479,7 @@ class TestCasesWeb:
             # above (request_validated/active_script_approved) stay
             # out of this branch on purpose — they describe execute-
             # readiness, not "please validate me right now".
-            add_execution_tool_configured()
+            add_execution_configured()
 
         # REMOVE-SCRIPT-LIFECYCLE item 4: "automation_type_set" is a
         # script-lifecycle-era generic check ("has ANY automation type
@@ -1319,7 +1656,17 @@ class TestCasesWeb:
                     None,
                 )
 
+            # Phase 5 — Manual Source Endpoint: a saved Method/URL with
+            # no imported endpoint bound is a legitimate, ready-to-run
+            # configuration, not a blocker — mirrors the same allowance
+            # execute_api() makes (see its own Phase 5 comment).
+            manual_url = str(request_config.get("url") or "").strip()
+
             if bound_endpoint:
+
+                endpoint_bound_detail = ""
+
+            elif manual_url:
 
                 endpoint_bound_detail = ""
 
@@ -1327,8 +1674,11 @@ class TestCasesWeb:
 
                 endpoint_bound_detail = (
                     "No imported API Collection endpoint matches this "
-                    "test case's Domain / Module / Knowledge Name — "
-                    "import a Postman Collection for this scope first."
+                    "test case's Domain / Module / Knowledge Name, and "
+                    "no manual Request URL has been saved — import a "
+                    "Postman Collection for this scope, or enter a "
+                    "Method/URL directly in Request Configuration and "
+                    "Save."
                 )
 
             elif len(candidates) == 1:
@@ -1347,9 +1697,12 @@ class TestCasesWeb:
                     f"case can be considered ready."
                 )
 
-            add("endpoint_bound", bool(bound_endpoint), endpoint_bound_detail)
+            add(
+                "endpoint_bound", bool(bound_endpoint) or bool(manual_url),
+                endpoint_bound_detail,
+            )
 
-            if bound_endpoint:
+            if bound_endpoint or manual_url:
 
                 runner = ApiAutomationRunner()
 
@@ -1360,7 +1713,7 @@ class TestCasesWeb:
                 try:
 
                     request_spec = runner.build_request(
-                        bound_endpoint, config, request_config
+                        bound_endpoint or {}, config, request_config
                     )
 
                     request_config_valid = True
@@ -1484,7 +1837,7 @@ class TestCasesWeb:
                     }
 
                 missing_variables = runner.find_missing_variables(
-                    bound_endpoint, config, request_config
+                    bound_endpoint or {}, config, request_config
                 )
 
                 add(
@@ -1504,7 +1857,7 @@ class TestCasesWeb:
                 # is specifically their auth setup vs. some unrelated
                 # header/body variable.
                 missing_secret_variables = runner.find_missing_secret_variables(
-                    bound_endpoint, config, request_config
+                    bound_endpoint or {}, config, request_config
                 )
 
                 add(
@@ -1527,7 +1880,7 @@ class TestCasesWeb:
                 # ApiAutomationRunner.send()'s `assertions` parameter).
                 has_assertion = bool(
                     test_case.get("api_expected_status_code")
-                    or bound_endpoint.get("example_response_status")
+                    or (bound_endpoint or {}).get("example_response_status")
                     or structured_assertions
                 )
 
@@ -1664,8 +2017,7 @@ class TestCasesWeb:
 
         return (
             test_case.get("automation_type") == "Playwright"
-            and test_case.get("execution_type") == "Automatable"
-            and test_case.get("execution_tool") == "Playwright"
+            and test_case.get("execution") == "Playwright"
             and test_case.get("status") == "Automated"
             and self.repository.is_script_source_validated(
                 test_case, test_case.get("active_script_source") or "AUTO"
@@ -1778,26 +2130,42 @@ class TestCasesWeb:
     def list_runs(
         self, domain=None, module=None, knowledge_name=None,
         version=None, document_type=None, source_knowledge_ids=None, test_case_document=None,
+        test_case_version_id=None,
         test_case_id=None, status=None, automation_type=None, q=None,
+        start_date=None, end_date=None,
         limit=50, offset=0,
     ):
 
         scoped_ids = None
-        if version or document_type or source_knowledge_ids or test_case_document:
+        if version or document_type or source_knowledge_ids or test_case_document or test_case_version_id:
             workspace = self.list_workspace(
                 domain=domain, module=module, knowledge_name=knowledge_name, version=version,
                 document_type=document_type, source_knowledge_ids=source_knowledge_ids,
-                test_case_document=test_case_document, automation_type=automation_type,
+                test_case_document=test_case_document, test_case_version_id=test_case_version_id,
+                automation_type=automation_type,
                 limit=10000, offset=0,
             )
             scoped_ids = [row["id"] for row in workspace["test_cases"]]
+        # Requirement 9 — Reports & Analytics date-range filter passes
+        # straight through to AutomationExecutionRepository.list_runs(),
+        # the ONE place run history is stored/queried (see that
+        # method's docstring) — no second filtering path.
         return self.runs.list_runs(
             domain=domain, module=module, knowledge_name=knowledge_name,
             test_case_id=test_case_id, status=status,
             test_case_ids=scoped_ids,
             automation_type=automation_type, q=q,
+            start_date=start_date, end_date=end_date,
             limit=limit, offset=offset,
         )
+
+    def delete_runs(self, run_uuids):
+        """Phase 8 — History popup's Clear action. See
+        AutomationExecutionRepository.delete_runs() for the full
+        behavior; this is a thin pass-through, same pattern as
+        list_runs() above."""
+
+        return self.runs.delete_runs(run_uuids)
 
     def get_evidence_path(self, run_uuid):
         """
@@ -2407,8 +2775,7 @@ class TestCasesWeb:
             )
 
         if (
-            test_case.get("execution_type") != "Automatable"
-            or test_case.get("execution_tool") != "API Automation"
+            test_case.get("execution") != "API"
         ):
 
             raise ValueError(
@@ -2430,56 +2797,88 @@ class TestCasesWeb:
                 "execution."
             )
 
+        # Section F: the per-Test-Case Params/Headers/Auth/Body/
+        # Assertions/Extraction definition — the RAW, unmasked config
+        # (never get_api_request_config()'s masked-for-display
+        # version, which blanks the secret auth fields) since this is
+        # what actually builds and sends the real outgoing request.
+        # Fetched BEFORE endpoint resolution below (API-Automation-
+        # Enhancement Phase 5) so a manually-entered Method/URL (no
+        # imported Postman endpoint at all for this scope) can still
+        # be recognized instead of always hard-failing.
+        request_config = self._parsed_api_request_config(test_case)
+
         endpoint, endpoints = self._resolve_bound_endpoint(
             test_case, manager, explicit_endpoint_id=endpoint_id
         )
 
         if endpoint is None:
 
-            if not endpoints:
+            manual_url = str(request_config.get("url") or "").strip()
+
+            if manual_url:
+
+                # Phase 5 — Manual Source Endpoint: no imported API
+                # Collection endpoint is bound (none exists for this
+                # scope, or none was selected), but the operator has
+                # typed a Method/URL directly into the Request
+                # Configuration bar and saved it. Proceed with an
+                # empty synthetic endpoint — build_request() already
+                # takes method/url entirely from request_overrides
+                # whenever they're set (see its own docstring), so
+                # nothing about the real outgoing request differs
+                # from the imported-endpoint path below.
+                endpoint = {}
+
+            elif not endpoints:
 
                 raise ValueError(
                     "No imported API Collection endpoint matches this "
-                    "test case's Domain / Module / Knowledge Name — "
-                    "import a Postman Collection for this scope first "
+                    "test case's Domain / Module / Knowledge Name, and "
+                    "no manual Request URL has been saved for it — "
+                    "either import a Postman Collection for this scope "
                     "(Knowledge Hub -> Upload -> Source Type: API "
-                    "Collection)."
+                    "Collection) or enter a Method/URL directly in "
+                    "Request Configuration and Save."
                 )
 
-            return {
-                "executed": False,
-                "selection_required": True,
-                "missing_variables": [],
-                "endpoints": [
-                    {
-                        "id": item.get("id"), "name": item.get("name"),
-                        "method": item.get("method"),
-                        "url": item.get("url_resolved") or item.get("url_raw"),
-                    }
-                    for item in endpoints
-                ],
-            }
+            else:
+
+                return {
+                    "executed": False,
+                    "selection_required": True,
+                    "missing_variables": [],
+                    "endpoints": [
+                        {
+                            "id": item.get("id"), "name": item.get("name"),
+                            "method": item.get("method"),
+                            "url": item.get("url_resolved") or item.get("url_raw"),
+                        }
+                        for item in endpoints
+                    ],
+                }
 
         config = TestEnvironmentConfig().load()
 
         runner = ApiAutomationRunner()
 
-        # Section F: the per-Test-Case Params/Headers/Auth/Body/
-        # Assertions/Extraction definition — the RAW, unmasked config
-        # (never get_api_request_config()'s masked-for-display
-        # version, which blanks the secret auth fields) since this is
-        # what actually builds and sends the real outgoing request.
-        request_config = self._parsed_api_request_config(test_case)
-
         missing = runner.find_missing_variables(
             endpoint, config, request_config
         )
 
+        # Phase 5 — Manual Source Endpoint: with no imported endpoint
+        # (endpoint == {}), fall back to the per-Test-Case request
+        # config's own manually-entered method/url so the Execute
+        # tab's "Endpoint" summary line still shows something
+        # meaningful instead of blank/None.
         endpoint_summary = {
             "id": endpoint.get("id"),
-            "name": endpoint.get("name"),
-            "method": endpoint.get("method"),
-            "url": endpoint.get("url_resolved") or endpoint.get("url_raw"),
+            "name": endpoint.get("name") or "Manual Request",
+            "method": endpoint.get("method") or request_config.get("method") or "",
+            "url": (
+                endpoint.get("url_resolved") or endpoint.get("url_raw")
+                or request_config.get("url") or ""
+            ),
         }
 
         if missing:
@@ -2592,12 +2991,36 @@ class TestCasesWeb:
             result.get("response_body_text")
         )
 
+        # Phase 8 (API-Automation-Enhancement): every branch below now
+        # persists the same evidence bundle — endpoint, status,
+        # assertions, extracted variable NAMES, and (new) the actual
+        # masked request/response — so the History "View" popup can
+        # show full per-record evidence for ANY past run, including a
+        # transport error or a "Blocked" (no expectation configured)
+        # run, which previously persisted no stdout at all and were
+        # structurally impossible to inspect afterward. request/
+        # response_headers/response_body_text are already masked above
+        # (result["request"] by send() itself; response_headers/
+        # response_body_text just above at Section P) — safe to persist
+        # as-is.
+        evidence = {
+            "endpoint": endpoint_summary,
+            "status_code": result.get("status_code"),
+            "expected_status": result.get("expected_status"),
+            "assertions": result.get("assertions") or [],
+            "extracted_variables": masked_extracted_variables,
+            "request": result.get("request") or {},
+            "response_headers": result.get("response_headers") or {},
+            "response_body_text": result.get("response_body_text") or "",
+        }
+
         if result.get("error"):
 
             finished = self.runs.mark_finished(run["run_uuid"], {
                 "error": result["error"],
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
                 "stderr": result["error"],
+                "stdout": json.dumps(evidence),
             })
 
         elif result.get("auto_verdict") == "Pass":
@@ -2605,13 +3028,7 @@ class TestCasesWeb:
             finished = self.runs.mark_finished(run["run_uuid"], {
                 "success": True,
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
-                "stdout": json.dumps({
-                    "endpoint": endpoint_summary,
-                    "status_code": result.get("status_code"),
-                    "expected_status": result.get("expected_status"),
-                    "assertions": result.get("assertions") or [],
-                    "extracted_variables": masked_extracted_variables,
-                }),
+                "stdout": json.dumps(evidence),
             })
 
             self.repository.update_result(test_case_id, "Pass")
@@ -2648,24 +3065,24 @@ class TestCasesWeb:
                 "success": False,
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
                 "stderr": failure_detail,
-                "stdout": json.dumps({
-                    "endpoint": endpoint_summary,
-                    "status_code": result.get("status_code"),
-                    "expected_status": result.get("expected_status"),
-                    "assertions": result.get("assertions") or [],
-                    "extracted_variables": masked_extracted_variables,
-                }),
+                "stdout": json.dumps(evidence),
             })
 
             self.repository.update_result(test_case_id, "Fail")
 
         else:
 
+            # Phase 8: this "Blocked" branch previously persisted no
+            # stdout at all — a run that completed a real HTTP request
+            # but had nothing configured to judge it Pass/Fail was
+            # structurally impossible to inspect afterward. It now
+            # carries the same evidence bundle as every other outcome.
             finished = self.runs.mark_finished(run["run_uuid"], {
                 "error": "Blocked: no expected HTTP status or assertion "
                 "is configured; the result cannot be judged Pass or "
                 "Fail.",
                 "duration": (result.get("elapsed_ms") or 0) / 1000,
+                "stdout": json.dumps(evidence),
             })
 
         return {
@@ -2711,9 +3128,9 @@ class SqlAutomationWeb:
           actual query execution + assertion evaluation).
     """
 
-    def __init__(self):
+    def __init__(self, repository=None):
 
-        self.repository = TestCaseRepository()
+        self.repository = repository or TestCaseRepository()
 
         self.runs = AutomationExecutionRepository()
 
@@ -2956,6 +3373,62 @@ class SqlAutomationWeb:
         "value_equals": {"column": True, "value": True},
     }
 
+    def import_mapping(self, file_bytes, filename, test_case_version_id, test_case_file_id):
+        from Core.automation_import_service import (
+            AutomationImportService, SQL_CONTENT_ALIASES, SQL_CONTENT_LABEL,
+        )
+        result = AutomationImportService(self.repository).validate(
+            file_bytes, filename, test_case_version_id, test_case_file_id,
+            SQL_CONTENT_ALIASES, SQL_CONTENT_LABEL,
+        )
+        response = result.to_response()
+        if not result.ok:
+            return response
+        saved = []
+        without_script = []
+        for row in result.valid_rows:
+            if row["content"]:
+                self.save_script(
+                    row["matched_test_case"]["id"], row["content"],
+                    "row_exists", None, None,
+                )
+                saved.append(row["test_case_id"])
+            else:
+                without_script.append(row["test_case_id"])
+        response["saved_test_case_ids"] = saved
+        response["mapped_without_script_ids"] = without_script
+        return response
+
+    def import_raw_sql(self, file_bytes, filename, test_case_version_id,
+                       test_case_file_id, test_case_id):
+        """Bind one raw SQL file to one test case in the selected workbook."""
+        if not str(filename or "").lower().endswith(".sql"):
+            raise ValueError("Raw SQL import requires a .sql file.")
+        try:
+            sql = bytes(file_bytes or b"").decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise ValueError("The SQL file must be UTF-8 text.") from error
+        if not sql.strip():
+            raise ValueError("The SQL file is empty.")
+        conn = self.repository.db.get_connection()
+        try:
+            file_row = conn.execute(
+                "SELECT workbook_path FROM test_case_files WHERE id=? AND test_case_version_id=?",
+                (int(test_case_file_id), int(test_case_version_id)),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not file_row:
+            raise ValueError("The selected Test Cases workbook does not belong to the selected folder.")
+        test_case = self.repository.get_test_case(int(test_case_id))
+        if (not test_case
+                or int(test_case.get("test_case_version_id") or 0) != int(test_case_version_id)
+                or str(test_case.get("reviewed_workbook_path") or "") != str(file_row[0] or "")):
+            raise ValueError("The selected Test Case ID does not belong to the selected workbook.")
+        self.save_script(int(test_case_id), sql, "row_exists", None, None)
+        return {"ok": True, "test_case_id": int(test_case_id),
+                "test_case_number": test_case.get("tc_number")}
+
     @classmethod
     def _validate_assertion_config(
         cls, assertion_type, assertion_value, assertion_column
@@ -3111,8 +3584,7 @@ class SqlAutomationWeb:
             raise ValueError("This test case's Automation Type is not 'SQL'.")
 
         if (
-            test_case.get("execution_type") != "Automatable"
-            or test_case.get("execution_tool") != "SQL Automation"
+            test_case.get("execution") != "SQL"
         ):
 
             raise ValueError(
@@ -3190,3 +3662,103 @@ class SqlAutomationWeb:
         )
 
         return finished
+
+
+# ============================================================
+# SQL Automation — "Upload SQL Script" (Rule 6)
+# ============================================================
+
+
+class SqlScriptsWeb:
+    """
+    Thin web-facing wrapper around Core/sql_script_repository.py's
+    SqlScriptRepository, mirroring ApiCollectionsWeb's own shape
+    exactly (see that class above) — upload takes raw file bytes plus
+    original filename, writes them to a temp file, delegates to the
+    Core repository, and cleans up the temp file whether the import
+    succeeded or failed.
+
+    This is a SEPARATE, ADDITIVE class from SqlAutomationWeb above —
+    see Core/sql_script_repository.py's module docstring for why the
+    two mechanisms are intentionally kept apart.
+    """
+
+    def __init__(self):
+
+        self.repo = SqlScriptRepository()
+
+    def upload_script(
+        self, file_bytes, original_filename, test_case_version_id,
+        display_name=None,
+    ):
+
+        if not file_bytes:
+
+            raise ValueError("A .sql file is required.")
+
+        safe_name = Path(original_filename or "script.sql").name or "script.sql"
+
+        if not safe_name.lower().endswith(".sql"):
+
+            raise ValueError("Only .sql files can be uploaded as a SQL Script.")
+
+        temp_dir = tempfile.mkdtemp(prefix="qaais_sql_")
+
+        temp_path = Path(temp_dir) / safe_name
+
+        temp_path.write_bytes(file_bytes)
+
+        try:
+
+            result = self.repo.upload_script(
+                file_path=str(temp_path),
+                test_case_version_id=test_case_version_id,
+                display_name=display_name,
+            )
+
+        finally:
+
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        if not result.get("success"):
+
+            raise ValueError(result.get("error") or "Upload failed.")
+
+        return result
+
+    def list_scripts(self):
+
+        return self.repo.list_scripts()
+
+    def get_script(self, script_id):
+
+        return self.repo.get_script(script_id)
+
+    def delete_script(self, script_id):
+
+        ok = self.repo.delete_script(script_id)
+
+        if not ok:
+
+            raise ValueError(f"SQL script {script_id} not found.")
+
+        return {"success": True}
+
+    def validate_script(self, script_id, executed_by_user_id=None, executed_by_username=None):
+
+        return self.repo.validate_script(
+            script_id, executed_by_user_id=executed_by_user_id,
+            executed_by_username=executed_by_username,
+        )
+
+    def execute_script(self, script_id, executed_by_user_id=None, executed_by_username=None):
+
+        return self.repo.execute_script(
+            script_id, executed_by_user_id=executed_by_user_id,
+            executed_by_username=executed_by_username,
+        )
+
+    def list_history(self, script_id, limit=50):
+        """Rule 6 — see SqlScriptRepository.list_history()."""
+
+        return self.repo.list_history(script_id, limit=limit)

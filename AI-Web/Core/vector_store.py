@@ -477,6 +477,20 @@ class VectorStore:
 
             return 0
 
+    def has_source_vectors(self, *, domain, module, knowledge_name, version, file_name):
+        """Verify at least one vector exists for one exact managed source."""
+        clauses = [
+            {"domain": str(domain or "")}, {"module": str(module or "")},
+            {"knowledge_name": str(knowledge_name or "")},
+            {"version": str(version or "")}, {"file_name": str(file_name or "")},
+        ]
+        try:
+            result = self.collection.get(where={"$and": clauses}, limit=1, include=[])
+            return bool((result or {}).get("ids"))
+        except Exception:
+            self.logger.exception("Source vector preflight failed.")
+            return False
+
     # --------------------------------------------------
     # Clear
     # --------------------------------------------------

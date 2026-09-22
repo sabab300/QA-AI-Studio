@@ -8,17 +8,21 @@ Version: 4.0
 import hashlib
 import re
 import shutil
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from Shared.central_repository import CentralRepository
 
 
 class RepositoryManager:
 
     def __init__(self):
 
-        self.repository_root = (
-            Path(__file__).resolve().parent.parent
-            / "Repository"
-        )
+        self.central = CentralRepository()
+        self.repository_root = self.central.root
 
         self.repository_root.mkdir(
             parents=True,
@@ -379,21 +383,18 @@ class RepositoryManager:
         module,
         knowledge_name,
         version,
-        document_type=""
+        document_type="",
+        source_type="Files",
+        source_file_id=None,
     ):
 
         source = Path(source_file)
 
-        destination_folder = self.get_documents_folder(
-
-            domain,
-
-            module,
-
-            knowledge_name,
-
-            version
-
+        source_file_id = source_file_id or self.central.create_source_file_id(source.name)
+        destination_folder = self.central.build_source_path(
+            domain=domain, module=module, knowledge_name=knowledge_name,
+            version=version, document_type=document_type or "Other",
+            source_type=source_type or "Files", source_file_id=source_file_id,
         )
 
         destination = (
@@ -404,11 +405,37 @@ class RepositoryManager:
 
         )
 
+        # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4
+        # Rule 2: a Source Document (the SD-* folder) is a REAL managed
+        # container that can legitimately hold more than one physical
+        # Source File — the rule's own worked example is exactly this:
+        # SD-CRF-123-01122026/{CRF-123-01122026.docx,
+        # CRF-123-01122026.pdf}. Both files share the same filename
+        # stem, so central.create_source_file_id()/build_source_path()
+        # correctly resolve them to the SAME destination_folder — that
+        # is the intended behavior, not a collision.
+        #
+        # The previous check here (`if destination_folder.exists():
+        # raise ValueError(...)`) treated the SECOND file into an
+        # already-created Source Document folder as an error, which
+        # made that documented multi-file scenario impossible: the
+        # first upload created the folder, so every subsequent upload
+        # into the same Source Document — even a different file —
+        # failed immediately. The only real collision to guard against
+        # is the SAME file name being uploaded twice into the SAME
+        # Source Document, which is exactly what checking `destination`
+        # (the actual target file path), not `destination_folder` (the
+        # container), already does below.
         destination_folder.mkdir(
             parents=True,
             exist_ok=True
-        )        
+        )
 
+        if destination.exists():
+            raise FileExistsError(
+                f"'{source.name}' already exists in this Source Document "
+                f"({destination_folder.name})."
+            )
         shutil.copy2(
 
             source,
@@ -429,7 +456,11 @@ class RepositoryManager:
 
             "extension": destination.suffix.lower(),
 
-            "document_type": document_type
+            "document_type": document_type,
+
+            "source_file_id": source_file_id,
+
+            "repository_relative_path": self.central.relative(destination),
 
         }
 
