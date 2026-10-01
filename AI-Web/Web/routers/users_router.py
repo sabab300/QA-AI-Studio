@@ -10,7 +10,7 @@ Version: 1.0
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from Core.security import generate_temp_password
 from Core.user_repository import UserRepository
@@ -26,7 +26,8 @@ class CreateUserRequest(BaseModel):
     email: Optional[str] = ""
     full_name: Optional[str] = ""
     contact_number: Optional[str] = ""
-    role_id: int
+    role_ids: List[int] = Field(default_factory=list)
+    role_id: Optional[int] = None
 
 
 class UpdateUserRoleRequest(BaseModel):
@@ -39,6 +40,7 @@ class UpdateUserProfileRequest(BaseModel):
     full_name: Optional[str] = None
     contact_number: Optional[str] = None
     role_id: Optional[int] = None
+    role_ids: Optional[List[int]] = None
 
 
 class SetActiveRequest(BaseModel):
@@ -81,11 +83,26 @@ def create_user(
 
     temp_password = generate_temp_password()
 
-    new_id = repository.create_user(
-        payload.username, payload.email, payload.full_name,
-        temp_password, payload.role_id,
-        contact_number=payload.contact_number,
+    assigned_role_ids = payload.role_ids or (
+        [payload.role_id] if payload.role_id is not None else []
     )
+
+    if not assigned_role_ids:
+
+        raise HTTPException(status_code=400, detail="At least one role is required.")
+
+    try:
+
+        new_id = repository.create_user(
+            payload.username, payload.email, payload.full_name,
+            temp_password, payload.role_id,
+            contact_number=payload.contact_number,
+            role_ids=assigned_role_ids,
+        )
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     repository.write_audit_log(
         user_id=current_user["id"],
@@ -133,14 +150,60 @@ def update_user_profile(
                 status_code=409, detail="That username is already taken."
             )
 
+    assigned_role_ids = payload.role_ids
+
+    if assigned_role_ids is None and payload.role_id is not None:
+
+        assigned_role_ids = [payload.role_id]
+
+    if assigned_role_ids is not None:
+
+        assigned_role_ids = list(dict.fromkeys(assigned_role_ids))
+
+        if not assigned_role_ids:
+
+            raise HTTPException(status_code=400, detail="At least one role is required.")
+
+        if user_id == current_user["id"] and current_user["role_id"] not in assigned_role_ids:
+
+            raise HTTPException(
+                status_code=409,
+                detail="Switch to another assigned role before removing your active role.",
+            )
+
+        admin_role = repository.get_role_by_name("Admin")
+        current_role_ids = {role["id"] for role in repository.get_user_roles(user_id)}
+
+        if (
+            admin_role
+            and admin_role["id"] in current_role_ids
+            and admin_role["id"] not in assigned_role_ids
+            and target.get("is_active")
+            and repository.count_active_admins(admin_role["id"], exclude_user_id=user_id) == 0
+        ):
+
+            raise HTTPException(
+                status_code=409,
+                detail="This is the last active Admin assignment and cannot be removed.",
+            )
+
     repository.update_user_profile(
         user_id,
         username=payload.username,
         email=payload.email,
         full_name=payload.full_name,
         contact_number=payload.contact_number,
-        role_id=payload.role_id,
     )
+
+    if assigned_role_ids is not None:
+
+        try:
+
+            repository.set_user_roles(user_id, assigned_role_ids)
+
+        except ValueError as error:
+
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     repository.write_audit_log(
         user_id=current_user["id"],
@@ -189,10 +252,13 @@ def delete_user(
 
         raise HTTPException(status_code=404, detail="User not found.")
 
-    if target.get("role_name") == "Admin":
+    target_role_ids = {role["id"] for role in repository.get_user_roles(user_id)}
+    admin_role = repository.get_role_by_name("Admin")
+
+    if admin_role and admin_role["id"] in target_role_ids:
 
         remaining = repository.count_active_admins(
-            target["role_id"], exclude_user_id=user_id
+            admin_role["id"], exclude_user_id=user_id
         )
 
         if remaining == 0:
@@ -228,7 +294,42 @@ def update_user_role(
 
     repository = UserRepository()
 
-    repository.update_role(user_id, payload.role_id)
+    target = repository.get_user_by_id(user_id)
+
+    if target is None:
+
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if user_id == current_user["id"] and payload.role_id != current_user["role_id"]:
+
+        raise HTTPException(
+            status_code=409,
+            detail="Use the assigned Roles editor and switch active role before replacing your current role.",
+        )
+
+    admin_role = repository.get_role_by_name("Admin")
+    current_role_ids = {role["id"] for role in repository.get_user_roles(user_id)}
+
+    if (
+        admin_role
+        and admin_role["id"] in current_role_ids
+        and payload.role_id != admin_role["id"]
+        and target.get("is_active")
+        and repository.count_active_admins(admin_role["id"], exclude_user_id=user_id) == 0
+    ):
+
+        raise HTTPException(
+            status_code=409,
+            detail="This is the last active Admin assignment and cannot be removed.",
+        )
+
+    try:
+
+        repository.update_role(user_id, payload.role_id)
+
+    except ValueError as error:
+
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     repository.write_audit_log(
         user_id=current_user["id"],

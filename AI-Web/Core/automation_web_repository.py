@@ -71,6 +71,7 @@ from Core.sql_environment_config import SqlEnvironmentConfig
 from Core.sql_automation_runner import SqlAutomationRunner, SqlValidationError
 from Core.sql_generator import SQLGenerator
 from Core.sql_script_repository import SqlScriptRepository
+from Shared.central_repository import CentralRepository
 
 GIT_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "Output" / "GitWorkspaces"
 
@@ -1143,14 +1144,11 @@ class TestCasesWeb:
 
         saved_ids = []
         mapped_without_script_ids = []
+        stable_updates = []
         for row in result.valid_rows:
             test_case_id = row["matched_test_case"]["id"]
             if row["content"]:
-                # Exactly the same call PUT /test-cases/{id}/script makes
-                # — the imported script lands in the identical field
-                # "View Script" already reads, is immediately viewable/
-                # editable/executable there, with no parallel storage.
-                self.update_script(test_case_id, row["content"])
+                stable_updates.append((test_case_id, row["content"]))
                 saved_ids.append(row["test_case_id"])
             else:
                 # Script is optional (V5-04): a Test Case ID with no
@@ -1163,6 +1161,12 @@ class TestCasesWeb:
                 # like it succeeded. Reported separately so the import
                 # summary is honest about what was and wasn't saved.
                 mapped_without_script_ids.append(row["test_case_id"])
+        # Validation above remains workbook-specific; persistence below is
+        # stable-Test-Case-specific and one DB/filesystem transaction for the
+        # whole accepted mapping. A failed physical write restores every file
+        # already replaced and rolls back every database row.
+        if stable_updates:
+            self.repository.update_playwright_scripts_atomically(stable_updates)
         response["saved_test_case_ids"] = saved_ids
         response["mapped_without_script_ids"] = mapped_without_script_ids
         return response
@@ -1219,6 +1223,16 @@ class TestCasesWeb:
             "syntax_warning": syntax_warning,
         }
 
+    def update_uploaded_script(self, test_case_id, script_text):
+        manager = TestExecutionManager(initialize_automation=False)
+        syntax_warning = manager.check_script_syntax(script_text)
+        changed = self.repository.update_uploaded_script(test_case_id, script_text)
+        return {
+            "test_case": self.get_test_case(test_case_id),
+            "syntax_warning": syntax_warning,
+            "changed": changed,
+        }
+
     def set_active_script(self, test_case_id, source):
 
         manager = TestExecutionManager()
@@ -1260,11 +1274,11 @@ class TestCasesWeb:
                 "Configuration Ready to Execute directly."
             )
 
-        script_text = (
-            test_case.get("recorded_script")
-            if source == "MANUAL"
-            else test_case.get("automation_script")
-        ) or ""
+        script_text = {
+            "AUTO": test_case.get("automation_script"),
+            "UPLOADED": test_case.get("uploaded_script"),
+            "MANUAL": test_case.get("recorded_script"),
+        }.get(source) or ""
 
         if not script_text.strip():
 
@@ -1328,7 +1342,7 @@ class TestCasesWeb:
           execution_tool_configured / active_script_approved checks
           that only make sense for "about to execute right now".
 
-        - source="AUTO"|"MANUAL" — VALIDATE (SELECTED) SCRIPT. "Is
+        - source="AUTO"|"UPLOADED"|"MANUAL" — VALIDATE (SELECTED) SCRIPT. "Is
           THIS saved draft — which may or may not be the currently
           Active one — syntactically/structurally sound?" Used by the
           Validate button on the Automation tab (item 6), which must
@@ -1401,7 +1415,7 @@ class TestCasesWeb:
 
             checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
-        validating_selected_source = source in ("AUTO", "MANUAL")
+        validating_selected_source = source in ("AUTO", "UPLOADED", "MANUAL")
 
         def add_execution_configured():
 
@@ -1455,10 +1469,20 @@ class TestCasesWeb:
                 source_validated = self.repository.is_script_source_validated(
                     test_case, active_source
                 )
+                # 2026-09-29 sync fix: read the pre-normalization lifecycle
+                # status (see TestCaseRepository.get_test_case()) — plain
+                # "status" here is the workbook-export execution-result
+                # value (Pass/Fail/Not Executed) and can never equal
+                # "Automated", even for a test case that IS Set Active,
+                # which made this check block every Playwright/SQL test
+                # case regardless of how current its validated hash was.
+                lifecycle_status = test_case.get(
+                    "automation_lifecycle_status", test_case.get("status")
+                )
                 add(
                     "active_script_approved",
-                    test_case.get("status") == "Automated" and source_validated,
-                    "" if test_case.get("status") == "Automated" and source_validated
+                    lifecycle_status == "Automated" and source_validated,
+                    "" if lifecycle_status == "Automated" and source_validated
                     else "The active script changed since validation, or has not "
                     "been validated and activated.",
                 )
@@ -1500,12 +1524,41 @@ class TestCasesWeb:
             )
 
         if validating_selected_source:
-            script = (
-                test_case.get("recorded_script") if source == "MANUAL"
-                else test_case.get("automation_script")
-            ) or ""
+            script = {
+                "AUTO": test_case.get("automation_script"),
+                "UPLOADED": test_case.get("uploaded_script"),
+                "MANUAL": test_case.get("recorded_script"),
+            }.get(source) or ""
         else:
             script = TestExecutionManager.get_active_script(test_case)
+
+        # ROUND-3-SYNC-RECONCILE: an explicit Validate (never the
+        # read-only execute-readiness preflight, source=None) is the
+        # one place this reconciles and PERSISTS stale
+        # TRANSACTION_OPENER / PARENT_LOCATOR metadata left behind by a
+        # repair that predates apply_script_repairs()'s own live
+        # propagation (see TestExecutionManager.
+        # reconcile_transaction_metadata()'s docstring). Preflight/
+        # execute-readiness stays a pure read of whatever is already
+        # persisted+validated — it never silently mutates the script;
+        # it simply passes once Validate has reconciled and persisted
+        # it. Only ever touches TRANSACTION_OPENER/PARENT_LOCATOR on
+        # OTHER steps, only when the opener is unambiguous and
+        # ownership was already proven (OWNERSHIP_ACCEPTED=true) —
+        # a genuine conflict is left for the check below to report,
+        # exactly as before.
+        transaction_reconciliation = None
+        if validating_selected_source and automation_type == "Playwright" and script:
+            reconciled_script, reconcile_changes = manager.reconcile_transaction_metadata(script)
+            if reconcile_changes:
+                if source == "MANUAL":
+                    manager.update_recorded_script(test_case_id, reconciled_script)
+                elif source == "UPLOADED":
+                    manager.repository.update_uploaded_script(test_case_id, reconciled_script)
+                else:
+                    manager.update_script(test_case_id, "Playwright", reconciled_script)
+                script = reconciled_script
+                transaction_reconciliation = reconcile_changes
 
         # API-SQL-AUTOMATION-END-TO-END: "Selenium/browser script text
         # must NOT control API execution readiness" — automation_script
@@ -1522,6 +1575,17 @@ class TestCasesWeb:
                 "" if script else (
                     "No automation script has been generated or recorded "
                     "yet."
+                ),
+            )
+
+        if transaction_reconciliation:
+
+            add(
+                "transaction_metadata_reconciled", True,
+                "; ".join(
+                    f"Step {change['step']} {change['field']} synced to the "
+                    f"current opener ('{change['old']}' -> '{change['new']}')"
+                    for change in transaction_reconciliation[:8]
                 ),
             )
 
@@ -2015,10 +2079,18 @@ class TestCasesWeb:
 
     def can_auto_execute(self, test_case):
 
+        # 2026-09-29 sync fix: see the matching comment on the
+        # active_script_approved check above — "status" here is the
+        # workbook-export execution-result value, never the raw
+        # "Automated" lifecycle value, once a test case has gone through
+        # TestCaseRepository.get_test_case()'s normalization.
+        lifecycle_status = test_case.get(
+            "automation_lifecycle_status", test_case.get("status")
+        )
         return (
             test_case.get("automation_type") == "Playwright"
             and test_case.get("execution") == "Playwright"
-            and test_case.get("status") == "Automated"
+            and lifecycle_status == "Automated"
             and self.repository.is_script_source_validated(
                 test_case, test_case.get("active_script_source") or "AUTO"
             )
@@ -3201,9 +3273,13 @@ class SqlAutomationWeb:
 
         return self.env.get_masked()
 
-    def test_connection(self):
-
+    def test_connection(self, fields=None):
         profile = self.env.load()
+        for key, value in dict(fields or {}).items():
+            if key == "sql_password" and value in (None, "", "********"):
+                continue
+            if value is not None:
+                profile[key] = value
 
         return self.runner.test_connection(profile)
 
@@ -3410,24 +3486,60 @@ class SqlAutomationWeb:
             raise ValueError("The SQL file must be UTF-8 text.") from error
         if not sql.strip():
             raise ValueError("The SQL file is empty.")
+        from Core.sql_automation_runner import validate_readonly_sql
+        validate_readonly_sql(sql)
         conn = self.repository.db.get_connection()
+        conn.row_factory = self.repository._dict_factory
         try:
             file_row = conn.execute(
                 "SELECT workbook_path FROM test_case_files WHERE id=? AND test_case_version_id=?",
                 (int(test_case_file_id), int(test_case_version_id)),
             ).fetchone()
+            version_row = conn.execute(
+                "SELECT * FROM test_case_versions WHERE id=?",
+                (int(test_case_version_id),),
+            ).fetchone()
         finally:
             conn.close()
-        if not file_row:
+        if not file_row or not version_row:
             raise ValueError("The selected Test Cases workbook does not belong to the selected folder.")
         test_case = self.repository.get_test_case(int(test_case_id))
         if (not test_case
                 or int(test_case.get("test_case_version_id") or 0) != int(test_case_version_id)
-                or str(test_case.get("reviewed_workbook_path") or "") != str(file_row[0] or "")):
+                or str(test_case.get("reviewed_workbook_path") or "") != str(file_row["workbook_path"] or "")):
             raise ValueError("The selected Test Case ID does not belong to the selected workbook.")
-        self.save_script(int(test_case_id), sql, "row_exists", None, None)
+        if str(test_case.get("execution") or "").upper() != "SQL":
+            raise ValueError("Only a Test Case whose Execution value is SQL can receive a SQL script.")
+
+        central = CentralRepository()
+        folder = central.build_automation_path(
+            version_row["folder_path"], "SQL", version_row["version_number"],
+            version_row["source_file_id"],
+        )
+        folder_preexisted = folder.is_dir()
+        target = folder / (central.sanitize_segment(test_case.get("tc_id") or test_case.get("tc_number")) + ".sql")
+        previous = target.read_bytes() if target.is_file() else None
+        folder.mkdir(parents=True, exist_ok=True)
+        descriptor, staged_name = tempfile.mkstemp(prefix=f".{target.stem}-", suffix=".tmp", dir=folder)
+        try:
+            with open(descriptor, "wb", closefd=True) as handle:
+                handle.write(bytes(file_bytes or b""))
+            Path(staged_name).replace(target)
+            script_json = self._pack_script(sql, "row_exists", None, None)
+            self.repository.update_sql_asset(int(test_case_id), script_json, str(target))
+        except Exception:
+            Path(staged_name).unlink(missing_ok=True)
+            if previous is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(previous)
+            if not folder_preexisted and folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+            raise
         return {"ok": True, "test_case_id": int(test_case_id),
-                "test_case_number": test_case.get("tc_number")}
+                "test_case_number": test_case.get("tc_number"),
+                "repository_path": str(target), "file_name": target.name,
+                "script_already_existed": previous is not None}
 
     @classmethod
     def _validate_assertion_config(

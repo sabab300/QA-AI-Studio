@@ -22,29 +22,100 @@ COLUMNS = (
     ("steps", "Test Steps"),
     ("expected_result", "Expected Result"),
     ("actual_result", "Actual Result"),
-    ("execution", "Execution"),
+    ("execution", "Execution Type"),
     ("status", "Status"),
     ("bug_id", "Bug ID"),
     ("comments", "Comments"),
 )
+# One template-token contract for mapping UI, validation, preview and publish.
+TEMPLATE_TOKEN_ALIASES = {
+    "requirement_scenario": "scenario",
+    "test_cases": "test_case",
+    "execution_type": "execution",
+}
+DEFAULT_CLICKUP_DESCRIPTION_TEMPLATE = """Test Case:
+{{tc_number}}
+
+Scenario:
+{{scenario}}
+
+Test Case Details:
+{{test_case}}
+
+Expected Result:
+{{expected_result}}
+
+Actual Result:
+{{actual_result}}
+
+Execution Type:
+{{execution}}
+Status:
+{{status}}
+
+Source:
+QA AI Studio"""
+
+
+def canonical_template_token(token: str) -> str:
+    value = str(token or "").strip()
+    return TEMPLATE_TOKEN_ALIASES.get(value, value)
+
+
+def normalize_template_tokens(template: str) -> str:
+    return re.sub(
+        r"{{\s*([^{}]+?)\s*}}",
+        lambda match: "{{" + canonical_template_token(match.group(1)) + "}}",
+        str(template or ""),
+    )
 HEADERS = tuple(label for _, label in COLUMNS)
 HEADER_TO_FIELD = {label.casefold(): field for field, label in COLUMNS}
+HEADER_TO_FIELD.update({
+    "execution": "execution",
+    "method": "execution",
+    "execution method": "execution",
+    "result": "status",
+})
 REQUIRED_FIELDS = (
     "tc_number", "scenario", "test_type", "pre_conditions", "test_case", "steps",
     "expected_result", "importance", "execution",
 )
 EXECUTION_VALUES = ("Manual", "Playwright", "API", "SQL")
-STATUS_VALUES = ("Pass", "Fail")
+STATUS_VALUES = ("Not Executed", "Pass", "Fail")
 
 
 def normalize_execution(values) -> str:
-    """Map the legacy type/tool pair to the one canonical Execution field."""
-    value = str(values.get("execution") or "").strip()
-    aliases = {"API Automation": "API", "SQL Automation": "SQL",
-               "Manual Execution": "Manual", "manual": "Manual",
+    """Map legacy names/values to the canonical Execution Type field."""
+    value = str(
+        values.get("execution") or values.get("execution_type")
+        or values.get("execution_method") or values.get("method") or ""
+    ).strip()
+    aliases = {"api automation": "API", "sql automation": "SQL",
+               "manual execution": "Manual", "manual": "Manual",
                "playwright": "Playwright", "api": "API", "sql": "SQL"}
-    value = aliases.get(value, value)
-    return aliases.get(value, value or "Manual")
+    normalized = aliases.get(value.casefold(), value)
+    if normalized in EXECUTION_VALUES:
+        return normalized
+    if normalized.casefold() in {"", "not executed", "not run", "none"}:
+        return "Manual"
+    return normalized
+
+
+def normalize_status(values) -> str:
+    """Return the canonical Test Case execution status, preserving run fields."""
+    explicit = values.get("test_case_status") or values.get("execution_result") or values.get("result")
+    stored_status = values.get("status")
+    status_word = str(stored_status or "").strip().casefold().replace("_", " ")
+    raw = explicit or (stored_status if status_word in {"pass", "fail", "not executed"} else None) \
+        or values.get("last_result") or stored_status or ""
+    value = str(raw).strip().casefold().replace("_", " ")
+    if value in {"pass", "passed", "success", "successful"}:
+        return "Pass"
+    if value in {"fail", "failed", "failure", "error"}:
+        return "Fail"
+    if value in {"", "not executed", "not run", "manual", "draft", "automated", "ready", "pending"}:
+        return "Not Executed"
+    return str(raw).strip()
 
 
 def normalize_test_case(values) -> dict:
@@ -52,8 +123,7 @@ def normalize_test_case(values) -> dict:
     row = dict(values or {})
     execution = normalize_execution(row)
     row["execution"] = execution
-    status = str(row.get("status") or "").strip()
-    row["status"] = "" if status in {"Manual", "Not Run"} else status
+    row["status"] = normalize_status(row)
     return row
 
 
@@ -99,10 +169,12 @@ def validate_import(data: bytes, filename: str) -> list[dict]:
         sheet = book[SHEET_NAME]
         raw_headers = [str(cell.value or "").strip() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
         normalized = [value.casefold() for value in raw_headers]
-        duplicates = sorted({value for value in normalized if value and normalized.count(value) > 1})
+        mapped = [HEADER_TO_FIELD.get(value, value) for value in normalized if value]
+        duplicates = sorted({value for value in mapped if mapped.count(value) > 1})
         if duplicates:
             raise ValueError("Duplicate column header(s): " + ", ".join(duplicates) + ".")
-        missing = [label for _, label in COLUMNS if label.casefold() not in normalized]
+        present_fields = {HEADER_TO_FIELD[value] for value in normalized if value in HEADER_TO_FIELD}
+        missing = [label for field, label in COLUMNS if field not in present_fields]
         if missing:
             raise ValueError("Missing required canonical column(s): " + ", ".join(missing) + ".")
         index = {HEADER_TO_FIELD[value]: position for position, value in enumerate(normalized) if value in HEADER_TO_FIELD}
@@ -127,13 +199,13 @@ def validate_import(data: bytes, filename: str) -> list[dict]:
                 seen_ids.add(tc_number.upper())
             if row.get("execution") not in EXECUTION_VALUES:
                 errors.append(
-                    f"Invalid Execution value '{row.get('execution')}' in row {excel_row}. "
+                    f"Invalid Execution Type value '{row.get('execution')}' in row {excel_row}. "
                     f"Allowed values: {', '.join(EXECUTION_VALUES)}."
                 )
-            if row.get("status") and row.get("status") not in STATUS_VALUES:
+            if row.get("status") not in STATUS_VALUES:
                 errors.append(
                     f"Invalid Status value '{row.get('status')}' in row {excel_row}. "
-                    "Allowed values are Pass, Fail, or blank."
+                    "Allowed values are Not Executed, Pass, or Fail."
                 )
             if row.get("importance") not in {"High", "Medium", "Low"}:
                 errors.append(f"Row {excel_row}, Importance: use High, Medium, or Low.")

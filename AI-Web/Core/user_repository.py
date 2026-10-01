@@ -136,6 +136,24 @@ class UserRepository:
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_roles
+            (
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                assigned_date TEXT,
+                PRIMARY KEY(user_id, role_id),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_roles_role "
+            "ON user_roles(role_id)"
+        )
+
         # Additive, safe-to-repeat migrations for columns introduced
         # after the tables above first shipped. SQLite can't add these
         # inline to an existing CREATE TABLE IF NOT EXISTS once a real
@@ -196,6 +214,20 @@ class UserRepository:
             admin_password = self._seed_default_admin(cursor)
 
             conn.commit()
+
+        # Compatibility migration: users.role_id remains the default/active
+        # role for legacy callers, while user_roles is authoritative for the
+        # complete assigned-role set. INSERT OR IGNORE makes this safe on
+        # every startup and preserves every existing assignment.
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user_roles (user_id, role_id, assigned_date)
+            SELECT id, role_id, COALESCE(modified_date, created_date, ?)
+            FROM users WHERE role_id IS NOT NULL
+            """,
+            (datetime.now().isoformat(),),
+        )
+        conn.commit()
 
         conn.close()
 
@@ -351,13 +383,17 @@ class UserRepository:
 
         rows = cursor.fetchall()
 
+        for row in rows:
+
+            row["roles"] = self._assigned_roles_with_cursor(cursor, row["id"])
+
         conn.close()
 
         return rows
 
     def create_user(
-        self, username, email, full_name, password, role_id,
-        contact_number="",
+        self, username, email, full_name, password, role_id=None,
+        contact_number="", role_ids=None,
     ):
 
         from Core.security import hash_password
@@ -370,25 +406,41 @@ class UserRepository:
 
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO users
-            (username, email, full_name, contact_number, password_hash,
-             password_salt, role_id, is_active, must_change_password,
-             created_date, modified_date)
-            VALUES (?,?,?,?,?,?,?,1,1,?,?)
-            """,
-            (
-                username, email, full_name, contact_number, password_hash,
-                password_salt, role_id, now, now,
-            ),
-        )
+        normalized = self._normalize_role_ids(role_ids or [role_id])
 
-        new_id = cursor.lastrowid
+        try:
 
-        conn.commit()
+            self._validate_role_ids(cursor, normalized)
+            active_role_id = normalized[0]
+            cursor.execute(
+                """
+                INSERT INTO users
+                (username, email, full_name, contact_number, password_hash,
+                 password_salt, role_id, is_active, must_change_password,
+                 created_date, modified_date)
+                VALUES (?,?,?,?,?,?,?,1,1,?,?)
+                """,
+                (
+                    username, email, full_name, contact_number, password_hash,
+                    password_salt, active_role_id, now, now,
+                ),
+            )
+            new_id = cursor.lastrowid
+            cursor.executemany(
+                "INSERT INTO user_roles (user_id, role_id, assigned_date) "
+                "VALUES (?,?,?)",
+                [(new_id, assigned_role_id, now) for assigned_role_id in normalized],
+            )
+            conn.commit()
 
-        conn.close()
+        except Exception:
+
+            conn.rollback()
+            raise
+
+        finally:
+
+            conn.close()
 
         return new_id
 
@@ -440,6 +492,134 @@ class UserRepository:
         self._update_field(user_id, "is_active", 1 if is_active else 0)
 
     def update_role(self, user_id, role_id):
+
+        self.set_user_roles(user_id, [role_id], active_role_id=role_id)
+
+    @staticmethod
+    def _normalize_role_ids(role_ids):
+
+        normalized = []
+
+        for value in role_ids or []:
+
+            if value is None:
+
+                continue
+
+            role_id = int(value)
+
+            if role_id not in normalized:
+
+                normalized.append(role_id)
+
+        if not normalized:
+
+            raise ValueError("At least one role must be assigned.")
+
+        return normalized
+
+    @staticmethod
+    def _validate_role_ids(cursor, role_ids):
+
+        placeholders = ",".join("?" for _ in role_ids)
+        cursor.execute(
+            f"SELECT id FROM roles WHERE id IN ({placeholders}) "
+            "AND COALESCE(is_deleted,0)=0",
+            role_ids,
+        )
+        found = {row[0] for row in cursor.fetchall()}
+        missing = [role_id for role_id in role_ids if role_id not in found]
+
+        if missing:
+
+            raise ValueError("Unknown or inactive role assignment: " + ", ".join(map(str, missing)))
+
+    @staticmethod
+    def _assigned_roles_with_cursor(cursor, user_id):
+
+        cursor.execute(
+            """
+            SELECT r.id, r.name
+            FROM user_roles ur
+            JOIN roles r ON r.id=ur.role_id
+            WHERE ur.user_id=? AND COALESCE(r.is_deleted,0)=0
+            ORDER BY r.name
+            """,
+            (user_id,),
+        )
+        return [dict(row) if isinstance(row, (sqlite3.Row, dict)) else {"id": row[0], "name": row[1]} for row in cursor.fetchall()]
+
+    def get_user_roles(self, user_id):
+
+        conn = self.db.get_connection()
+        conn.row_factory = self._dict_factory
+        cursor = conn.cursor()
+        roles = self._assigned_roles_with_cursor(cursor, user_id)
+        conn.close()
+        return roles
+
+    def is_role_assigned(self, user_id, role_id):
+
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+            "WHERE ur.user_id=? AND ur.role_id=? AND COALESCE(r.is_deleted,0)=0",
+            (user_id, role_id),
+        )
+        assigned = cursor.fetchone() is not None
+        conn.close()
+        return assigned
+
+    def set_user_roles(self, user_id, role_ids, active_role_id=None):
+
+        normalized = self._normalize_role_ids(role_ids)
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+
+        try:
+
+            self._validate_role_ids(cursor, normalized)
+            cursor.execute("SELECT role_id FROM users WHERE id=?", (user_id,))
+            row = cursor.fetchone()
+
+            if row is None:
+
+                raise ValueError("User not found.")
+
+            current_active = row[0]
+            chosen_active = int(active_role_id) if active_role_id is not None else current_active
+
+            if chosen_active not in normalized:
+
+                chosen_active = normalized[0]
+
+            cursor.execute("DELETE FROM user_roles WHERE user_id=?", (user_id,))
+            cursor.executemany(
+                "INSERT INTO user_roles (user_id, role_id, assigned_date) VALUES (?,?,?)",
+                [(user_id, role_id, now) for role_id in normalized],
+            )
+            cursor.execute(
+                "UPDATE users SET role_id=?, modified_date=? WHERE id=?",
+                (chosen_active, now, user_id),
+            )
+            conn.commit()
+
+        except Exception:
+
+            conn.rollback()
+            raise
+
+        finally:
+
+            conn.close()
+
+    def set_default_role(self, user_id, role_id):
+
+        if not self.is_role_assigned(user_id, role_id):
+
+            raise ValueError("The requested role is not assigned to this user.")
 
         self._update_field(user_id, "role_id", role_id)
 
@@ -496,15 +676,17 @@ class UserRepository:
         cursor = conn.cursor()
 
         query = (
-            "SELECT COUNT(*) FROM users WHERE role_id=? AND is_active=1 "
-            "AND COALESCE(is_deleted,0)=0"
+            "SELECT COUNT(DISTINCT u.id) FROM users u "
+            "JOIN user_roles ur ON ur.user_id=u.id "
+            "WHERE ur.role_id=? AND u.is_active=1 "
+            "AND COALESCE(u.is_deleted,0)=0"
         )
 
         params = [admin_role_id]
 
         if exclude_user_id is not None:
 
-            query += " AND id != ?"
+            query += " AND u.id != ?"
 
             params.append(exclude_user_id)
 
@@ -691,8 +873,9 @@ class UserRepository:
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT COUNT(*) FROM users WHERE role_id=? AND "
-            "COALESCE(is_deleted,0)=0",
+            "SELECT COUNT(DISTINCT u.id) FROM users u "
+            "JOIN user_roles ur ON ur.user_id=u.id "
+            "WHERE ur.role_id=? AND COALESCE(u.is_deleted,0)=0",
             (role_id,),
         )
 

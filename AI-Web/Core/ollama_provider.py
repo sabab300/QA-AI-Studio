@@ -297,6 +297,20 @@ class OllamaProvider(AIProvider):
 
         )
 
+        # [AI-DIAG] temporary diagnostic — proves whether this request
+        # actually reaches Ollama at all (Phase 3's explicit "don't assume
+        # Ollama ran just because a session-closed log appeared" check).
+        # Anything logged after this line means the HTTP request to
+        # Ollama's /api/generate was genuinely issued for this call.
+        self.logger.info(
+            "[AI-DIAG] Ollama request starting: url=%s/api/generate "
+            "model=%s prompt_chars=%s" % (
+                self.base_url,
+                self.model,
+                len(prompt or ""),
+            )
+        )
+
         try:
 
             response = self.session.post(
@@ -323,6 +337,18 @@ class OllamaProvider(AIProvider):
                 )
 
             data = response.json()
+
+            # [AI-DIAG] temporary diagnostic — raw Ollama HTTP response
+            # shape, before any success/empty-response interpretation.
+            self.logger.info(
+                "[AI-DIAG] Ollama raw response: http_status=%s type=%s "
+                "keys=%s response_field_chars=%s" % (
+                    response.status_code,
+                    type(data).__name__,
+                    list(data.keys()) if isinstance(data, dict) else None,
+                    len(str(data.get("response", ""))) if isinstance(data, dict) else 0,
+                )
+            )
 
             elapsed = round(
 

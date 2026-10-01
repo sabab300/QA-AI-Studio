@@ -303,7 +303,11 @@ class AutomationImportService:
         )
 
 
-def generate_sample_template(content_column_label: str, filename_hint: str = "Import_Template") -> bytes:
+def generate_sample_template(
+    content_column_label: str, filename_hint: str = "Import_Template",
+    example_test_case_id: str = "TC-EXAMPLE-DELETE-ME",
+    example_content: str = "-- example row: delete this line before importing --",
+) -> bytes:
     """ONE shared template-generation utility (V5 "SAMPLE TEMPLATE
     RULE") — every adapter (Playwright/API/SQL) calls this with only
     its own content column label, so the three sample templates can
@@ -321,9 +325,19 @@ def generate_sample_template(content_column_label: str, filename_hint: str = "Im
     sheet = workbook.active
     sheet.title = "Import Template"
     sheet.append(["Test Case ID", content_column_label])
-    sheet.append(["TC-EXAMPLE-DELETE-ME", "-- example row: delete this line before importing --"])
+    sheet.append([example_test_case_id, example_content])
     sheet.column_dimensions["A"].width = 26
     sheet.column_dimensions["B"].width = 60
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+def generate_playwright_json_template(test_case_id: str, script: str) -> bytes:
+    """Build the protected Playwright-only JSON template/import artifact."""
+    return (
+        json.dumps(
+            [{"Test Case ID": str(test_case_id), "Script": script or ""}],
+            ensure_ascii=False, indent=2,
+        ) + "\n"
+    ).encode("utf-8")

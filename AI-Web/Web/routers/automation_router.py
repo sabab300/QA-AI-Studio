@@ -115,6 +115,7 @@ def import_api_collection(
             domain=domain, module=module, knowledge_name=knowledge_name,
             version=version, document_type=document_type,
             test_case_version_id=test_case_version_id,
+            test_case_file_id=test_case_file_id,
         )
 
     except ValueError as error:
@@ -598,7 +599,7 @@ class UpdateScriptRequest(BaseModel):
 
 
 class ActiveScriptRequest(BaseModel):
-    source: Literal["AUTO", "MANUAL"]
+    source: Literal["AUTO", "UPLOADED", "MANUAL"]
 
 
 class ExecuteApiRequest(BaseModel):
@@ -671,17 +672,50 @@ def sample_template(current_user=Depends(require_permission("automation", "view"
 # ============================================================
 
 @router.get("/test-cases/playwright-sample-template")
-def playwright_sample_template(current_user=Depends(require_permission("automation", "view"))):
-    """Shared template-generation utility (V5 SAMPLE TEMPLATE RULE) —
-    see Core/automation_import_service.generate_sample_template()."""
-    from io import BytesIO
-    from fastapi.responses import StreamingResponse
-    from Core.automation_import_service import generate_sample_template, PLAYWRIGHT_CONTENT_LABEL
+def playwright_sample_template(
+    test_case_version_id: Optional[int] = Query(None),
+    test_case_file_id: Optional[int] = Query(None),
+    current_user=Depends(require_permission("automation", "view")),
+):
+    """Return a protected, directly re-importable Playwright JSON mapping."""
+    from fastapi.responses import Response
+    from Core.test_case_repository import TestCaseRepository
 
-    return StreamingResponse(
-        BytesIO(generate_sample_template(PLAYWRIGHT_CONTENT_LABEL)),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=Playwright_Script_Import_Template.xlsx"},
+    example_id = "TC-EXAMPLE-DELETE-ME"
+    if test_case_version_id and test_case_file_id:
+        repository = TestCaseRepository()
+        connection = repository.db.get_connection()
+        try:
+            row = connection.execute(
+                """SELECT COALESCE(NULLIF(tc.tc_id,''),tc.tc_number)
+                   FROM test_case_files tf JOIN test_cases tc
+                     ON tc.test_case_version_id=tf.test_case_version_id
+                    AND tc.reviewed_workbook_path=tf.workbook_path
+                   WHERE tf.id=? AND tf.test_case_version_id=?
+                   ORDER BY tc.id LIMIT 1""",
+                (int(test_case_file_id), int(test_case_version_id)),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row and row[0]:
+            example_id = str(row[0])
+
+    sample_script = (
+        "from playwright.sync_api import sync_playwright\n\n"
+        "with sync_playwright() as p:\n"
+        "    browser = p.chromium.launch()\n"
+        "    page = browser.new_page()\n"
+        "    page.goto('https://example.com')\n"
+        "    print(page.title())\n"
+        "    browser.close()\n"
+    )
+
+    from Core.automation_import_service import generate_playwright_json_template
+    content = generate_playwright_json_template(example_id, sample_script)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=playwright-script-template.json"},
     )
 
 
@@ -697,9 +731,8 @@ def import_playwright_mapping(
     via the shared AutomationImportService, and — only if every row
     validates — saves each script through the EXISTING script/test-case
     binding architecture (TestCasesWeb.update_script(), the same method
-    PUT /test-cases/{id}/script uses). Atomic: a validation failure
-    saves nothing and returns the detailed row-level breakdown instead
-    of a bare 400 (V5 IMPORT ERROR UX)."""
+    PUT /test-cases/{id}/script uses). Atomic: validation failures save
+    nothing and return an actionable HTTP 400 detail."""
     file_bytes = file.file.read()
     try:
         result = TestCasesWeb().import_playwright_mapping(
@@ -708,6 +741,11 @@ def import_playwright_mapping(
             test_case_file_id=test_case_file_id,
         )
     except Exception as error:  # AutomationImportError and friends -> a clean 400, never a bare 500
+        logger.warning(
+            "Playwright mapping import rejected for file=%r, "
+            "test_case_version_id=%s, test_case_file_id=%s: %s",
+            file.filename, test_case_version_id, test_case_file_id, error,
+        )
         raise HTTPException(status_code=400, detail=str(error))
 
     if result.get("ok"):
@@ -717,11 +755,30 @@ def import_playwright_mapping(
             f"against test_case_version_id={test_case_version_id}",
         )
         return result
-    # Not ok: nothing was saved — return 200 with the breakdown (this
-    # IS the successful, detailed response to a blocked import) rather
-    # than an HTTP error status, so the frontend can render it as the
-    # normal "Import blocked" summary instead of a generic failure toast.
-    return result
+    # Not ok: nothing was saved. The rejected upload remains an HTTP
+    # 400 with a concise reason.
+    reasons = []
+    unknown = result.get("unknown_test_case_ids") or []
+    duplicates = result.get("duplicate_test_case_ids") or []
+    row_errors = result.get("row_errors") or []
+    if unknown:
+        reasons.append(
+            "Test Case ID(s) " + ", ".join(map(str, unknown))
+            + " were not found in the selected Test Cases XLSX."
+        )
+    if duplicates:
+        reasons.append(
+            "Duplicate Test Case ID(s) in the mapping: "
+            + ", ".join(map(str, duplicates)) + "."
+        )
+    reasons.extend(map(str, row_errors))
+    detail = " ".join(reasons) or "The mapping contains no valid Test Case rows."
+    logger.warning(
+        "Playwright mapping validation rejected file=%r, "
+        "test_case_version_id=%s, test_case_file_id=%s: %s",
+        file.filename, test_case_version_id, test_case_file_id, detail,
+    )
+    raise HTTPException(status_code=400, detail=detail)
 
 
 @router.get("/test-cases/{test_case_id}")
@@ -883,6 +940,17 @@ def update_recorded_script(
 ):
 
     return TestCasesWeb().update_recorded_script(test_case_id, payload.script_text)
+
+
+@router.put("/test-cases/{test_case_id}/uploaded-script")
+def update_uploaded_script(
+    test_case_id: int, payload: UpdateScriptRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    try:
+        return TestCasesWeb().update_uploaded_script(test_case_id, payload.script_text)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
 
 
 @router.patch("/test-cases/{test_case_id}/active-script")
@@ -1479,9 +1547,14 @@ def update_sql_environment(
 
 
 @router.post("/sql/environment/test-connection")
-def test_sql_connection(current_user=Depends(require_permission("automation", "view"))):
+def test_sql_connection(
+    payload: Optional[SqlEnvironmentUpdateRequest] = None,
+    current_user=Depends(require_permission("automation", "view")),
+):
 
-    return SqlAutomationWeb().test_connection()
+    return SqlAutomationWeb().test_connection(
+        payload.dict(exclude_unset=True) if payload is not None else None
+    )
 
 
 @router.post("/test-cases/{test_case_id}/generate-sql")

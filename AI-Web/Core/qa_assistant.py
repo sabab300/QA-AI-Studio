@@ -50,6 +50,20 @@ class QAAssistant:
                 version=version
             )
 
+            # [AI-DIAG] temporary diagnostic — RAG retrieval outcome for
+            # the local/Domain-Module-scoped path, per the requested
+            # Phase 2 boundary logging.
+            self.logger.info(
+                "[AI-DIAG] RAG retrieval: success=%s chunks=%s "
+                "domain=%s module=%s error=%s" % (
+                    rag.get("success"),
+                    rag.get("total_chunks", 0),
+                    domain,
+                    module,
+                    rag.get("error"),
+                )
+            )
+
             if not rag.get("success", False):
 
                 return {

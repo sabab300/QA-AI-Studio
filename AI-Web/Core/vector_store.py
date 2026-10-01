@@ -491,6 +491,25 @@ class VectorStore:
             self.logger.exception("Source vector preflight failed.")
             return False
 
+    # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: domain/module-level existence
+    # check (as opposed to has_source_vectors' single-exact-source
+    # check above) -- used to block Impact Analysis's Target validation
+    # before any retrieval/LLM call runs, per "if target has zero
+    # indexed chunks, do not perform fake analysis."
+    def has_domain_vectors(self, *, domain, module=None):
+        """Verify at least one vector exists anywhere under a Domain
+        (optionally narrowed to one Module)."""
+        clauses = [{"domain": str(domain or "")}]
+        if module:
+            clauses.append({"module": str(module)})
+        where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        try:
+            result = self.collection.get(where=where, limit=1, include=[])
+            return bool((result or {}).get("ids"))
+        except Exception:
+            self.logger.exception("Domain vector preflight failed.")
+            return False
+
     # --------------------------------------------------
     # Clear
     # --------------------------------------------------

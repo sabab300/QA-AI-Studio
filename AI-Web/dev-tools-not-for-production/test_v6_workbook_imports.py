@@ -1,11 +1,16 @@
 """Deterministic workbook-isolation integration test on a DB copy."""
 
 from pathlib import Path
+from io import BytesIO
+import json
 import logging
 import shutil
 import sqlite3
 import tempfile
 import sys
+from unittest.mock import patch
+
+from fastapi import HTTPException, UploadFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -18,6 +23,7 @@ from Core.automation_execution_repository import AutomationExecutionRepository
 from Core.dashboard_repository import DashboardRepository
 from Core.automation_web_repository import SqlAutomationWeb, TestCasesWeb
 from Core.test_case_repository import TestCaseRepository
+from Web.routers import automation_router
 
 
 class TemporaryDatabase:
@@ -64,27 +70,50 @@ def main():
             [source_case.get(column) for column in columns],
         )
         other_case_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        tc_folder = folder / "TC-Folder"
+        tc_folder.mkdir()
+        connection.execute(
+            "UPDATE test_case_versions SET folder_path=? WHERE id=?",
+            (str(tc_folder), selected["test_case_version_id"]),
+        )
         connection.commit(); connection.close()
 
         api_repository = ApiCollectionRepository()
         api_repository.db = repository.db
-        collection_id, _ = api_repository._save_collection(
-            name="Workbook A Collection", source_file_name="a.postman_collection.json",
-            domain="Fixture", module="Fixture", knowledge_name="Fixture", version="1",
-            linked_knowledge_item_id=None, variables={},
-            test_case_version_id=selected["test_case_version_id"],
-            test_case_file_id=selected["file_id"], repository_path="fixture.json",
-            association_status="linked",
-        )
-        api_repository._save_endpoints(collection_id, [{
-            "folder_path": "", "name": "Workbook A endpoint", "method": "GET",
-            "url_raw": "https://example.test/a", "url_resolved": "https://example.test/a",
-            "headers": [], "query_params": [], "body_mode": "", "body_raw": "",
-            "auth_type": "", "auth_details": {}, "example_response_status": 200,
-            "example_response_body": "{}",
-        }])
-        assert len(api_repository.get_endpoints_for_test_case_file(selected["file_id"])) == 1
-        assert api_repository.get_endpoints_for_test_case_file(other_file_id) == []
+        api_repository._index_collection_for_search = lambda **_kwargs: 0
+
+        def import_collection(file_name, file_id, suffix):
+            source_file = folder / file_name
+            source_file.write_text(json.dumps({
+                "info": {"name": f"Workbook {suffix} Collection"},
+                "item": [{
+                    "name": f"Workbook {suffix} endpoint",
+                    "request": {"method": "GET", "url": f"https://example.test/{suffix.lower()}"},
+                }],
+            }), encoding="utf-8")
+            return api_repository.import_postman_collection(
+                source_file, test_case_version_id=selected["test_case_version_id"],
+                test_case_file_id=file_id,
+            )
+
+        imported_a = import_collection("a.postman_collection.json", selected["file_id"], "A")
+        assert imported_a["success"] and imported_a["endpoints_saved"] == 1
+        collection_id = imported_a["collection_id"]
+        a_endpoints = api_repository.get_endpoints_for_test_case_file(selected["file_id"])
+        assert [row["url_raw"] for row in a_endpoints] == ["https://example.test/a"]
+
+        before_rejection = list(tc_folder.rglob("*"))
+        rejected = import_collection("invalid.postman_collection.json", 999999999, "Invalid")
+        assert not rejected["success"]
+        assert "does not belong" in rejected["error"]
+        assert list(tc_folder.rglob("*")) == before_rejection
+
+        imported_b = import_collection("b.postman_collection.json", other_file_id, "B")
+        assert imported_b["success"] and imported_b["endpoints_saved"] == 1
+        b_endpoints = api_repository.get_endpoints_for_test_case_file(other_file_id)
+        assert [row["url_raw"] for row in b_endpoints] == ["https://example.test/b"]
+        assert [row["url_raw"] for row in api_repository.get_endpoints_for_test_case_file(selected["file_id"])] == ["https://example.test/a"]
+
         check = repository.db.get_connection()
         persisted_file_id = check.execute(
             "SELECT test_case_file_id FROM api_collections WHERE id=?", (collection_id,)
@@ -127,9 +156,50 @@ def main():
         )
         assert imported["ok"] and imported["saved_test_case_ids"] == [selected["tc_number"]]
         persisted = repository.get_test_case(selected["test_case_id"])
-        assert "example.test" in (persisted.get("automation_script") or "")
+        assert "example.test" in (persisted.get("uploaded_script") or "")
         assert persisted.get("execution") == "Playwright"
         assert repository.get_test_case(other_case_id).get("automation_script") in (None, "")
+        imported_b_mapping = TestCasesWeb(repository).import_playwright_mapping(
+            b"Test Case ID,Script\nTC-WORKBOOK-B-001,page.goto('https://example.test/b')",
+            "mapping-b.txt", selected["test_case_version_id"], other_file_id,
+        )
+        assert imported_b_mapping["ok"]
+        assert imported_b_mapping["saved_test_case_ids"] == ["TC-WORKBOOK-B-001"]
+        assert "example.test/b" in (
+            repository.get_test_case(other_case_id).get("uploaded_script") or ""
+        )
+
+        def route_upload(payload, filename="mapping.json"):
+            upload = UploadFile(filename=filename, file=BytesIO(payload))
+            with patch.object(
+                automation_router, "TestCasesWeb", return_value=TestCasesWeb(repository)
+            ), patch.object(automation_router, "_audit"):
+                return automation_router.import_playwright_mapping(
+                    file=upload,
+                    test_case_version_id=selected["test_case_version_id"],
+                    test_case_file_id=selected["file_id"],
+                    current_user={"id": 1, "username": "test"},
+                )
+
+        valid_json = json.dumps([{
+            "Test Case ID": selected["tc_number"],
+            "Script": "page.goto('https://example.test/json')",
+        }]).encode()
+        assert route_upload(valid_json)["ok"]
+        try:
+            route_upload(b"{not-json")
+        except HTTPException as error:
+            assert error.status_code == 400 and "Could not parse JSON" in str(error.detail)
+        else:
+            raise AssertionError("Invalid Playwright JSON did not return HTTP 400.")
+        try:
+            route_upload(json.dumps([{
+                "Test Case ID": "NOT-IN-SELECTED-WORKBOOK", "Script": "page.reload()",
+            }]).encode())
+        except HTTPException as error:
+            assert error.status_code == 400 and "selected Test Cases XLSX" in str(error.detail)
+        else:
+            raise AssertionError("Unknown workbook Test Case ID did not return HTTP 400.")
         sql_web = SqlAutomationWeb(repository)
         sql_result = sql_web.import_mapping(
             f"Test Case ID,Script\n{selected['tc_number']},SELECT 1".encode(),
@@ -159,11 +229,17 @@ def main():
         print("unknown_rejected: PASS")
         print("duplicate_atomic_rejection: PASS")
         print("script_persisted_and_retrievable: PASS")
+        print("second_workbook_script_persisted_and_isolated: PASS")
+        print("playwright_valid_json_http_success: PASS")
+        print("playwright_invalid_json_http_400_detail: PASS")
+        print("playwright_unknown_id_http_400_detail: PASS")
         print("sql_structured_mapping_persisted: PASS")
         print("raw_sql_explicit_binding: PASS")
         print("raw_sql_cross_workbook_rejected: PASS")
         print("api_collection_workbook_id_persisted: PASS")
         print("api_endpoint_workbook_isolation: PASS")
+        print("api_invalid_workbook_atomic_rejection: PASS")
+        print("api_second_workbook_isolation: PASS")
         print("dashboard_workbook_hierarchy_and_counts: PASS")
         print("dashboard_coverage_canonical_execution: PASS")
     finally:

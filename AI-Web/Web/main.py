@@ -77,6 +77,7 @@ from Web.routers.interactive_execution_router import (
 from Web.routers.ai_assistant_router import router as ai_assistant_router
 from Web.routers.dashboard_router import router as dashboard_router
 from Web.routers.qa_engineering_router import router as qa_engineering_router
+from Web.routers.publishing_router import router as publishing_router
 from Web.routers.placeholder_routers import (
     settings_router,
 )
@@ -171,6 +172,7 @@ app.include_router(recorder_router)
 app.include_router(interactive_execution_router)
 app.include_router(ai_assistant_router)
 app.include_router(dashboard_router)
+app.include_router(publishing_router)
 app.include_router(settings_router)
 
 # The redesign frontend is deliberately served by the same local process as

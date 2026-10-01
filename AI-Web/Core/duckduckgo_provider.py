@@ -50,7 +50,20 @@ class DuckDuckGoProvider:
 
             url = "https://html.duckduckgo.com/html/"
 
-
+            # QA-AI-STUDIO-AI-ASSISTANT-PHASE2-INTERNET-SEARCH-FIX: this
+            # used to send the bare header User-Agent: "Mozilla/5.0" — an
+            # obviously non-browser signature — while Core/web_fetcher.py
+            # (used a few lines below, to fetch each result's linked page)
+            # already sends a full, realistic Chrome/Windows UA for the
+            # exact same kind of request. DuckDuckGo's HTML endpoint
+            # commonly responds to that bare signature with a 200 OK page
+            # that simply contains zero `.result` elements (a block/
+            # no-results page), which is indistinguishable at the
+            # status-code level from a genuine no-results query — exactly
+            # the silent failure this task reported. Reusing WebFetcher's
+            # own already-working UA (imported, not duplicated) plus the
+            # couple of standard headers a real browser sends brings this
+            # request in line with the one that already works.
             response = requests.post(
 
                 url,
@@ -63,13 +76,33 @@ class DuckDuckGoProvider:
 
                 headers={
 
-                    "User-Agent":
-                    "Mozilla/5.0"
+                    "User-Agent": WebFetcher.USER_AGENT,
+
+                    "Accept":
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                    "Accept-Language": "en-US,en;q=0.9",
+
+                    "Referer": "https://duckduckgo.com/",
 
                 },
 
                 timeout=15
 
+            )
+
+            # [AI-DIAG] temporary diagnostic — exactly what DuckDuckGo
+            # returned for this request (status, any redirect it followed,
+            # content type, response size), so a future silent failure is
+            # diagnosable from logs instead of re-reading this file.
+            self.logger.info(
+                "[AI-DIAG] DuckDuckGo HTTP response: status=%s final_url=%s "
+                "content_type=%s bytes=%s" % (
+                    response.status_code,
+                    response.url,
+                    response.headers.get("Content-Type"),
+                    len(response.content or b""),
+                )
             )
 
 
@@ -86,7 +119,7 @@ class DuckDuckGoProvider:
                     "provider": "duckduckgo",
 
                     "error":
-                    "DuckDuckGo request failed."
+                    f"DuckDuckGo request failed (HTTP {response.status_code})."
 
                 }
 
@@ -100,28 +133,20 @@ class DuckDuckGoProvider:
             )
 
 
-            links = []
+            results = soup.select(".result")[:5]
+
+            # [AI-DIAG] temporary diagnostic — how many result elements
+            # DuckDuckGo's HTML actually contained. Zero here means
+            # DuckDuckGo itself returned a no-results/challenge page for
+            # this request, not that this parser failed to read a normal
+            # results page — the distinction Phase 3/4 asked to establish.
+            self.logger.info(
+                "[AI-DIAG] DuckDuckGo parsed result elements: %s"
+                % len(results)
+            )
 
 
-            for result in soup.select(".result")[:3]:
-
-                link = result.select_one(
-
-                    ".result__a"
-
-                )
-
-                if link:
-
-                    href = link.get("href")
-
-                    if href:
-
-                        links.append(href)
-
-
-
-            if not links:
+            if not results:
 
                 return {
 
@@ -139,46 +164,84 @@ class DuckDuckGoProvider:
                 }
 
 
+            # QA-AI-STUDIO-AI-ASSISTANT-PHASE2-INTERNET-SEARCH-FIX: this
+            # used to keep a result ONLY if the linked external page could
+            # be downloaded AND its extracted text was non-empty — so a
+            # single slow, blocked, or JS-rendered source page discarded
+            # that result entirely, even though DuckDuckGo's own results
+            # page already handed back perfectly usable title + snippet
+            # text for it at zero extra network cost. Each result's own
+            # title/snippet is now captured first and used as a baseline;
+            # a successful page fetch+extract enriches it, but a failed
+            # fetch degrades gracefully to the snippet instead of dropping
+            # the source. One bad source no longer invalidates the others,
+            # and internet search stops failing merely because a page
+            # download didn't work.
             contents = []
 
             references = []
 
 
-            for link in links:
+            for result in results:
+
+                link = result.select_one(
+
+                    ".result__a"
+
+                )
+
+                if not link:
+
+                    continue
+
+                href = link.get("href")
+
+                if not href:
+
+                    continue
+
+                title = link.get_text(strip=True)
+
+                snippet_el = result.select_one(".result__snippet")
+
+                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+
+                piece = "\n".join(
+                    part for part in [title, snippet] if part
+                ).strip()
 
 
                 page = self.fetcher.get(
 
-                    link
+                    href
 
                 )
 
 
-                if not page.get("success"):
+                if page.get("success"):
 
-                    continue
+                    text = self.parser.extract(
+
+                        page.get("text", "")
+
+                    )
+
+                    clean = self.extractor.extract(
+
+                        text
+
+                    )
+
+                    if clean:
+
+                        piece = clean
 
 
+                if piece:
 
-                text = self.parser.extract(
+                    contents.append(piece)
 
-                    page.get("text","")
-
-                )
-
-
-                clean = self.extractor.extract(
-
-                    text
-
-                )
-
-
-                if clean:
-
-                    contents.append(clean)
-
-                    references.append(link)
+                    references.append(href)
 
 
 
@@ -195,7 +258,8 @@ class DuckDuckGoProvider:
                     "provider": "duckduckgo",
 
                     "error":
-                    "Unable to extract web content."
+                    "Search returned results but no usable title, snippet, "
+                    "or page content."
 
                 }
 

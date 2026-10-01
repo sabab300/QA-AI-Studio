@@ -120,3 +120,6 @@ AI-Web/Config/qa_engineering_export.json
 # Local AI working files and backups
 AI/Claude outputs/
 *.zip
+
+# QA AI Studio runtime Central Repository
+Central Repository-QA AI Studio/

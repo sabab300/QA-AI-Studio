@@ -226,6 +226,21 @@ class ApiCollectionRepository:
                     test_case_version_id
                 )
 
+                # Validate the authoritative workbook relationship
+                # before creating a managed file or changing database
+                # state. A stale/cross-folder selection must be a clean,
+                # atomic rejection with no partial collection artifact.
+                connection = self.db.get_connection()
+                try:
+                    file_row = connection.execute(
+                        "SELECT id FROM test_case_files WHERE id=? AND test_case_version_id=?",
+                        (int(test_case_file_id or 0), int(test_case_version_id)),
+                    ).fetchone()
+                finally:
+                    connection.close()
+                if not file_row:
+                    raise ValueError("The selected Test Cases XLSX does not belong to the selected TC folder.")
+
                 domain = (source_row or {}).get("domain") or domain
 
                 module = (source_row or {}).get("module") or module
@@ -241,15 +256,6 @@ class ApiCollectionRepository:
                 repository_path = managed["repository_path"]
 
                 association_status = "linked"
-
-                connection = self.db.get_connection()
-                file_row = connection.execute(
-                    "SELECT id FROM test_case_files WHERE id=? AND test_case_version_id=?",
-                    (int(test_case_file_id or 0), int(test_case_version_id)),
-                ).fetchone()
-                connection.close()
-                if not file_row:
-                    raise ValueError("The selected Test Cases XLSX does not belong to the selected TC folder.")
 
             else:
 

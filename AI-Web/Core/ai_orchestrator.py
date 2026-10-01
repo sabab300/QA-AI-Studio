@@ -102,15 +102,53 @@ class AIOrchestrator:
 
         start_time = time.perf_counter()
 
-
-        route = self.router.route(prompt)
-
-
+        # [AI-DIAG] temporary diagnostic — confirms the request actually
+        # reached the orchestrator with the payload the frontend sent,
+        # per the requested Phase 2 "request received" boundary.
         self.logger.info(
-
-            f"Knowledge Route: {route}"
-
+            "[AI-DIAG] AI Assistant request received: prompt_chars=%s "
+            "domain=%s module=%s knowledge_name=%s version=%s" % (
+                len(prompt or ""),
+                domain,
+                module,
+                knowledge_name,
+                version,
+            )
         )
+
+
+        # QA-AI-STUDIO-AI-ASSISTANT-PHASE2-ROUTING-FIX: KnowledgeRouter.route()
+        # decides global-vs-local purely from keywords in the question text
+        # (e.g. "what is" -> global), with no awareness of the Domain/Module
+        # scope the user explicitly picked in the UI. That meant a question
+        # like "What is SD Warehousing?" asked with Domain="PSW Core"
+        # selected would still be routed to the internet-search GLOBAL path
+        # and silently ignore the user's explicit scope choice — an
+        # intentional user instruction should always win over keyword
+        # inference. Domain (with or without Module) now forces the LOCAL
+        # RAG path, scoped to exactly what the user selected; the keyword
+        # router only runs when no explicit scope was given, preserving the
+        # existing "What is PSW" (no scope) -> GLOBAL behavior.
+        if domain:
+
+            route = self.ROUTE_LOCAL
+
+            self.logger.info(
+
+                "Knowledge Route: local (explicit Domain%s scope overrides "
+                "keyword routing)" % (" + Module" if module else "")
+
+            )
+
+        else:
+
+            route = self.router.route(prompt)
+
+            self.logger.info(
+
+                f"Knowledge Route: {route}"
+
+            )
 
 
         # GLOBAL INTERNET AI

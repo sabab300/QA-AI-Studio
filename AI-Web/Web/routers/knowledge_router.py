@@ -68,6 +68,39 @@ class UpdateKnowledgeItemRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class KnowledgeAdminNodeRequest(BaseModel):
+    type: str
+    name: str = ""
+    knowledge_id: Optional[int] = None
+    record_id: Optional[Any] = None
+    record_table: Optional[str] = None
+    physical_path: str = ""
+    automation_type: str = ""
+    tc_id: str = ""
+    test_case_version_id: Optional[int] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateKnowledgeAdminNodeRequest(BaseModel):
+    node: KnowledgeAdminNodeRequest
+    value: str
+
+
+# V5 (Manage Knowledge Hierarchy Edit): Edit at a chain level is a MOVE of
+# the existing subtree onto an existing target at the same level, not a
+# free-text rename (see Section 29 of the V5 correction). The request
+# shape here adapts the suggested "source_node_type/source_node_id" pair
+# to this app's REAL node-identity model — these hierarchy levels have no
+# single stable id, they're identified by type + context, exactly like
+# every existing admin node/detail/delete call already on this router
+# (KnowledgeAdminNodeRequest) — so `source`/`target` are full node tokens
+# of that same existing shape, not a synthetic id pair.
+class MoveKnowledgeAdminNodeRequest(BaseModel):
+    source: KnowledgeAdminNodeRequest
+    target: KnowledgeAdminNodeRequest
+    validate_only: bool = False
+
+
 class MergeItemsRequest(BaseModel):
     knowledge_ids: List[int]
 
@@ -238,6 +271,37 @@ def delete_module(domain: str, module: str, current_user=Depends(require_permiss
     return {"status": "deleted", "domain": domain, "module": module}
 
 
+# --------------------------------------------------
+# QA-AI-STUDIO-IMPACT-ANALYSIS-V1
+#
+# Two lightweight, read-only cascade endpoints for Impact Analysis's
+# Source Document selector (Domain/Module already covered above).
+# Gated by the same "knowledge" permission as the existing Domain/
+# Module dropdowns, not "ai_assistant" or "qa_engineering" -- this is
+# hierarchy data, same permission surface as every other hierarchy
+# endpoint on this router.
+# --------------------------------------------------
+
+@router.get("/domains/{domain}/modules/{module}/knowledge-names")
+def list_knowledge_names(
+    domain: str, module: str,
+    current_user=Depends(require_permission("knowledge", "view")),
+):
+
+    return {"knowledge_names": KnowledgeRepository().list_knowledge_names(domain, module)}
+
+
+@router.get("/domains/{domain}/modules/{module}/knowledge-names/{knowledge_name}/items")
+def list_items_for_knowledge(
+    domain: str, module: str, knowledge_name: str,
+    current_user=Depends(require_permission("knowledge", "view")),
+):
+
+    return {
+        "items": KnowledgeRepository().list_items_for_knowledge(domain, module, knowledge_name)
+    }
+
+
 @router.get("/items")
 def list_items(
     search: Optional[str] = None,
@@ -245,6 +309,80 @@ def list_items(
 ):
 
     return {"items": KnowledgeRepository().list_items(search=search)}
+
+
+@router.post("/admin/detail")
+def admin_node_detail(payload: KnowledgeAdminNodeRequest,
+                      current_user=Depends(require_permission("knowledge", "view"))):
+    try:
+        result = KnowledgeRepository().get_admin_node_details(payload.dict())
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    # Section 24 (Manage Knowledge Full Hierarchy Administration): audit
+    # DETAIL as its own action, distinct from EDIT/DELETE, using the same
+    # existing _audit() call already used for those two — no new/parallel
+    # audit framework.
+    _audit(current_user, "VIEW_KNOWLEDGE_NODE", f"Viewed {payload.type} '{payload.name}'")
+    return result
+
+
+@router.patch("/admin/node")
+def update_admin_node(payload: UpdateKnowledgeAdminNodeRequest,
+                      current_user=Depends(require_permission("knowledge", "edit"))):
+    try:
+        result = KnowledgeRepository().update_admin_node(payload.node.dict(), payload.value)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    _audit(current_user, "UPDATE_KNOWLEDGE_NODE", f"Updated {payload.node.type} '{payload.node.name}'")
+    return result
+
+
+# V5 (Manage Knowledge Hierarchy Edit): the ONE backend-owned hierarchy
+# MOVE operation (Section 29) — re-parenting an existing subtree, IDENTITY
+# PRESERVED, onto an existing target PARENT. Deliberately separate from
+# PATCH /admin/node above, which remains rename-only for true leaves
+# (Section 21: "Do not mix rename with move"). validate_only performs the
+# full collision check with zero mutation; the same endpoint executes the
+# move when it's false and validation passes, so the UI's "Validate Move"
+# and "Move Hierarchy" buttons hit the same contract with one flag flipped.
+#
+# Post-live-test bug-fix correction: `payload.target` now only ever
+# carries the PARENT context to move under — its own-level `name` is a
+# value the frontend no longer even collects meaningfully (the backend
+# ignores it and always uses `payload.source.name`, the selected node's
+# own preserved identity). The audit line below is built from the
+# repository's own response (`result["current_parent"]`/`["target_parent"]`)
+# rather than `payload.target.name`, so it never repeats that now-unused
+# field and always names the real parent the node moved under.
+@router.post("/admin/move")
+def move_admin_node(payload: MoveKnowledgeAdminNodeRequest,
+                    current_user=Depends(require_permission("knowledge", "edit"))):
+    try:
+        result = KnowledgeRepository().move_admin_node(
+            payload.source.dict(), payload.target.dict(), validate_only=payload.validate_only
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if not payload.validate_only:
+        target_parent = result.get("target_parent") or {}
+        _audit(
+            current_user, "MOVE_KNOWLEDGE_NODE",
+            f"Moved {payload.source.type} '{payload.source.name}' to "
+            f"{target_parent.get('label', 'parent')} '{target_parent.get('name', '')}' "
+            f"({result.get('moved', 0)} item(s), {result.get('descendant_counts')})",
+        )
+    return result
+
+
+@router.post("/admin/delete")
+def delete_admin_node(payload: KnowledgeAdminNodeRequest,
+                      current_user=Depends(require_permission("knowledge", "delete"))):
+    try:
+        result = KnowledgeRepository().delete_admin_node(payload.dict())
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    _audit(current_user, "DELETE_KNOWLEDGE_NODE", f"Deleted {payload.type} '{payload.name}'")
+    return {"status": "deleted", **result}
 
 
 @router.get("/items/{knowledge_id}")

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from Core.test_case_repository import TestCaseRepository
-from Core.test_case_workbook import normalize_execution, stage_workbook, validate_import
+from Core.test_case_workbook import normalize_execution, normalize_test_case, stage_workbook, validate_import
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -336,6 +336,7 @@ class QaEngineeringVersionService:
             conn.close()
 
     def _insert_case(self, cursor, scope, source, values, version_id, workbook_name, now):
+        values = normalize_test_case(values)
         tc_id = str(values.get("tc_number") or "").strip()
         if tc_id:
             duplicate = cursor.execute(

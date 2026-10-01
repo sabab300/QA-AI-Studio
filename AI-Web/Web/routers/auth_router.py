@@ -27,6 +27,36 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class SwitchRoleRequest(BaseModel):
+    role_id: int
+
+
+def _current_user_payload(repository, user):
+
+    roles = repository.get_user_roles(user["id"])
+    permissions = repository.get_permissions_for_role(user["role_id"])
+    active_role = next(
+        (role for role in roles if role["id"] == user["role_id"]),
+        {"id": user["role_id"], "name": user.get("role_name") or ""},
+    )
+
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "full_name": user["full_name"],
+        # Backward-compatible active-role aliases.
+        "role_id": active_role["id"],
+        "role_name": active_role["name"],
+        "roles": roles,
+        "active_role": active_role,
+        "must_change_password": bool(user["must_change_password"]),
+        "permissions": {
+            resource: sorted(actions)
+            for resource, actions in permissions.items()
+        },
+    }
+
+
 @router.post("/login")
 def login(payload: LoginRequest, request: Request):
 
@@ -66,16 +96,12 @@ def login(payload: LoginRequest, request: Request):
         ip_address=request.client.host if request.client else None,
     )
 
+    response_user = _current_user_payload(repository, user)
+
     return {
         "token": token,
         "must_change_password": bool(user["must_change_password"]),
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "full_name": user["full_name"],
-            "role_id": user["role_id"],
-            "role_name": user["role_name"],
-        },
+        "user": response_user,
     }
 
 
@@ -104,19 +130,48 @@ def me(current_user=Depends(get_current_user)):
 
     repository = UserRepository()
 
-    permissions = repository.get_permissions_for_role(current_user["role_id"])
+    return _current_user_payload(repository, current_user)
+
+
+@router.post("/switch-role")
+def switch_role(
+    payload: SwitchRoleRequest,
+    request: Request,
+    current_user=Depends(get_current_user),
+):
+
+    repository = UserRepository()
+
+    if not repository.is_role_assigned(current_user["id"], payload.role_id):
+
+        raise HTTPException(
+            status_code=403,
+            detail="That role is not assigned to your account.",
+        )
+
+    role = repository.get_role_by_id(payload.role_id)
+
+    if role is None or role.get("is_deleted"):
+
+        raise HTTPException(status_code=404, detail="Role not found.")
+
+    repository.set_default_role(current_user["id"], payload.role_id)
+    updated_user = repository.get_user_by_id(current_user["id"])
+    token = create_token(
+        updated_user["id"], updated_user["username"], role["id"], role["name"]
+    )
+    repository.write_audit_log(
+        user_id=updated_user["id"],
+        username=updated_user["username"],
+        action="SWITCH_ACTIVE_ROLE",
+        resource="users",
+        detail=f"Activated assigned role_id={role['id']} ('{role['name']}')",
+        ip_address=request.client.host if request.client else None,
+    )
 
     return {
-        "id": current_user["id"],
-        "username": current_user["username"],
-        "full_name": current_user["full_name"],
-        "role_id": current_user["role_id"],
-        "role_name": current_user["role_name"],
-        "must_change_password": bool(current_user["must_change_password"]),
-        "permissions": {
-            resource: sorted(actions)
-            for resource, actions in permissions.items()
-        },
+        "token": token,
+        "user": _current_user_payload(repository, updated_user),
     }
 
 

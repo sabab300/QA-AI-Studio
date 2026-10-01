@@ -9,13 +9,15 @@ Production Ready
 import re
 from datetime import datetime
 
+from Core.logger import Logger
+
 
 class OutputFormatter:
 
 
     def __init__(self):
 
-        pass
+        self.logger = Logger.get_logger()
 
 
     # --------------------------------------------------
@@ -285,7 +287,27 @@ class OutputFormatter:
         )
 
 
+        success = result.get(
+            "success",
+            False
+        )
 
+
+        # QA-AI-STUDIO-AI-ASSISTANT-ROOT-FIX: this used to be
+        # `confidence = result.get("confidence"); if confidence is None:
+        # confidence = 85` unconditionally — so ANY upstream failure dict
+        # that didn't happen to carry a "confidence" key (an internet
+        # search failure from Core/internet_search.py /
+        # Core/duckduckgo_provider.py, a "response too short"/"empty AI
+        # response" rejection from Core/response_validator.py, an
+        # unknown-provider error, etc.) silently became a fake 85%
+        # confidence on a blank answer — this is the exact mechanism
+        # behind the reported "(no answer) confidence=85%" bug. Per
+        # Phase 7's explicit requirement, a genuinely failed generation
+        # must never carry a hardcoded/default confidence — only a real
+        # SUCCESS gets the 85 fallback (kept for successful generator
+        # paths that legitimately don't compute their own confidence
+        # score); any failure is always 0.
         confidence = result.get(
             "confidence"
         )
@@ -293,17 +315,32 @@ class OutputFormatter:
 
         if confidence is None:
 
-            confidence = 85
+            confidence = 85 if success else 0
 
+
+        # [AI-DIAG] temporary diagnostic — the exact fields being sent
+        # back over the wire as the final /api/ai-assistant/ask response.
+        # This is the last boundary before the frontend, so a mismatch
+        # here vs. what index.html reads is diagnosable directly from
+        # this one line. Safe to remove once the pipeline is confirmed
+        # stable.
+        self.logger.info(
+            "[AI-DIAG] Final API response: success=%s route=%s intent=%s "
+            "answer_chars=%s confidence=%s error=%s" % (
+                success,
+                result.get("route", "local"),
+                result.get("intent", "answer"),
+                len(answer or ""),
+                confidence,
+                result.get("error"),
+            )
+        )
 
 
         return {
 
 
-            "success": result.get(
-                "success",
-                False
-            ),
+            "success": success,
 
 
             "route": result.get(
@@ -334,6 +371,18 @@ class OutputFormatter:
 
 
             "confidence": confidence,
+
+
+            # QA-AI-STUDIO-AI-ASSISTANT-ROOT-FIX: the real "error" message
+            # produced by whichever stage failed (internet search, RAG,
+            # Ollama, response_validator, ai_guard) was previously dropped
+            # here entirely — the frontend had no way to show *why* a
+            # request failed, even when the backend already knew it. This
+            # is additive only: existing consumers that only read
+            # "answer"/"confidence"/"success" are unaffected.
+            "error": result.get(
+                "error"
+            ),
 
 
             "provider": result.get(

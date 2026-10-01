@@ -163,6 +163,12 @@ import json
 import sys
 import threading
 import time
+# ROUND-7-DIAGNOSTIC-ONLY: datetime/Path are used only to name and write
+# the optional recorder diagnostic log file (see
+# WebRecordingSession._on_diagnostic() below) — nothing else in this
+# module needed them before.
+import datetime
+from pathlib import Path
 
 from Core.logger import Logger
 from Core.test_case_repository import TestCaseRepository
@@ -173,6 +179,15 @@ logger = Logger.get_logger()
 
 _SESSION_LOCK = threading.Lock()
 _ACTIVE_SESSION = {"session": None}
+
+# ROUND-7-DIAGNOSTIC-ONLY: sibling of playwright_runner.py's own
+# OUTPUT_FOLDER (Output/AutomationRuns) — same path-construction
+# pattern (Core/../Output/<name>), used only by
+# WebRecordingSession._on_diagnostic() below to persist the optional,
+# purely observational click-resolution trace as one JSON-lines file
+# per recording session. Never read by anything that builds or
+# executes a script; safe to delete at any time.
+DIAGNOSTICS_OUTPUT_FOLDER = Path(__file__).resolve().parent.parent / "Output" / "RecorderDiagnostics"
 
 MAX_RECORDING_SECONDS = 15 * 60
 
@@ -285,6 +300,22 @@ RECORDER_JS = r"""
     if (el.id) {
       var lab = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
       if (lab && lab.innerText.trim()) return lab.innerText.trim();
+    }
+    // Labelable elements (input/select/textarea/button/meter/output/
+    // progress) expose the platform's OWN label-association algorithm
+    // via `.labels`: a wrapping <label> is associated with only the ONE
+    // control it actually labels (the first labelable descendant in
+    // tree order) -- never with every element nested inside it. A naive
+    // closest('label') walk gets this wrong: it would attribute a
+    // shared field-group label's text (e.g. "Password*") to EVERY
+    // control inside that wrapper, including an unrelated secondary
+    // control such as a show/hide password toggle button that merely
+    // happens to live in the same <label> as the password <input> it
+    // sits beside. Using `.labels` is what keeps that toggle button
+    // from silently inheriting the password field's own name.
+    if ('labels' in el) {
+      var owned = el.labels && el.labels.length ? el.labels[0].innerText.trim() : '';
+      return owned || null;
     }
     var parentLabel = el.closest('label');
     if (parentLabel && parentLabel.innerText.trim()) return parentLabel.innerText.trim();
@@ -499,19 +530,25 @@ RECORDER_JS = r"""
   // name/label/text > robust css > relative xpath fallback (only
   // when css would otherwise need 2+ positional nth-of-type
   // segments with no stable class to anchor them).
-  function locatorMatchCount(locator) {
+  function locatorMatchCount(locator, root) {
+    // ROUND-8-OWNER-SCOPED-INTERACTION-TARGET: optional `root` scopes the
+    // match to a container element instead of the whole document. Every
+    // pre-existing call site passes exactly one argument, so `root` is
+    // always undefined there and `base` falls back to `document` --
+    // behavior for every existing caller is completely unchanged.
     try {
+      var base = root || document;
       var nodes = [];
-      if (locator.strategy === 'testid') nodes = document.querySelectorAll('[data-testid="' + CSS.escape(locator.value) + '"]');
-      else if (locator.strategy === 'id') nodes = document.querySelectorAll('#' + CSS.escape(locator.value));
-      else if (locator.strategy === 'name') nodes = document.querySelectorAll('[name="' + CSS.escape(locator.value) + '"]');
-      else if (locator.strategy === 'placeholder') nodes = document.querySelectorAll('[placeholder="' + CSS.escape(locator.value) + '"]');
-      else if (locator.strategy === 'title') nodes = document.querySelectorAll('[title="' + CSS.escape(locator.value) + '"]');
-      else if (locator.strategy === 'css' || locator.strategy === 'knowledge_hub') nodes = document.querySelectorAll(locator.value);
-      else if (locator.strategy === 'xpath') return document.evaluate(locator.value, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null).snapshotLength;
-      else if (locator.strategy === 'label') nodes = Array.prototype.filter.call(document.querySelectorAll('input,select,textarea'), function(node) { return labelFor(node) === locator.value; });
-      else if (locator.strategy === 'role') nodes = Array.prototype.filter.call(document.querySelectorAll('button,a,input,select,textarea,[role]'), function(node) { return (attr(node, 'role') || implicitRole(node)) === locator.role && accessibleName(node) === locator.name; });
-      else if (locator.strategy === 'text') nodes = Array.prototype.filter.call(document.querySelectorAll('button,a,span,li,td,label'), function(node) { return (node.innerText || '').trim() === locator.value; });
+      if (locator.strategy === 'testid') nodes = base.querySelectorAll('[data-testid="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'id') nodes = base.querySelectorAll('#' + CSS.escape(locator.value));
+      else if (locator.strategy === 'name') nodes = base.querySelectorAll('[name="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'placeholder') nodes = base.querySelectorAll('[placeholder="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'title') nodes = base.querySelectorAll('[title="' + CSS.escape(locator.value) + '"]');
+      else if (locator.strategy === 'css' || locator.strategy === 'knowledge_hub') nodes = base.querySelectorAll(locator.value);
+      else if (locator.strategy === 'xpath') return document.evaluate(locator.value, base, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null).snapshotLength;
+      else if (locator.strategy === 'label') nodes = Array.prototype.filter.call(base.querySelectorAll('input,select,textarea'), function(node) { return labelFor(node) === locator.value; });
+      else if (locator.strategy === 'role') nodes = Array.prototype.filter.call(base.querySelectorAll('button,a,input,select,textarea,[role]'), function(node) { return (attr(node, 'role') || implicitRole(node)) === locator.role && accessibleName(node) === locator.name; });
+      else if (locator.strategy === 'text') nodes = Array.prototype.filter.call(base.querySelectorAll('button,a,span,li,td,label'), function(node) { return (node.innerText || '').trim() === locator.value; });
       return nodes.length;
     } catch (e) { return 0; }
   }
@@ -592,6 +629,44 @@ RECORDER_JS = r"""
     return null;
   }
 
+  // Generic vocabulary for a masked-field visibility toggle -- common,
+  // framework-agnostic icon-library/class tokens (Font Awesome, Bootstrap
+  // Icons, Material Icons, and plain hand-written markup all converge on
+  // these words). Deliberately NOT tied to any application, organization,
+  // or literal field name -- it recognizes the UI PATTERN ("a nameless
+  // button that shows/hides a masked value"), never a specific product's
+  // wording.
+  var TOGGLE_VOCAB = /\b(eye|eye-slash|visib(?:le|ility)|invisible|show|hide|reveal|unmask)\b/i;
+
+  // A nameless BUTTON that sits beside a masked (type=password) field is
+  // very likely that field's show/hide toggle -- but only ever claim that
+  // identity when there is real, inspectable evidence for it (icon
+  // semantics and/or a recognizable class token), exactly mirroring what
+  // a sighted operator would use to recognize the control. When no such
+  // evidence exists, return '' so the caller falls through to the
+  // existing safe generic fallback ('Element') rather than inventing a
+  // name nothing on the page actually supports.
+  function adjunctToggleName(control, container) {
+    var scope = container || control.closest('.k-form-field,.form-group,.field,[class*="field"],div') || control.parentElement;
+    if (!scope) return '';
+    var maskedInput = scope.querySelector('input[type="password"]');
+    if (!maskedInput) return '';
+    var icon = control.querySelector('i,svg,[class*="icon"]');
+    var evidence = [
+      control.className, control.getAttribute('aria-pressed') || '',
+      icon ? (icon.getAttribute('class') || '') : '',
+      icon ? (icon.getAttribute('aria-label') || icon.getAttribute('title') || '') : '',
+    ].join(' ');
+    if (!TOGGLE_VOCAB.test(evidence)) return '';
+    // Parent password-field context: use the masked input's OWN corrected
+    // accessible name (never the button's), so the composed identity
+    // generalizes to whatever that field is actually called (e.g.
+    // "Confirm Password visibility toggle") instead of a hard-coded
+    // literal.
+    var fieldName = accessibleName(maskedInput);
+    return (fieldName ? fieldName + ' ' : '') + 'visibility toggle';
+  }
+
   function fieldMetadata(el, kind) {
     var control = el;
     if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'A'].includes(control.tagName)) {
@@ -603,8 +678,23 @@ RECORDER_JS = r"""
     var name = accessibleName(control) || attr(control, 'name') || '';
     if (!name) {
       var container = control.closest('.k-form-field,.form-group,.field,[class*="field"]');
-      var containerLabel = container && container.querySelector('label,.k-label,[class*="label"]');
-      name = containerLabel ? (containerLabel.innerText || '').trim() : '';
+      // A shared field-group label (e.g. "Password*") describes the
+      // group's PRIMARY form control, not every control nested inside
+      // it. Only borrow it here when there is no other input/select/
+      // textarea in the group, or when `control` itself already IS
+      // that primary control -- otherwise a secondary control sharing
+      // the group (a show/hide password toggle button, a clear-field
+      // button, etc.) would silently inherit the field's own name, the
+      // same over-attribution bug labelFor() above guards against for
+      // the implicit-<label> case.
+      var primaryControl = container && container.querySelector('input,select,textarea');
+      if (!primaryControl || primaryControl === control) {
+        var containerLabel = container && container.querySelector('label,.k-label,[class*="label"]');
+        name = containerLabel ? (containerLabel.innerText || '').trim() : '';
+      }
+    }
+    if (!name && control.tagName === 'BUTTON') {
+      name = adjunctToggleName(control, container);
     }
     if (!name || /^(span|div|k-icon)$/i.test(name)) {
       name = attr(control, 'name') || attr(control, 'placeholder') || attr(control, 'title') || 'Element';
@@ -652,6 +742,54 @@ RECORDER_JS = r"""
     return {locator: primary, fallback_locators: fallbacks, xpath: xpathFor(el)};
   }
 
+  var LAST_POINTERDOWN = null;
+
+  function recordPointerDown(e) {
+    if (e && e.target && e.target.nodeType === 1) LAST_POINTERDOWN = {target: e.target, at: Date.now()};
+  }
+  // A genuine user click always has a real down-gesture that precedes it
+  // (mousedown/pointerdown -> mouseup -> click, in that order, for the SAME
+  // interaction) -- capture it on `document` in the capture phase so it is
+  // observed before any application code can react to it. Two listeners
+  // (pointerdown, mousedown) cover both pointer-event-capable and legacy
+  // environments; whichever fires first for a given gesture wins.
+  try { document.addEventListener('pointerdown', recordPointerDown, true); } catch (e) {}
+  try { document.addEventListener('mousedown', recordPointerDown, true); } catch (e) {}
+
+  function pointerdownCorroborates(node) {
+    // Causality, not a timing debounce: does not delay or suppress anything,
+    // it only asks whether the down-gesture that produced the CURRENT click
+    // actually began on this exact node (or one of its descendants). A
+    // framework container that merely happens to occupy the space where the
+    // pointer landed -- because a preceding action's DOM transition moved,
+    // removed, or is still animating something out from under the user's
+    // real target -- will fail this check whenever the down-gesture began
+    // somewhere else (e.g. on the element that was subsequently replaced).
+    // No signal ever captured (e.g. a keyboard-triggered activation) is not
+    // treated as contradicting evidence.
+    if (!LAST_POINTERDOWN || !LAST_POINTERDOWN.target) return true;
+    return node === LAST_POINTERDOWN.target || (node.contains && node.contains(LAST_POINTERDOWN.target));
+  }
+
+  function isLargeStructuralSurface(node) {
+    // A generic, framework-agnostic signal that `node` is a full-page/large
+    // structural surface (dialog wrapper, modal backdrop, overlay, popup
+    // container, animation container, layout shell) rather than a compact,
+    // purpose-built control. Real custom SPA controls (menu items, cards,
+    // sidebar links) are always comparatively small/bounded on screen; a
+    // dialog-centering wrapper or backdrop is characteristically large
+    // relative to the viewport regardless of which UI framework produced
+    // it or what class names/text it carries. Intentionally NOT based on
+    // any class name, tag name, or application-specific text.
+    try {
+      var rect = node.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+      var vw = window.innerWidth || document.documentElement.clientWidth || 1;
+      var vh = window.innerHeight || document.documentElement.clientHeight || 1;
+      return rect.width >= vw * 0.7 && rect.height >= vh * 0.7;
+    } catch (e) { return false; }
+  }
+
   function closestCustomClickable(el) {
     // Many SPAs implement side-menu/cards as DIV/LI/SPAN nodes with a
     // framework click handler instead of a native <a>/<button>.  Those are
@@ -662,7 +800,7 @@ RECORDER_JS = r"""
     while (node && node !== document.body && depth < 7) {
       var role = attr(node, 'role') || '';
       var tabIndex = attr(node, 'tabindex');
-      var cls = String(node.className || '');
+      var cls = safeClassName(node);
       // Navigation frameworks often attach the click handler to a React/Vue
       // ancestor (so node.onclick is empty) and some Bootstrap sidebars do not
       // expose cursor:pointer on the exact text node.  Treat a compact item
@@ -671,12 +809,31 @@ RECORDER_JS = r"""
         'nav,aside,[role=\"navigation\"],[role=\"menu\"],.sidebar,.side-menu,.sidenav,.navigation,.navbar,.nav,.menu,.list-group'
       );
       var navigationClass = /(?:^|\s)(?:menu-item|menu-link|nav-item|nav-link|sidebar-item|sidebar-link|sidenav-item|sidenav-link|list-group-item|tree-item|treeitem)(?:\s|$)/i.test(cls);
-      var clickEvidence = !!node.onclick
-        || ['button','link','menuitem','tab','treeitem'].indexOf(role) !== -1
-        || (tabIndex !== null && tabIndex !== '-1')
-        || getComputedStyle(node).cursor === 'pointer'
+      // Strong evidence: an explicit interactive semantic (ARIA role) or
+      // membership in an explicit navigation surface/class. This is a
+      // deliberate design choice by whoever built the app and is never
+      // second-guessed by geometry or gesture correlation below.
+      var strongEvidence = ['button','link','menuitem','tab','treeitem'].indexOf(role) !== -1
         || navigationClass
         || !!navigationSurface;
+      // Weak evidence: an incidental affordance (delegated onclick, a
+      // focus-trap/roving tabindex, a backdrop-dismiss cursor) that
+      // structural framework containers -- dialog wrappers, overlays,
+      // backdrops -- very commonly carry for reasons that have nothing to
+      // do with the user having targeted THAT container specifically.
+      var weakEvidence = !!node.onclick
+        || (tabIndex !== null && tabIndex !== '-1')
+        || getComputedStyle(node).cursor === 'pointer';
+      var clickEvidence = strongEvidence || weakEvidence;
+      if (weakEvidence && !strongEvidence && (isLargeStructuralSurface(node) || !pointerdownCorroborates(node))) {
+        // Weak-only evidence on a large structural surface, or evidence not
+        // corroborated by the gesture that actually produced this click,
+        // never promotes the container itself into the clickable target.
+        // It may still be a real click ON one of its actual children --
+        // that child is discovered on an earlier/later iteration of this
+        // same ancestor walk, or via the semantic-leaf path elsewhere.
+        clickEvidence = false;
+      }
       var text = (node.innerText || '').replace(/\s+/g, ' ').trim();
       // A navigation container can contain many labels. Never record that
       // container as one action; require a compact leaf/item-like candidate.
@@ -688,35 +845,460 @@ RECORDER_JS = r"""
     return null;
   }
 
+  // ROUND-6-SVG-SAFE-CLASS: Element.className is a plain string on an
+  // HTMLElement but an SVGAnimatedString object on an SVGElement --
+  // String(svgEl.className) yields "[object SVGAnimatedString]", not the
+  // actual class list, so any `.test(el.className || '')` regex silently
+  // never matches an SVG-rendered icon/glyph. getAttribute('class')
+  // returns the raw attribute text correctly for BOTH HTMLElement and
+  // SVGElement, so it is the generic, framework-agnostic safe source of
+  // truth (already the pattern this file uses for icon class evidence in
+  // fieldMetadata() above -- this centralizes it for reuse here too).
+  function safeClassName(node) {
+    if (!node) return '';
+    if (typeof node.getAttribute === 'function') {
+      var viaAttribute = node.getAttribute('class');
+      if (viaAttribute != null) return viaAttribute;
+    }
+    var viaProperty = node.className;
+    return (typeof viaProperty === 'string') ? viaProperty : '';
+  }
+
+  // ROUND-6-INTERACTION-TARGET-COVERAGE: the same generic vocabulary
+  // Round 5 used to decide whether a click physically landed on a
+  // composite widget's own trigger icon -- generalized into a single,
+  // reusable "does this physically-clicked element look like something a
+  // person could deliberately have aimed at" test, framework-agnostic
+  // (no Kendo-only literals beyond the pre-existing class vocabulary
+  // already used elsewhere in this file). Used only to GATE whether a
+  // physical interaction target is worth preserving, never to decide
+  // WHICH element becomes the logical `target` -- that resolution logic
+  // in capturedAction() below is completely unchanged by this.
+  var TRIGGER_SIGNATURE_CLASS = /(?:k-icon|k-svg-icon|k-select|k-input-button)/i;
+  var TRIGGER_SIGNATURE_TAGS = ['svg', 'use', 'path', 'i', 'img', 'button', 'a', 'input'];
+  var TRIGGER_SIGNATURE_ROLES = ['button', 'link', 'checkbox', 'switch'];
+  function looksLikeInteractionTrigger(node) {
+    if (!node || node.nodeType !== 1) return false;
+    var tag = (node.tagName || '').toLowerCase();
+    if (TRIGGER_SIGNATURE_TAGS.indexOf(tag) !== -1) return true;
+    var role = attr(node, 'role') || '';
+    if (TRIGGER_SIGNATURE_ROLES.indexOf(role) !== -1) return true;
+    return TRIGGER_SIGNATURE_CLASS.test(safeClassName(node));
+  }
+
+  // ROUND-6-INTERACTION-TARGET-COVERAGE: centralizes the
+  // preserve-the-physical-click-target decision so every redirect
+  // pathway in capturedAction() shares one implementation instead of
+  // duplicating computeLocator()/validation logic per branch. Returns a
+  // locator for `el` only when ALL of these hold -- never merely because
+  // `target !== el`:
+  //   - a redirect actually happened (`logicalTarget` differs from `el`)
+  //   - `el` itself is a recognizable, meaningful trigger/affordance
+  //     (looksLikeInteractionTrigger) -- not incidental bubbling from a
+  //     plain wrapper div, whitespace, or text node
+  //   - computeLocator(el) can find a STABLE, safely unique locator for
+  //     it -- computeLocator() already refuses positional/coordinate/
+  //     generated-dynamic-ID selectors and ambiguous bare-class
+  //     selectors on its own, so those guarantees are inherited for free
+  // Callers are responsible for excluding contexts where a physical
+  // target must never be recorded as opener/trigger metadata at all
+  // (option/date-cell selection -- see capturedAction() below).
+  function preserveInteractionTarget(el, logicalTarget) {
+    if (!logicalTarget || logicalTarget === el) return null;
+    if (!looksLikeInteractionTrigger(el)) return null;
+    return computeLocator(el);
+  }
+
+  // ROUND-8-OWNER-SCOPED-INTERACTION-TARGET --------------------------
+  // preserveInteractionTarget() above only ever succeeds when the
+  // physical trigger has a locator that is safely unique across the
+  // WHOLE page. Some real, meaningful triggers (e.g. a composite
+  // widget's own empty dropdown-arrow icon) never can be -- there may
+  // be many visually-identical arrows on the same page, one per
+  // instance of the same widget. Such a trigger still has an unambiguous
+  // identity if resolved RELATIVE TO the specific widget instance that
+  // owns it -- the same widget instance whose logical control (the
+  // `logicalTarget`/owner) already has its own stable, page-wide-unique
+  // locator. This block adds exactly that fallback: only ever attempted
+  // by capturedAction() below when preserveInteractionTarget() already
+  // returned null, never instead of it, never weakening
+  // computeLocator()'s own global safety rules for any other caller.
+  //
+  // Generic, framework-agnostic: COMPOSITE_SCOPE_SELECTOR reuses only
+  // the same widget-class vocabulary already used elsewhere in this
+  // file (the icon/widget branch of capturedAction(), fieldMetadata()'s
+  // widgetClass detection) plus standard ARIA composite-widget roles --
+  // no PSW-, field-, or product-specific literal (no consignmentCategory,
+  // no k-select as a stand-alone rule, etc).
+  var COMPOSITE_SCOPE_SELECTOR = '[role="combobox"],[role="listbox"],[role="grid"],[role="dialog"],[role="menu"],.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,.k-widget';
+
+  // Walks UP from the logical owner's OWN parent (deliberately not from
+  // ownerEl itself, so the owner's own composite wrapper -- one level up
+  // -- is what gets matched, not some ancestor of that) looking for the
+  // nearest composite/widget container that contains BOTH the owner and
+  // the physical trigger. Bounded depth (10) / stops at document.body,
+  // exactly like diagComposedPathSnapshot()'s own bounded ancestor walk
+  // below, so this can never run away up a deep/unusual DOM.
+  function findCompositeScope(ownerEl, triggerEl) {
+    if (!ownerEl) return null;
+    var node = ownerEl.parentElement;
+    var depth = 0;
+    while (node && node !== document.body && depth < 10) {
+      if (node.matches && node.matches(COMPOSITE_SCOPE_SELECTOR) &&
+          node.contains(ownerEl) && (!triggerEl || node.contains(triggerEl))) {
+        return node;
+      }
+      node = node.parentElement;
+      depth += 1;
+    }
+    return null;
+  }
+
+  // Mirrors computeLocator()'s own strategy cascade and priority order,
+  // but validates uniqueness with locatorMatchCount(locator, scope) --
+  // relative to the composite scope, not the whole document -- and adds
+  // two scope-only fallback strategies (a full class-list selector, then
+  // a bare-tag selector) that computeLocator() itself never returns,
+  // because at document scope a bare class or tag selector is routinely
+  // ambiguous. Safe here only because uniqueness is proven against the
+  // specific composite-widget instance that was independently proven
+  // (by findCompositeScope()'s own `.contains()` checks) to hold both
+  // the owner and this trigger.
+  function computeScopedLocator(scope, el) {
+    if (!scope || !el) return null;
+    for (var i = 0; i < 4; i++) {
+      var v = attr(el, ['data-testid', 'data-test', 'data-qa', 'data-cy'][i]);
+      if (v) {
+        var testLocator = { strategy: 'testid', value: v };
+        if (locatorMatchCount(testLocator, scope) === 1) return testLocator;
+      }
+    }
+    if (el.id && !looksDynamic(el.id)) {
+      var stableIdLocator = { strategy: 'id', value: el.id };
+      if (locatorMatchCount(stableIdLocator, scope) === 1) return stableIdLocator;
+    }
+    if (el.name && !looksDynamic(el.name)) {
+      var nameLocator = { strategy: 'name', value: el.name };
+      if (locatorMatchCount(nameLocator, scope) === 1) return nameLocator;
+    }
+    var label = labelFor(el);
+    if (label) {
+      var labelLocator = { strategy: 'label', value: label };
+      if (locatorMatchCount(labelLocator, scope) === 1) return labelLocator;
+    }
+    var role = attr(el, 'role') || implicitRole(el);
+    var name = accessibleName(el);
+    if (role && name) {
+      var roleLocator = { strategy: 'role', role: role, name: name };
+      if (locatorMatchCount(roleLocator, scope) === 1) return roleLocator;
+    }
+    var placeholder = attr(el, 'placeholder');
+    if (placeholder) {
+      var placeholderLocator = { strategy: 'placeholder', value: placeholder };
+      if (locatorMatchCount(placeholderLocator, scope) === 1) return placeholderLocator;
+    }
+    var title = attr(el, 'title');
+    if (title) {
+      var titleLocator = { strategy: 'title', value: title };
+      if (locatorMatchCount(titleLocator, scope) === 1) return titleLocator;
+    }
+    var text = (el.innerText || '').trim();
+    if (text && text.length > 0 && text.length <= 60 &&
+        ['BUTTON', 'A', 'SPAN', 'LI', 'TD', 'LABEL'].indexOf(el.tagName) !== -1) {
+      var textLocator = { strategy: 'text', value: text };
+      if (locatorMatchCount(textLocator, scope) === 1) return textLocator;
+    }
+    // Scope-only fallbacks -- never reachable from the unmodified global
+    // computeLocator(), which never returns a bare class/tag selector.
+    var classList = (safeClassName(el) || '').trim().split(/\s+/).filter(function(c) { return c && !looksDynamic(c); });
+    if (classList.length) {
+      var classSelector = '.' + classList.map(function(c) { return CSS.escape(c); }).join('.');
+      var classLocator = { strategy: 'css', value: classSelector };
+      if (locatorMatchCount(classLocator, scope) === 1) return classLocator;
+    }
+    var tagSelector = (el.tagName || '').toLowerCase();
+    if (tagSelector) {
+      var tagLocator = { strategy: 'css', value: tagSelector };
+      if (locatorMatchCount(tagLocator, scope) === 1) return tagLocator;
+    }
+    return null;
+  }
+
+  // Only ever called by capturedAction() (and, read-only, by the Round 7
+  // diagnostic mirror below) after preserveInteractionTarget() already
+  // returned null for the same (el, logicalTarget) pair. Same entry
+  // gates as preserveInteractionTarget() (a redirect actually happened;
+  // `el` is a recognizable trigger), plus: a composite scope containing
+  // both owner and trigger must exist, the trigger must resolve to
+  // exactly one element within it, AND the owner itself must still have
+  // its own safe global locator (recomputed here, never assumed) -- so
+  // an owner-scoped result can never be persisted without a way to
+  // re-find that same owner again at replay time.
+  function resolveOwnerScopedInteractionTarget(el, logicalTarget) {
+    if (!logicalTarget || logicalTarget === el) return null;
+    if (!looksLikeInteractionTrigger(el)) return null;
+    var scope = findCompositeScope(logicalTarget, el);
+    if (!scope) return null;
+    var relative = computeScopedLocator(scope, el);
+    if (!relative) return null;
+    var ownerLocator = computeLocator(logicalTarget);
+    if (!ownerLocator) return null;
+    return { relative: relative, owner: ownerLocator, scope: scope };
+  }
+  // ROUND-8-OWNER-SCOPED-INTERACTION-TARGET (end, recorder algorithm) --
+
+  // ROUND-7-DIAGNOSTIC-ONLY -----------------------------------------
+  // Everything in this block is purely observational: read-only DOM
+  // inspection plus a console.debug() and an optional Python-bridge
+  // emission (window.__qa_record_diagnostic, wired only when the
+  // recorder host supports it -- see WebRecordingSession._on_diagnostic()
+  // in this module's Python half). Nothing here is called from, feeds
+  // into, or changes the return value of target selection,
+  // computeLocator(), preserveInteractionTarget(), locator generation,
+  // replay, or post-action verification. It exists to make the
+  // ALREADY-EXISTING recorder decision (which resolution branch fired,
+  // whether interaction_target was PRESERVED/REJECTED and exactly why)
+  // visible for one live diagnostic pass. Never persisted into
+  // recorded_script/the generated Playwright harness; never touches
+  // filled/typed field values.
+  var DIAG_ANCESTOR_DEPTH = 6;
+  var DIAG_HTML_MAX_LEN = 220;
+
+  function diagRedactedOuterHTML(el) {
+    try {
+      var clone = el.cloneNode(false); // shallow: no children/text ever copied
+      if (clone.hasAttribute && clone.hasAttribute('value')) clone.setAttribute('value', '[REDACTED]');
+      if ('value' in clone) { try { clone.value = ''; } catch (e) {} }
+      var html = clone.outerHTML || '';
+      return html.length > DIAG_HTML_MAX_LEN ? html.slice(0, DIAG_HTML_MAX_LEN) + '…[truncated]' : html;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function diagRawTargetSnapshot(el) {
+    if (!el || el.nodeType !== 1) return null;
+    return {
+      tag: (el.tagName || '').toLowerCase(),
+      id: el.id || '',
+      class: safeClassName(el),
+      role: attr(el, 'role') || '',
+      type: attr(el, 'type') || '',
+      aria_haspopup: attr(el, 'aria-haspopup') || '',
+      aria_expanded: attr(el, 'aria-expanded') || '',
+      outer_html: diagRedactedOuterHTML(el),
+    };
+  }
+
+  function diagComposedPathSnapshot(el, maxDepth) {
+    var path = [];
+    var node = el ? el.parentElement : null;
+    var depth = 0;
+    while (node && depth < maxDepth) {
+      path.push({tag: (node.tagName || '').toLowerCase(), id: node.id || '', class: safeClassName(node), role: attr(node, 'role') || ''});
+      node = node.parentElement;
+      depth += 1;
+    }
+    return path;
+  }
+
+  // Read-only MIRROR of preserveInteractionTarget()'s own decision --
+  // same inputs, same helper functions (looksLikeInteractionTrigger's
+  // own tag/role/class checks, computeLocator), same predicates, in
+  // the same order -- used only to explain, field by field, the
+  // decision the real function already made a few lines away.
+  // preserveInteractionTarget() itself is not called, wrapped, or
+  // modified by this; it remains exactly as Round 6 left it.
+  function diagInteractionTargetDecision(el, logicalTarget, excludedAsOptionOrDate) {
+    if (excludedAsOptionOrDate) {
+      return {logical_equals_el: logicalTarget === el, looks_like_trigger: null, trigger_evidence: null, computed_locator: null, decision: 'REJECTED', reason: 'option_or_date_excluded'};
+    }
+    if (!logicalTarget || logicalTarget === el) {
+      return {logical_equals_el: true, looks_like_trigger: null, trigger_evidence: null, computed_locator: null, decision: 'REJECTED', reason: 'same_as_logical_target'};
+    }
+    var tag = (el.tagName || '').toLowerCase();
+    var role = attr(el, 'role') || '';
+    var cls = safeClassName(el);
+    var evidence = {
+      tag_match: TRIGGER_SIGNATURE_TAGS.indexOf(tag) !== -1,
+      role_match: TRIGGER_SIGNATURE_ROLES.indexOf(role) !== -1,
+      class_match: TRIGGER_SIGNATURE_CLASS.test(cls),
+      tag: tag, role: role, class_value: cls,
+    };
+    if (!(evidence.tag_match || evidence.role_match || evidence.class_match)) {
+      return {logical_equals_el: false, looks_like_trigger: false, trigger_evidence: evidence, computed_locator: null, decision: 'REJECTED', reason: 'not_trigger_signature'};
+    }
+    var locator = null;
+    try { locator = computeLocator(el); } catch (e) { locator = null; }
+    if (locator) {
+      return {logical_equals_el: false, looks_like_trigger: true, trigger_evidence: evidence, computed_locator: locator, decision: 'PRESERVED', reason: null};
+    }
+    // ROUND-8-OWNER-SCOPED-INTERACTION-TARGET (diagnostic mirror only):
+    // the global path (computeLocator(el) above, mirroring
+    // preserveInteractionTarget()) has already failed with
+    // locator_not_safe_or_unique. Read-only mirror of
+    // resolveOwnerScopedInteractionTarget()'s own logic -- does not call,
+    // wrap, or influence it -- purely to explain, field by field, whether
+    // an owner-scoped resolution would additionally succeed.
+    var ownerScoped = {
+      global_locator_attempt: null, owner_locator: null,
+      composite_scope_evidence: null, relative_selector: null,
+      scoped_match_count: 0, scoped_unique: false,
+    };
+    try {
+      var scope = findCompositeScope(logicalTarget, el);
+      if (scope) {
+        ownerScoped.composite_scope_evidence = {
+          tag: (scope.tagName || '').toLowerCase(), id: scope.id || '',
+          class: safeClassName(scope), role: attr(scope, 'role') || '',
+        };
+        var relative = computeScopedLocator(scope, el);
+        if (relative) {
+          ownerScoped.relative_selector = relative;
+          ownerScoped.scoped_match_count = locatorMatchCount(relative, scope);
+          ownerScoped.scoped_unique = ownerScoped.scoped_match_count === 1;
+        }
+        var ownerLocatorAttempt = null;
+        try { ownerLocatorAttempt = computeLocator(logicalTarget); } catch (e) { ownerLocatorAttempt = null; }
+        ownerScoped.owner_locator = ownerLocatorAttempt;
+      }
+    } catch (e) {
+      /* diagnostic must never throw */
+    }
+    if (ownerScoped.relative_selector && ownerScoped.scoped_unique && ownerScoped.owner_locator) {
+      return {
+        logical_equals_el: false, looks_like_trigger: true, trigger_evidence: evidence,
+        computed_locator: null, decision: 'PRESERVED_OWNER_SCOPED', reason: null,
+        owner_scoped: ownerScoped,
+      };
+    }
+    return {
+      logical_equals_el: false, looks_like_trigger: true, trigger_evidence: evidence,
+      computed_locator: null, decision: 'REJECTED', reason: 'locator_not_safe_or_unique',
+      owner_scoped: ownerScoped,
+    };
+  }
+
+  function emitRecorderDiagnostic(payload) {
+    try {
+      var wrapped = Object.assign({url: String(location.href), at: Date.now()}, payload);
+      console.debug('[QA-RECORDER-DIAG]', JSON.stringify(wrapped));
+      if (window.__qa_record_diagnostic) window.__qa_record_diagnostic(JSON.stringify(wrapped));
+    } catch (e) {
+      /* diagnostic emission must never break recording */
+    }
+  }
+  // ROUND-7-DIAGNOSTIC-ONLY (end) -------------------------------------
+
   function capturedAction(el, kind, extra) {
     var target = null;
+    // A composite widget (combobox, dropdown, date picker, ...) can have a
+    // real, physical opening gesture (an arrow/select icon, a calendar
+    // trigger button) that is a DIFFERENT DOM node from the semantic
+    // control that owns validation/ownership/next-step identity (the
+    // underlying input/[role=combobox]). Historically this function
+    // collapsed the two into one -- redirecting `target` away from `el`
+    // and discarding `el` entirely. That is correct for VALIDATION/
+    // OWNERSHIP purposes (the logical control must stay the semantic
+    // owner), but it silently threw away the one thing that told replay
+    // WHERE the human's trusted gesture actually landed. When a redirect
+    // like that happens, `interactionTarget` preserves `el`'s own stable
+    // locator (computeLocator() already refuses to return anything that
+    // isn't uniquely resolvable on the live page -- never a bare,
+    // possibly-ambiguous class like a lone icon selector) alongside the
+    // logical `target`, so BOTH identities survive into the recorded
+    // step: the semantic owner (unchanged contract) and the actual
+    // interaction surface (new, optional, additive).
+    //
+    // ROUND-6: this preservation now applies uniformly to EVERY pathway
+    // below that can redirect `target` away from `el` -- the composite-
+    // widget icon case (this file's original, narrower Round 5 coverage),
+    // the qualifying-ancestor fallback, closestCustomClickable(), and the
+    // single-actionable-descendant fallback -- not only the first one.
+    // The single `preserveInteractionTarget()` call near the end of this
+    // function (after `target` is finally settled) covers all of them at
+    // once, so none of the individual branches below need their own
+    // preservation logic any more. Option/date-cell SELECTION (the very
+    // first branch) is the one deliberate exception: choosing a value
+    // from an already-open popup is a different kind of action and must
+    // never be reinterpreted as this control's own opener/trigger
+    // metadata, so that branch is excluded from preservation entirely.
+    var interactionTarget = null;
+    // ROUND-7-DIAGNOSTIC-ONLY: read-only trace of which branch below
+    // resolves `target`, captured for click actions only (mirrors
+    // interaction_target's own scope). Never read by, and never
+    // influences, any of the actual resolution logic that follows.
+    var __diagBranch = null;
+    var __diagRaw = (kind === 'click') ? diagRawTargetSnapshot(el) : null;
+    var __diagPath = (kind === 'click') ? diagComposedPathSnapshot(el, DIAG_ANCESTOR_DEPTH) : null;
     var option = el.closest('[role="option"],option,.k-list-item,.k-item');
     var dateCell = el.closest('[role="gridcell"],.k-calendar-td,.k-calendar td');
     if (option) target = option;
     else if (dateCell) target = dateCell;
-    else if (/(?:k-icon|k-svg-icon|k-select|k-input-button)/i.test(el.className || '')) {
+    else if (TRIGGER_SIGNATURE_CLASS.test(safeClassName(el))) {
       var widget = el.closest('.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,[role="combobox"]');
-      if (widget) target = /(?:k-datepicker|k-picker)/i.test(widget.className || '')
-        ? (el.closest('button,[role="button"]') || widget.querySelector('input[aria-controls],input[aria-owns],button,[role="button"],input') || widget)
-        : (widget.querySelector('input,[role="combobox"],button') || widget);
+      if (widget) {
+        target = /(?:k-datepicker|k-picker)/i.test(safeClassName(widget))
+          ? (el.closest('button,[role="button"]') || widget.querySelector('input[aria-controls],input[aria-owns],button,[role="button"],input') || widget)
+          : (widget.querySelector('input,[role="combobox"],button') || widget);
+      }
     }
+    if (kind === 'click' && !__diagBranch && (option || dateCell)) __diagBranch = option ? 'option' : 'date-cell';
+    if (kind === 'click' && !__diagBranch && target) __diagBranch = 'icon/widget';
     if (!target) target = el.closest('button,a,input,select,textarea,[role="button"],[role="combobox"],[role="link"],[role="menuitem"],[role="tab"]');
+    if (kind === 'click' && !__diagBranch && target) __diagBranch = (target === el) ? 'direct/no-redirect' : 'qualifying-ancestor';
     if (!target && kind === 'click') target = closestCustomClickable(el);
+    if (kind === 'click' && !__diagBranch && target) __diagBranch = (target === el) ? 'direct/no-redirect' : 'closestCustomClickable';
     if (!target && el.querySelectorAll && (
         getComputedStyle(el).cursor === 'pointer' ||
-        /(?:k-input|k-picker|k-dropdown|k-combobox|input-group|button-wrap)/i.test(el.className || '')
+        /(?:k-input|k-picker|k-dropdown|k-combobox|input-group|button-wrap)/i.test(safeClassName(el))
     )) {
       var actionableChildren = el.querySelectorAll('button,a[href],input,select,textarea,[role="button"],[role="combobox"],[role="link"]');
       if (actionableChildren.length === 1) target = actionableChildren[0];
     }
+    if (kind === 'click' && !__diagBranch && target) __diagBranch = 'single-actionable-descendant';
+    if (kind === 'click' && !target) {
+      emitRecorderDiagnostic({
+        raw: __diagRaw, composed_path: __diagPath, resolution_branch: 'unresolved',
+        logical_target_locator: null, interaction_target_decision: null,
+      });
+    }
     if (!target) return null;
+    var interactionTargetScope = null;
+    if (!option && !dateCell) {
+      interactionTarget = preserveInteractionTarget(el, target);
+      if (interactionTarget) {
+        interactionTargetScope = 'global';
+      } else {
+        // ROUND-8-OWNER-SCOPED-INTERACTION-TARGET: only attempted when
+        // the existing global path just above already returned null --
+        // never instead of it, never weakening computeLocator()'s own
+        // global uniqueness rules for the direct/global case.
+        var ownerScopedResult = resolveOwnerScopedInteractionTarget(el, target);
+        if (ownerScopedResult) {
+          interactionTarget = ownerScopedResult.relative;
+          interactionTargetScope = 'owner';
+        }
+      }
+    }
+    if (kind === 'click') {
+      var __diagLogicalLocator = null;
+      try { __diagLogicalLocator = computeLocator(target); } catch (e) { __diagLogicalLocator = null; }
+      var __diagDecision = diagInteractionTargetDecision(el, target, !!(option || dateCell));
+      emitRecorderDiagnostic({
+        raw: __diagRaw, composed_path: __diagPath,
+        resolution_branch: __diagBranch || (target === el ? 'direct/no-redirect' : 'qualifying-ancestor'),
+        logical_target_locator: __diagLogicalLocator,
+        interaction_target_decision: __diagDecision,
+      });
+    }
     var targetRole = attr(target, 'role') || implicitRole(target) || '';
     var semanticLeaf = ['button','link','combobox','option','gridcell','menuitem','tab'].indexOf(targetRole) !== -1;
     var customClickable = kind === 'click' && closestCustomClickable(target) === target;
     if (!semanticLeaf && !customClickable && (/^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(target.tagName) ||
-        /(?:k-header|k-dialog|k-popup|wrapper|container|(?:^|\s)(?:row|col(?:-|\s)))/i.test(target.className || ''))) return null;
+        /(?:k-header|k-dialog|k-popup|wrapper|container|(?:^|\s)(?:row|col(?:-|\s)))/i.test(safeClassName(target)))) return null;
     var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
-    if (kind === 'click' && /(?:k-icon|k-svg-icon|k-input-button)/i.test(el.className || '') && el.closest('.k-datepicker,.k-picker')) {
+    if (kind === 'click' && /(?:k-icon|k-svg-icon|k-input-button)/i.test(safeClassName(el)) && el.closest('.k-datepicker,.k-picker')) {
       result.field_type = 'calendar';
       var dateInput = el.closest('.k-datepicker,.k-picker').querySelector('input');
       if (dateInput) {
@@ -732,6 +1314,10 @@ RECORDER_JS = r"""
     result.control_context = sectionFor(target).name || '';
     var owns = attr(target, 'aria-controls') || attr(target, 'aria-owns');
     result.popup_locator = owns ? {strategy:'id', value:owns} : null;
+    if (interactionTarget) {
+      result.interaction_target = interactionTarget;
+      if (interactionTargetScope) result.interaction_target_scope = interactionTargetScope;
+    }
     return result;
   }
 
@@ -770,18 +1356,20 @@ RECORDER_JS = r"""
   function report(action) {
     if (!action || !action.locator) {
       console.warn('QA AI Studio Recorder skipped an action without a unique locator.');
-      return;
+      return false;
     }
     var signature = JSON.stringify({
       kind: action.kind, locator: action.locator,
       value: action.kind === 'fill' ? action.value : action.expected_value
     });
     var now = Date.now();
-    if (LAST_REPORTED && LAST_REPORTED.signature === signature && now - LAST_REPORTED.at < 750) return;
+    if (LAST_REPORTED && LAST_REPORTED.signature === signature && now - LAST_REPORTED.at < 750) return true;
     LAST_REPORTED = {signature: signature, at: now};
     if (window.__qa_record_action) {
       window.__qa_record_action(JSON.stringify(action));
+      return true;
     }
+    return false;
   }
 
   var POPUP_TRANSACTION = null;
@@ -915,61 +1503,277 @@ RECORDER_JS = r"""
     }, 120);
   }
 
-  // Route-aware fallback for framework navigation.  The old recorder made a
-  // final decision synchronously from e.target; when React attached routing to
-  // a non-native wrapper and computeLocator() returned null, the click vanished
-  // forever.  Preserve the composed event path while the old DOM still exists,
-  // then confirm the interaction by observing an SPA URL/DOM transition.
-  var DOM_MUTATION_VERSION = 0;
+  // Outcome-confirmed fallback for SPA navigation.
+  // Capture first, classify second: React/Vue applications frequently attach
+  // navigation to generic wrappers that have no native role/href and may be
+  // removed immediately after the click.  Snapshot the composedPath while the
+  // old DOM still exists, then report the best unique locator only if the app
+  // actually changes route through URL/history.  No application-specific text
+  // or CSS class is required.
+  var HISTORY_ROUTE_VERSION = 0;
+
+  // ROUND-9-EVENT-DRIVEN-NAVIGATION-CAPTURE ---------------------------------
+  // PROVEN DEFECT (Round 9 audit): the previous implementation reconciled a
+  // navigation-fallback candidate against HISTORY_ROUTE_VERSION/location.href
+  // by SAMPLING them on a fixed ~700ms poll (8 checks, 100ms apart). The
+  // route signals themselves were already event-driven (pushState/
+  // replaceState wrapped below, plus popstate/hashchange) -- only the
+  // consumption of that signal was time-bounded, so a route transition that
+  // completed after the poll's last check was permanently missed even though
+  // the underlying signal fired correctly. The live evidence for this: a
+  // controlled reproduction proved the fallback candidate itself (computed
+  // by routeSnapshotAction(), unchanged below) is safe and unique -- it is
+  // only the WHEN of reconciliation that was fragile.
+  //
+  // This replaces the polling deadline with a single pending navigation
+  // gesture that is reconciled REACTIVELY, exactly when a route signal
+  // actually fires -- never by sampling a clock. One recorder observes one
+  // human operator's actions, which happen sequentially, never
+  // concurrently, so a single slot is sufficient: a second eligible click
+  // before the first gesture's route settles simply supersedes it (see
+  // createPendingNavGesture()), mirroring how a real operator's clicks
+  // happen one at a time. A long stale-cleanup timer exists purely for
+  // memory/state hygiene (a click that never leads anywhere should not pin
+  // state forever) and is NEVER the mechanism that decides whether a
+  // navigation is legitimate -- only an actual route signal does that.
+  var PENDING_NAV_GESTURE = null;
+  var NAV_GESTURE_SEQ = 0;
+  var NAV_GESTURE_STALE_CLEANUP_MS = 20000; // hygiene only -- see note above
+
+  function navGestureDiag(eventName, gesture, extra) {
+    emitRecorderDiagnostic(Object.assign({
+      kind: 'navigation_transaction',
+      event: eventName,
+      gesture_id: gesture ? gesture.id : null,
+    }, extra || {}));
+  }
+
+  function clearNavGestureStaleTimer(gesture) {
+    if (gesture && gesture._staleTimer) {
+      clearTimeout(gesture._staleTimer);
+      gesture._staleTimer = null;
+    }
+  }
+
+  function supersedeNavGesture(gesture, reason) {
+    if (!gesture || gesture.state !== 'PENDING') return;
+    gesture.state = 'SUPERSEDED';
+    clearNavGestureStaleTimer(gesture);
+    navGestureDiag('navigation_transaction_superseded', gesture, {reason: reason || 'superseded'});
+  }
+
+  function completeNavGesture(gesture, finalState, extra) {
+    if (!gesture) return;
+    gesture.state = finalState;
+    clearNavGestureStaleTimer(gesture);
+    navGestureDiag('navigation_transaction_completed', gesture, Object.assign({final_state: finalState}, extra || {}));
+    if (PENDING_NAV_GESTURE === gesture) PENDING_NAV_GESTURE = null;
+  }
+
+  // Creates the single pending navigation gesture for THIS click, if (and
+  // only if) routeSnapshotAction() found an eligible fallback candidate for
+  // it. A click with no eligible candidate (routeFallback === null) never
+  // creates or touches a transaction at all -- it must not be able to
+  // supersede/cancel a real gesture already pending from an earlier click
+  // whose async navigation simply hasn't resolved yet (item 5 of the Round
+  // 9 spec: only a NEWER ELIGIBLE gesture supersedes an older one).
+  function createPendingNavGesture(routeFallback, beforeUrl, beforeHistoryVersion) {
+    if (!routeFallback) return null;
+    if (PENDING_NAV_GESTURE && PENDING_NAV_GESTURE.state === 'PENDING') {
+      supersedeNavGesture(PENDING_NAV_GESTURE, 'new_click');
+    }
+    NAV_GESTURE_SEQ += 1;
+    var gesture = {
+      id: NAV_GESTURE_SEQ,
+      routeFallback: routeFallback,
+      beforeUrl: beforeUrl,
+      beforeHistoryVersion: beforeHistoryVersion,
+      createdAt: Date.now(),
+      state: 'PENDING',
+      _staleTimer: null,
+    };
+    gesture._staleTimer = setTimeout(function () {
+      // Stale-state hygiene ONLY (see note above the state block). Never
+      // suppresses a route signal that has not happened yet by this point --
+      // reconcileNavGestureOnRouteSignal() always runs first whenever a
+      // signal genuinely fires; this only releases a gesture whose click
+      // never led anywhere.
+      if (gesture.state === 'PENDING') completeNavGesture(gesture, 'STALE');
+    }, NAV_GESTURE_STALE_CLEANUP_MS);
+    PENDING_NAV_GESTURE = gesture;
+    navGestureDiag('navigation_transaction_created', gesture, {
+      candidate_locator: (gesture.routeFallback && gesture.routeFallback.locator) || null,
+    });
+    return gesture;
+  }
+
+  // Reconciles the single pending gesture (if any) against a route signal
+  // that just fired for real -- this IS the correctness mechanism (replacing
+  // the old fixed-window poll), called directly from the pushState/
+  // replaceState/popstate/hashchange wiring below, never from a timer.
+  function reconcileNavGestureOnRouteSignal(signalName) {
+    var gesture = PENDING_NAV_GESTURE;
+    if (!gesture || gesture.state !== 'PENDING') return;
+    var urlChanged = String(location.href) !== String(gesture.beforeUrl);
+    var historyChanged = HISTORY_ROUTE_VERSION > gesture.beforeHistoryVersion;
+    navGestureDiag('navigation_route_signal', gesture, {
+      signal: signalName, url_changed: urlChanged, history_changed: historyChanged,
+    });
+    if (!urlChanged && !historyChanged) return; // this signal didn't move the route (e.g. redundant replaceState)
+    var action = gesture.routeFallback;
+    action.navigation_outcome = urlChanged ? 'url_changed' : 'history_changed';
+    action.destination_url = String(location.href);
+    var reported = report(action);
+    navGestureDiag('navigation_fallback_reported', gesture, {reported: !!reported});
+    completeNavGesture(gesture, reported ? 'REPORTED_FALLBACK' : 'REPORT_FAILED');
+  }
+  // ROUND-9-EVENT-DRIVEN-NAVIGATION-CAPTURE (state/helpers end) ------------
+
+  // Observe SPA routing without changing application behaviour. Unchanged
+  // signal sources from before Round 9 (pushState/replaceState wrapping,
+  // popstate, hashchange) -- Round 9 only adds the reconciliation call so a
+  // pending gesture is settled the moment one of these actually fires,
+  // instead of waiting for the next poll tick.
   try {
-    new MutationObserver(function (records) {
-      if (records && records.length) DOM_MUTATION_VERSION += records.length;
-    }).observe(document.documentElement, {subtree:true, childList:true});
+    ['pushState', 'replaceState'].forEach(function (method) {
+      var original = history[method];
+      if (!original || original.__qaRecorderWrapped) return;
+      var wrapped = function () {
+        var result = original.apply(this, arguments);
+        HISTORY_ROUTE_VERSION += 1;
+        try { reconcileNavGestureOnRouteSignal(method); } catch (e) {}
+        return result;
+      };
+      wrapped.__qaRecorderWrapped = true;
+      history[method] = wrapped;
+    });
+    window.addEventListener('popstate', function () {
+      HISTORY_ROUTE_VERSION += 1;
+      try { reconcileNavGestureOnRouteSignal('popstate'); } catch (e) {}
+    }, true);
+    window.addEventListener('hashchange', function () {
+      HISTORY_ROUTE_VERSION += 1;
+      try { reconcileNavGestureOnRouteSignal('hashchange'); } catch (e) {}
+    }, true);
   } catch (e) {}
 
-  function routeFallbackAction(event) {
-    var path = event.composedPath ? event.composedPath() : [];
-    if (!path || !path.length) {
-      var n = event.target;
-      while (n && n.nodeType === 1 && path.length < 10) { path.push(n); n = n.parentElement; }
+  function exactPathLocator(el) {
+    if (!el || el.nodeType !== 1) return null;
+    var parts = [], node = el, depth = 0;
+    while (node && node.nodeType === 1 && node !== document.body && depth < 9) {
+      if (node.id && !looksDynamic(node.id)) {
+        parts.unshift('#' + CSS.escape(node.id));
+        break;
+      }
+      var testid = attr(node, 'data-testid') || attr(node, 'data-test') || attr(node, 'data-cy') || attr(node, 'data-qa');
+      if (testid && !looksDynamic(testid)) {
+        var testAttr = attr(node, 'data-testid') ? 'data-testid' : attr(node, 'data-test') ? 'data-test' : attr(node, 'data-cy') ? 'data-cy' : 'data-qa';
+        parts.unshift('[' + testAttr + '="' + String(testid).replace(/"/g, '\\"') + '"]');
+        break;
+      }
+      var tag = node.tagName.toLowerCase();
+      var segment = tag;
+      var stable = Array.prototype.filter.call(node.classList || [], function (c) {
+        return !looksDynamic(c) && !isGenericFrameworkClass(c) && /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(c);
+      }).slice(0, 2);
+      if (stable.length) segment += '.' + stable.map(function(c){ return CSS.escape(c); }).join('.');
+      var parent = node.parentElement;
+      if (parent) {
+        var peers = Array.prototype.filter.call(parent.children, function (x) { return x.tagName === node.tagName; });
+        if (peers.length > 1) segment += ':nth-of-type(' + (peers.indexOf(node) + 1) + ')';
+      }
+      parts.unshift(segment);
+      node = parent;
+      depth += 1;
     }
-    for (var i = 0; i < path.length && i < 10; i++) {
-      var node = path[i];
-      if (!node || node.nodeType !== 1 || node === document.body || node === document.documentElement) continue;
-      var navSurface = node.closest && node.closest('nav,aside,[role="navigation"],[role="menu"],.sidebar,.side-menu,.sidenav,.navigation,.navbar,.nav,.menu,.list-group');
-      if (!navSurface) continue;
-      var text = (node.innerText || '').replace(/\s+/g, ' ').trim();
-      if (!text || text.length > 120) continue;
-      var meta = locatorMetadata(node);
-      if (!meta.locator) continue;
-      var action = Object.assign({kind:'click'}, meta, fieldMetadata(node, 'click'));
-      action.field_type = 'navigation';
-      action.control_role = attr(node, 'role') || implicitRole(node) || 'navigation-item';
-      action.control_context = sectionFor(node).name || 'Navigation';
-      action.expected_post_state = 'application route or navigation content changes';
-      action.capture_evidence = 'composedPath navigation candidate; outcome-confirmed';
-      return action;
-    }
+    var css = parts.join(' > ');
+    if (!css) return null;
+    try {
+      if (document.querySelectorAll(css).length === 1) return {strategy:'css', value:css};
+    } catch (e) {}
     return null;
   }
 
-  function confirmRouteFallback(action, beforeUrl, beforeMutationVersion) {
-    if (!action) return;
-    var attempts = 0;
-    function check() {
-      attempts++;
-      var urlChanged = String(location.href) !== String(beforeUrl);
-      var domChanged = DOM_MUTATION_VERSION > beforeMutationVersion;
-      if (urlChanged || domChanged) {
-        action.navigation_outcome = urlChanged ? 'url_changed' : 'dom_changed';
-        action.destination_url = String(location.href);
-        report(action);
-        return;
-      }
-      if (attempts < 6) setTimeout(check, 100);
+  function routeSnapshotAction(event) {
+    var path = event.composedPath ? event.composedPath() : [];
+    if (!path || !path.length) {
+      var n = event.target;
+      while (n && n.nodeType === 1 && path.length < 12) { path.push(n); n = n.parentElement; }
     }
-    setTimeout(check, 0);
+    var candidates = [];
+    for (var i = 0; i < path.length && i < 12; i++) {
+      var node = path[i];
+      if (!node || node.nodeType !== 1 || node === document.body || node === document.documentElement) continue;
+      var text = (accessibleName(node) || node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 140) continue;
+      var meta = locatorMetadata(node);
+      if (!meta.locator) {
+        // Route snapshots must obey the same persistence-quality contract as
+        // ordinary recorder actions.  Prefer a semantic RELATIVE XPath that
+        // is unique at click time; never rescue a navigation with an absolute
+        // / deeply positional CSS path merely because it happens to be unique.
+        // The old exactPathLocator() fallback was the reason a correctly
+        // captured SPA navigation could make Stop Recording fail validation.
+        var routeXpath = xpathFor(node);
+        if (routeXpath && locatorMatchCount({strategy:'xpath', value:routeXpath}) === 1) {
+          meta = Object.assign(meta || {}, {
+            locator: {strategy:'xpath', value:routeXpath},
+            xpath: routeXpath
+          });
+        }
+      }
+      if (!meta.locator) continue;
+      var role = attr(node, 'role') || implicitRole(node);
+      var semanticLeaf = ['button','link','combobox','option','gridcell','menuitem','tab'].indexOf(role) !== -1;
+      var customClickable = closestCustomClickable(node) === node;
+      var knownInteractiveTag = ['A','BUTTON','LI','INPUT','SELECT','TEXTAREA'].indexOf(node.tagName) !== -1;
+      // A route-changed page can expose ANY ancestor in the click's
+      // composedPath -- legend, fieldset, section, a plain div wrapper,
+      // a heading -- with a unique locator and some visible text once
+      // the DOM has settled. None of those are genuine actionable
+      // targets on their own, so (mirroring capturedAction()'s own
+      // semanticLeaf/customClickable gate for an ordinary click)
+      // candidacy here requires the SAME positive proof: a known
+      // interactive tag, a real interactive ARIA role, or a proven
+      // custom-clickable node. Anything else -- including a FIELDSET/
+      // legend newly exposed by a preceding Confirm-click transition --
+      // is never eligible, closing off exactly the gap that let a
+      // structural container be promoted to a phantom "Click <container
+      // text>" navigation step.
+      if (!semanticLeaf && !customClickable && !knownInteractiveTag) continue;
+      var score = 0;
+      if (node === event.target) score += 30;
+      if (['A','BUTTON','LI'].indexOf(node.tagName) !== -1) score += 20;
+      if (role && ['link','button','menuitem','tab','treeitem'].indexOf(role) !== -1) score += 25;
+      if (attr(node, 'onclick') || attr(node, 'tabindex')) score += 15;
+      try { if (getComputedStyle(node).cursor === 'pointer') score += 15; } catch (e) {}
+      // Prefer compact semantic leaves over wrappers containing an entire menu.
+      if (text.length <= 60) score += 20;
+      candidates.push({node:node, meta:meta, text:text, role:role, score:score});
+    }
+    if (!candidates.length) return null;
+    candidates.sort(function(a,b){ return b.score - a.score; });
+    var best = candidates[0];
+    var action = Object.assign({kind:'click'}, best.meta, fieldMetadata(best.node, 'click'));
+    action.field_name = action.field_name || best.text;
+    action.field_type = 'navigation';
+    action.control_role = best.role || 'navigation-item';
+    action.control_context = sectionFor(best.node).name || 'Application navigation';
+    action.expected_post_state = 'application route changes';
+    action.capture_evidence = 'composedPath snapshot; route outcome required';
+    return action;
   }
+
+  // ROUND-9-EVENT-DRIVEN-NAVIGATION-CAPTURE: confirmRouteSnapshot()'s fixed
+  // ~700ms poll (8 attempts, 100ms apart) previously decided WHETHER a route
+  // change counted -- removed. Reconciliation is now performed by
+  // reconcileNavGestureOnRouteSignal() (defined above, near
+  // PENDING_NAV_GESTURE), called directly from the pushState/replaceState/
+  // popstate/hashchange wiring the moment one of those actually fires. The
+  // pending-gesture bookkeeping this replaces confirmRouteSnapshot's
+  // `captureState` parameter with is created below, immediately after
+  // routeSnapshotAction(), exactly where confirmRouteSnapshot used to be
+  // armed.
 
   document.addEventListener('click', function (e) {
     var el = e.target;
@@ -981,11 +1785,29 @@ RECORDER_JS = r"""
     }
     if (isTextEntry(el) && !isDynamicTextControl(el)) return;
     var beforeUrl = String(location.href);
-    var beforeMutationVersion = DOM_MUTATION_VERSION;
-    var routeFallback = routeFallbackAction(e);
+    var beforeHistoryVersion = HISTORY_ROUTE_VERSION;
+    var routeFallback = routeSnapshotAction(e);
     var action = capturedAction(el, 'click');
-    if (!action) {
-      confirmRouteFallback(routeFallback, beforeUrl, beforeMutationVersion);
+    // Create (or supersede-and-replace) the single pending navigation
+    // gesture right after capturedAction() resolves -- still well before
+    // the normal path's own report() call, and (same reasoning either way)
+    // still guaranteed to complete before the application's own click/
+    // router handling begins: this listener is registered on `document` in
+    // the CAPTURE phase by an init script that always runs before the
+    // page's own scripts, so this entire synchronous function body always
+    // finishes before any pushState/popstate/hashchange this click
+    // eventually triggers, however delayed. capturedAction() runs first
+    // (not after) purely so its own click-resolution diagnostic keeps
+    // being the first diagnostic emitted for this click -- preserving
+    // Round 6/7's diagnostic-ordering contract unchanged; it has no
+    // bearing on transaction correctness either way. Returns null (no
+    // transaction) when routeSnapshotAction() found no eligible candidate
+    // at all -- see createPendingNavGesture()'s own comment on why that
+    // must never supersede an already-pending gesture from an earlier
+    // click.
+    var navGesture = createPendingNavGesture(routeFallback, beforeUrl, beforeHistoryVersion);
+    if (!action || !action.locator) {
+      if (navGesture) navGestureDiag('normal_action_rejected', navGesture, {});
       return;
     }
     if (action.field_type === 'dropdown' || action.field_type === 'autocomplete') { action.kind = 'open_dropdown'; action.expected_post_state = 'owning popup visible or aria-expanded=true'; }
@@ -1021,7 +1843,18 @@ RECORDER_JS = r"""
       if (!beginPopupTransaction(action, el.closest('button,input,select,[role="combobox"]') || el)) return;
     }
     else if (['option','date'].indexOf(action.field_type) === -1 && !elementBelongsToTransaction(el, POPUP_TRANSACTION)) closePopupTransaction('unrelated actionable interaction');
-    report(action);
+    var reportedNormally = report(action);
+    if (navGesture) {
+      navGestureDiag(reportedNormally ? 'normal_action_reported' : 'normal_action_rejected', navGesture, {});
+      // Only a SUCCESSFUL normal report completes/clears the gesture. A
+      // normal action that reached this far but was still rejected by
+      // report()'s own dedup (extremely unlikely here, since the dedup key
+      // includes this exact locator+kind and this is the first click on it)
+      // must leave the gesture PENDING so a later route signal can still
+      // rescue the navigation, mirroring the old captureState.reported
+      // semantics exactly.
+      if (reportedNormally) completeNavGesture(navGesture, 'REPORTED_NORMAL');
+    }
   }, true);
 
   document.addEventListener('input', function (e) {
@@ -1121,6 +1954,13 @@ class WebRecordingSession:
         self.module = module
         self.knowledge_name = knowledge_name
         self.actions = []
+        # ROUND-7-DIAGNOSTIC-ONLY: purely observational click-resolution
+        # traces from RECORDER_JS's emitRecorderDiagnostic() (see
+        # _on_diagnostic() below). Never read by build_script() / never
+        # persisted into recorded_script — a separate channel from
+        # self.actions.
+        self.diagnostics = []
+        self._diagnostics_log_path = None
         self._playwright = None
         self._browser = None
         self._context = None
@@ -1346,6 +2186,18 @@ class WebRecordingSession:
             lambda source, raw: self._on_action(raw, activity),
         )
 
+        # ROUND-7-DIAGNOSTIC-ONLY: a second, separate bridge for the
+        # read-only click-resolution trace RECORDER_JS's
+        # emitRecorderDiagnostic() sends (see capturedAction() in
+        # RECORDER_JS and _on_diagnostic() below). Entirely additive —
+        # __qa_record_action above, and everything it feeds
+        # (self.actions / recorded_script / the generated harness), is
+        # untouched by this binding's presence.
+        await self._context.expose_binding(
+            "__qa_record_diagnostic",
+            lambda source, raw: self._on_diagnostic(raw),
+        )
+
         known_locators = self._known_locators_for_scope(
             self.domain, self.module, self.knowledge_name
         )
@@ -1411,6 +2263,52 @@ class WebRecordingSession:
         self.actions.append(action)
 
         activity(self._describe_action(action))
+
+    def _on_diagnostic(self, raw):
+        """
+        ROUND-7-DIAGNOSTIC-ONLY: receives the read-only click-resolution
+        trace RECORDER_JS's emitRecorderDiagnostic() sends over the
+        __qa_record_diagnostic binding (added this round, alongside the
+        pre-existing __qa_record_action binding wired right above it in
+        start_impl()). Never touches self.actions, never influences
+        build_script() / recorded_script / the generated Playwright
+        harness — purely observational. Appended in-memory to
+        self.diagnostics (for programmatic inspection while the session
+        is still alive) and appended as one JSON line to a per-session
+        log file under DIAGNOSTICS_OUTPUT_FOLDER, so it can be read back
+        after the recording session has already ended without needing
+        live browser access. Any failure here (bad JSON, disk I/O) is
+        swallowed — this must never be able to interrupt recording.
+        """
+
+        try:
+            entry = json.loads(raw)
+        except Exception:
+            return
+
+        entry["_test_case_id"] = self.test_case_id
+        entry["_received_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+        self.diagnostics.append(entry)
+
+        try:
+            if self._diagnostics_log_path is None:
+                DIAGNOSTICS_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+                token = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")
+                self._diagnostics_log_path = (
+                    DIAGNOSTICS_OUTPUT_FOLDER
+                    / f"{self.test_case_id}_{token}_recorder_diagnostics.jsonl"
+                )
+
+            with open(self._diagnostics_log_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+
+        except Exception:
+            logger.exception(
+                "[web-recorder] could not write recorder diagnostic log "
+                "entry (non-fatal — instrumentation only, recording "
+                "continues normally)."
+            )
 
     @staticmethod
     def _describe_action(action):
@@ -1556,6 +2454,34 @@ class WebRecordingSession:
             metadata_comment("EXPECTED_POST_STATE", action.get("expected_post_state")),
             metadata_comment("PRIMARY_LOCATOR", primary),
             metadata_comment("FALLBACK_LOCATORS", "; ".join(fallbacks)),
+            # The logical/semantic control (PRIMARY_LOCATOR, above) stays
+            # the owner for validation, ownership and next-step identity,
+            # unchanged. INTERACTION_TARGET is additive and optional: only
+            # present when the real recorded gesture landed on a distinct,
+            # stable, uniquely-resolvable physical surface belonging to
+            # that control (e.g. a composite widget's own trigger icon) --
+            # see capturedAction() in the recorder. Absent ("-") for every
+            # simple control and for every script recorded before this
+            # field existed, so replay must treat it as optional.
+            metadata_comment(
+                "INTERACTION_TARGET",
+                cls._locator_display(action.get("interaction_target") or {}),
+            ),
+            # ROUND-8-OWNER-SCOPED-INTERACTION-TARGET: disambiguates how
+            # replay must resolve INTERACTION_TARGET above -- never by
+            # reinterpreting that string's own format (its serialization
+            # via _locator_display() is completely unchanged), always via
+            # this separate, explicit field. "global" (or absent/"-" for
+            # every script recorded before this field existed) means the
+            # existing Round 5/6 behavior: resolve INTERACTION_TARGET as
+            # a page-wide-unique locator, exactly as before. "owner" means
+            # INTERACTION_TARGET is instead a locator relative to the
+            # composite/widget scope owned by PRIMARY_LOCATOR, and must be
+            # re-resolved within that scope, never against the whole page.
+            metadata_comment(
+                "INTERACTION_TARGET_SCOPE",
+                action.get("interaction_target_scope") or "-",
+            ),
             metadata_comment("XPATH", xpath),
             metadata_comment("SENSITIVE", "true" if sensitive else "false"),
             metadata_comment("SOURCE", "recorded"),

@@ -51,3 +51,30 @@ class AiAssistantRepository:
         self.orchestrator.clear_history(session_id=session_id)
 
         return {"status": "cleared", "session_id": session_id}
+
+    # --------------------------------------------------
+    # QA-AI-STUDIO-IMPACT-ANALYSIS-V1
+    # --------------------------------------------------
+
+    def impact_analysis(self, session_id, source, target, question=None):
+        """Thin delegation to Core/impact_analysis_service.py's
+        ImpactAnalysisService -- same pattern as ask() delegating to
+        AIOrchestrator. Imported lazily so a role without Impact
+        Analysis access never pays the extra import/construction cost
+        of the retrieval/LLM/test-case stack this pulls in."""
+
+        from Core.impact_analysis_service import ImpactAnalysisService
+
+        if not isinstance(source, dict) or not isinstance(target, dict):
+
+            raise ValueError("Source and target scope are required.")
+
+        return ImpactAnalysisService().analyze(
+            session_id=session_id, source=source, target=target, question=question,
+        )
+
+    def impact_analysis_history(self, session_id="default", limit=10):
+
+        from Core.impact_analysis_repository import ImpactAnalysisRepository
+
+        return ImpactAnalysisRepository().get_recent(session_id=session_id, limit=limit)

@@ -619,3 +619,148 @@ Response Format
 ### Source Summary
 
 """)
+
+    # --------------------------------------------------
+    # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: Change Footprint Extraction Prompt
+    #
+    # Stage 2 of the Impact Analysis pipeline. Unlike every other prompt
+    # in this file, the caller (Core/impact_analysis_service.py) sends
+    # this straight to Core/ollama_provider.py's OllamaProvider.generate()
+    # directly rather than through Core/llm_engine.py's LLMEngine.generate()
+    # — that path's prompt-type auto-detection and Core/output_formatter.py's
+    # duplicate-line stripping are built for prose Q&A and are unsafe for
+    # structured JSON (see the Phase A discovery report). This prompt must
+    # therefore be strict about the OUTPUT FORMAT, not just the content
+    # rules, since nothing downstream will clean up a malformed response.
+    # --------------------------------------------------
+
+    def build_change_footprint_prompt(
+        self,
+        source_identity,
+        context,
+    ):
+
+        return self.clean_prompt(f"""
+{self._context_block(context)}
+
+{self._common_rules()}
+
+Source Document
+
+{source_identity}
+
+Task
+
+Extract a structured CHANGE FOOTPRINT from the source document evidence above.
+This is the ONLY evidence you may use — do not use outside knowledge about
+PSW, WeBOC, or any other system.
+
+For each distinct change the evidence actually describes, capture:
+
+- type: one of Business Process, Business Rule, Validation, Workflow Step,
+  Status/State Transition, Field/Data Element, API, Endpoint, Request
+  Payload, Response Payload, Message/Event, Integration, External System,
+  Database/Table, SQL/Data Mapping, UI/Form, Role/Actor, Permission,
+  Notification, Report, Error Code, Reference Data, Configuration,
+  Testable Acceptance/Behavior Change
+- name: the specific field/API/message/rule name as it appears in the
+  evidence — never invent a name the evidence does not contain
+- change: what the evidence says changed, in one concise sentence
+- source_evidence: one or two short verbatim excerpts from the evidence
+  above that support this item
+
+Rules
+
+- Do NOT require every category — return only what the evidence supports.
+- Never invent a change item that has no supporting excerpt above.
+- If the evidence describes no identifiable change, return an empty
+  "changes" array — do not force an item to exist.
+
+Output Format
+
+Return ONLY a single JSON object, nothing else — no markdown code fences,
+no commentary before or after it, no explanation. Exactly this shape:
+
+{{"changes": [{{"type": "...", "name": "...", "change": "...", "source_evidence": ["...", "..."]}}]}}
+""")
+
+    # --------------------------------------------------
+    # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: Dependency Matching / Classification
+    # Prompt
+    #
+    # Stage 5/6. Called once per extracted source change item, against
+    # the target evidence retrieved for that item's focused queries
+    # (Stage 3/4). Also sent directly to OllamaProvider.generate() — see
+    # the note on build_change_footprint_prompt() above.
+    # --------------------------------------------------
+
+    def build_impact_matching_prompt(
+        self,
+        source_change,
+        target_identity,
+        context,
+    ):
+
+        return self.clean_prompt(f"""
+{self._context_block(context)}
+
+{self._common_rules()}
+
+Source Change Being Assessed
+
+Type: {source_change.get('type', '')}
+Name: {source_change.get('name', '')}
+Change: {source_change.get('change', '')}
+
+Target System
+
+{target_identity}
+
+Task
+
+Decide whether the Target System evidence above establishes an impact from
+the Source Change, using ONLY that evidence.
+
+Classification Rules
+
+- CONFIRMED IMPACT — use ONLY when the target evidence explicitly shows
+  the same field/API/message/interface/dependency the source change
+  affects (a direct, named match — not merely a related topic).
+- POTENTIAL IMPACT — use when the target evidence discusses a plausibly
+  related concept, process, or component, but does NOT explicitly prove
+  the same dependency. Vector/text similarity between the source change
+  and target evidence is NEVER sufficient by itself for CONFIRMED IMPACT
+  — similarity alone is at most POTENTIAL IMPACT.
+- NO DOCUMENTED IMPACT — use when the target evidence above has nothing
+  identifiably related to this source change. Never write "no impact" —
+  the source change may still have a real-world impact that is simply not
+  documented in the currently indexed target knowledge.
+
+Evidence Strength
+
+- DIRECT — the same API/field/message/integration/dependency is
+  explicitly documented in the target evidence.
+- INDIRECT — a related concept is present but the specific dependency is
+  not explicitly documented.
+- INSUFFICIENT — the target evidence does not support any relationship.
+
+Rules
+
+- Never invent a target component, interface, or field the target
+  evidence does not contain.
+- Never convert a lexical/semantic similarity directly into CONFIRMED
+  IMPACT — require an explicit, named dependency in the evidence.
+- reasoning_summary must be a concise, evidence-based explanation — not
+  hidden chain-of-thought, just the conclusion and why.
+
+Output Format
+
+Return ONLY a single JSON object, nothing else — no markdown code fences,
+no commentary before or after it. Exactly this shape:
+
+{{"classification": "CONFIRMED IMPACT", "evidence_strength": "DIRECT", "impact_area": "...", "target_component": "...", "impact_description": "...", "reasoning_summary": "...", "recommended_verification": ["...", "..."]}}
+
+If there is no identifiable target component at all, use classification
+"NO DOCUMENTED IMPACT", evidence_strength "INSUFFICIENT", and an empty
+string for target_component.
+""")

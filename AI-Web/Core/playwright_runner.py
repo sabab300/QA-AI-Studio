@@ -24,6 +24,8 @@ it at a real/production PSW environment rather than a test/UAT one.
 """
 
 import ast
+import builtins as _qa_builtins_module
+import hashlib
 import json
 import os
 import re
@@ -31,6 +33,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -320,20 +323,81 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from Core.playwright_semantics import semantic_name_compatible
 from playwright.sync_api import sync_playwright
+
+# --------------------------------------------------------------------
+# RUNTIME IDENTITY PROOF (2026-09-25) — child side.
+#
+# Root-cause context: a prior "name 'time' is not defined" failure
+# during post-action verification was traced to the PARENT (FastAPI/
+# uvicorn) process running with --no-reload, which never re-imports
+# Core.playwright_runner after it is first loaded — so an on-disk fix
+# to this template can sit unused in a long-running server process
+# until it is actually restarted. This banner is written into every
+# generated child script and printed to stdout the instant that child
+# process starts, BEFORE any browser is launched or any step runs, so
+# the operator/dev can always tell — by reading Output/AutomationRuns/
+# *_interactive.py itself, or this printed line — exactly which
+# harness template (by hash) actually produced the file that is about
+# to execute. __HARNESS_VERSION__ below is substituted by the PARENT
+# at build time with the sha256 of the exact INTERACTIVE_HARNESS_TEMPLATE
+# text it used; if that value here ever fails to match what the parent
+# logged as "harness_template_sha256" for this same run, the parent
+# and the file on disk have diverged and the process needs a restart.
+print(
+    "QA_CHILD_DIAGNOSTIC::" + json.dumps({
+        "harness_version": "__HARNESS_VERSION__",
+        "python": sys.executable,
+        "cwd": os.getcwd(),
+        "harness_file": __file__,
+        "time_available": "time" in dir(),
+        "time_module": getattr(time, "__file__", "<built-in>"),
+    }),
+    flush=True,
+)
+# --- end runtime identity proof ---
 
 _QA_MAX_REPAIR_ROUNDS = __MAX_REPAIR_ROUNDS__
 _QA_SELECTION_TIMEOUT_MS = __SELECTION_TIMEOUT_MS__
 _QA_DISCOVERY_TIMEOUT_MS = __DISCOVERY_TIMEOUT_MS__
 _QA_STATE_READINESS_TIMEOUT_MS = __STATE_READINESS_TIMEOUT_MS__
 _QA_TOTAL_STEPS = __TOTAL_STEPS__
+# UNIVERSAL STEP COMPLETION GATE: Replay Speed is human-observation
+# pacing ONLY -- it is never used for application/state synchronization
+# (that remains entirely state-driven: the precondition/resolution
+# cascade above, and the completion gate inside _qa_verify_post_action()
+# below). Applied exactly once per step, AFTER that step has already
+# been proven PASS (after its own step_passed event, immediately before
+# control returns so Step N+1's precondition gate begins) -- never
+# inside locator resolution, readiness polling, or post-action
+# completion polling. Reuses the SAME configured value that already
+# paces Playwright's own slow_mo (see _build_interactive_script()),
+# rather than introducing a second, separately-configured setting.
+_QA_REPLAY_SPEED_MS = __REPLAY_SPEED_MS__
+
+
+def _qa_replay_speed_pause():
+    if _QA_REPLAY_SPEED_MS > 0:
+        try:
+            _qa_active_page().wait_for_timeout(_QA_REPLAY_SPEED_MS)
+        except Exception:
+            pass
 
 _QA_REPAIRS = []
 _QA_SELECTIONS = {}
 _QA_LAST_DYNAMIC_CONTROL = None
+# ROUND-8-OWNER-SCOPED-INTERACTION-TARGET: holds the single resolved
+# ElementHandle (or None) for the current step's owner-scoped physical
+# interaction target, if any. Populated only by
+# _qa_resolve_owner_scoped_trigger(), called from _qa_run_step() BEFORE
+# the step's one exec() -- never after, never as a repair/retry. Reused
+# across steps as scratch space only; a step that does not use the
+# owner-scoped path leaves this at None.
+_QA_OWNER_SCOPED_TRIGGER_HANDLE = {"handle": None}
 _QA_STATE = {
     "current_step": 0, "last_passed_step": 0, "failed_step": None,
     "repair_state": "idle", "pending_selection_step": None,
@@ -726,6 +790,7 @@ def _qa_verify_code(code_text, metadata=None):
                 capture = loc.first.evaluate(r"""el => {
                     const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
                     const label = el.labels && el.labels.length ? clean(el.labels[0].innerText) : '';
+                    const icon = el.querySelector ? el.querySelector('i,svg,[class*="icon"]') : null;
                     return {
                         accessible_name: clean(el.getAttribute('aria-label') || label || el.innerText || el.value || el.getAttribute('placeholder')),
                         text: clean(el.innerText || el.textContent),
@@ -737,6 +802,17 @@ def _qa_verify_code(code_text, metadata=None):
                         placeholder: clean(el.getAttribute('placeholder')),
                         title: clean(el.getAttribute('title')),
                         stable_attributes: {'aria-label': clean(el.getAttribute('aria-label'))},
+                        // Supporting-only evidence (never a primary name source --
+                        // see _qa_semantic_compatibility()'s name_evidence list): a
+                        // control's own class attribute and, when present, a child
+                        // icon's class/aria-label/title. This is what lets a
+                        // recorded identity like "Password visibility toggle",
+                        // derived at record time from a class token such as
+                        // "toggle-password", be independently re-confirmed against
+                        // the SAME real DOM fact at replay time -- without ever
+                        // weakening the name-matching algorithm itself.
+                        class_name: clean(el.className),
+                        icon_evidence: icon ? clean((icon.getAttribute('class') || '') + ' ' + (icon.getAttribute('aria-label') || '') + ' ' + (icon.getAttribute('title') || '')) : '',
                         section: ''
                     };
                 }""")
@@ -807,6 +883,13 @@ def _qa_semantic_compatibility(capture, metadata):
         actual_name, capture.get("label"), capture.get("name"), capture.get("id"),
         capture.get("placeholder"), capture.get("title"),
         (capture.get("stable_attributes") or {}).get("aria-label"),
+        # Class/icon tokens are supporting evidence ONLY (per the recorder's
+        # own adjunctToggleName() derivation in web_recorder.py) -- they
+        # never override a real accessible name above; they only let a
+        # class-token-derived identity (e.g. "Password visibility toggle"
+        # from class="toggle-password") be recognized as compatible when
+        # the control genuinely has no accessible name of its own.
+        capture.get("class_name"), capture.get("icon_evidence"),
     ]
     normalized_expected = re.sub(r"\s+", " ", expected_name).strip().casefold()
     normalized_actual = re.sub(r"\s+", " ", actual_name).strip().casefold()
@@ -840,12 +923,12 @@ def _qa_semantic_compatibility(capture, metadata):
         # _qa_verify_code already requires those nodes to be actionable, so
         # permit them for recorded click/button semantics without weakening
         # uniqueness, visibility, or name matching.
-        "button": {"button", "link", "div", "li", "span"},
+        "button": {"button", "link", "div", "li", "span", "p"},
     }
     effective_role = actual_role or ({"input": "textbox", "select": "combobox", "button": "button", "a": "link"}.get(actual_tag) or actual_tag)
     allowed = type_roles.get(expected_type)
     if allowed and effective_role not in allowed:
-        return False, f"Selected {effective_role or actual_tag} cannot perform {action_type or expected_type}; expected {expected_type}."
+        return False, f"Selected {effective_role or actual_tag} is not semantically compatible with recorded {expected_type} action {action_type or "click"}."
     if action_type in {"fill", "type"} and actual_tag not in {"input", "textarea"} and effective_role != "textbox":
         return False, "Selected element does not accept text input."
     return True, "Semantic and action context match."
@@ -1369,6 +1452,336 @@ def _qa_locator_code(display_value):
     return "page.locator(" + repr(value) + ")"
 
 
+# ROUND-8-OWNER-SCOPED-INTERACTION-TARGET -----------------------------
+# A physical interaction target can be a meaningful, deliberately-aimed-at
+# trigger (e.g. a composite widget's own dropdown-arrow icon) that has NO
+# safe GLOBAL locator -- computeLocator() in RECORDER_JS correctly
+# refuses to invent one -- while still belonging to a composite/widget
+# control whose LOGICAL OWNER does have a stable, globally-unique
+# locator. When the recorder proved (at record time) that the trigger
+# resolves uniquely RELATIVE TO that owner's own composite/widget scope
+# (see findCompositeScope()/computeScopedLocator()/
+# resolveOwnerScopedInteractionTarget() in RECORDER_JS), it persists that
+# relative locator as INTERACTION_TARGET plus a new, separate
+# INTERACTION_TARGET_SCOPE: "owner" metadata field -- the persisted
+# INTERACTION_TARGET string format itself is completely unchanged
+# (still whatever _locator_display() already produces); only the new
+# scope field distinguishes "resolve this globally" (absent/"-"/
+# "global", the existing Round 5/6 behavior, entirely unchanged) from
+# "resolve this relative to the owner's composite scope" (new).
+#
+# This is the replay-side counterpart: it NEVER trusts a stored scope
+# locator for the composite container itself -- it re-derives the
+# composite scope live, at replay time, by walking up from the owner's
+# OWN (freshly re-resolved, freshly re-validated) element, exactly
+# mirroring findCompositeScope()'s own walk-up logic. If the owner
+# cannot be re-resolved uniquely, if no composite scope can be found
+# containing it, or if the persisted relative locator does not resolve
+# to EXACTLY one element within that scope, this returns None and the
+# caller performs no owner-scoped action at all (silent no-op, same
+# fail-safe convention as the existing global interaction-target path).
+# Nothing here ever executes a click, fills a value, or otherwise causes
+# a side effect -- it only ever resolves and validates, before any
+# action, in keeping with "resolve everything before the single exec()".
+def _qa_parse_relative_locator(display_value):
+    """
+    Reverse-parses a persisted locator display string (the same format
+    _locator_display() in web_recorder.py already produces for every
+    other locator field in this script) into a {strategy, value/role/
+    name} dict usable for scoped DOM matching. This is a NEW, standalone
+    parser -- it deliberately does not reuse/modify _qa_locator_code()
+    (that function targets Playwright Python code generation for GLOBAL
+    locators only, and is missing name=/title= handling that this
+    owner-scoped path needs; changing it would risk the existing global
+    path this round must not touch).
+    """
+    value = (display_value or "").strip()
+    if not value or value == "-":
+        return None
+    role_match = re.fullmatch(r"role=([^|]+)\|name=(.+)", value)
+    if role_match:
+        return {"strategy": "role", "role": role_match.group(1), "name": role_match.group(2)}
+    if value.startswith("data-testid="):
+        return {"strategy": "testid", "value": value[12:]}
+    if value.startswith("label="):
+        return {"strategy": "label", "value": value[6:]}
+    if value.startswith("name="):
+        return {"strategy": "name", "value": value[5:]}
+    if value.startswith("placeholder="):
+        return {"strategy": "placeholder", "value": value[12:]}
+    if value.startswith("title="):
+        return {"strategy": "title", "value": value[6:]}
+    if value.startswith("text="):
+        return {"strategy": "text", "value": value[5:]}
+    if value.startswith("#"):
+        return {"strategy": "id", "value": value[1:]}
+    if value.startswith("xpath="):
+        return {"strategy": "xpath", "value": value[6:]}
+    return {"strategy": "css", "value": value}
+
+
+# Re-derives the composite scope from a freshly-resolved owner
+# ElementHandle (never from a stored scope locator -- there is no such
+# thing persisted), then resolves the persisted relative locator inside
+# that scope, requiring exactly one match. Mirrors, on the live DOM,
+# findCompositeScope() + the per-strategy matching computeScopedLocator()/
+# locatorMatchCount(locator, root) already validated at record time.
+# COMPOSITE_SCOPE_SELECTOR intentionally reuses only the same generic
+# ARIA-role/widget-class vocabulary already used elsewhere in this file
+# and in RECORDER_JS -- no PSW-, field-, or Kendo-field-specific literal.
+_QA_OWNER_SCOPE_JS = r"""(function(args) {
+  var owner = args.owner;
+  var rel = args.relative;
+  if (!owner || !rel) return null;
+  function attr(node, name) { return node.getAttribute ? node.getAttribute(name) : null; }
+  function implicitRole(node) {
+    var tag = (node.tagName || '').toLowerCase();
+    if (tag === 'button') return 'button';
+    if (tag === 'a' && node.hasAttribute('href')) return 'link';
+    if (tag === 'select') return 'combobox';
+    return '';
+  }
+  function accessibleName(node) {
+    var label = attr(node, 'aria-label');
+    if (label) return label.trim();
+    return (node.innerText || node.textContent || '').trim();
+  }
+  var COMPOSITE_SCOPE_SELECTOR = '[role="combobox"],[role="listbox"],[role="grid"],[role="dialog"],[role="menu"],.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,.k-widget';
+  var scope = null;
+  var node = owner.parentElement;
+  var depth = 0;
+  while (node && node !== document.body && depth < 10) {
+    if (node.matches && node.matches(COMPOSITE_SCOPE_SELECTOR) && node.contains(owner)) { scope = node; break; }
+    node = node.parentElement;
+    depth += 1;
+  }
+  if (!scope) return null;
+  var nodes = [];
+  try {
+    if (rel.strategy === 'testid') nodes = scope.querySelectorAll('[data-testid="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'id') nodes = scope.querySelectorAll('#' + CSS.escape(rel.value));
+    else if (rel.strategy === 'name') nodes = scope.querySelectorAll('[name="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'placeholder') nodes = scope.querySelectorAll('[placeholder="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'title') nodes = scope.querySelectorAll('[title="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'css') nodes = scope.querySelectorAll(rel.value);
+    else if (rel.strategy === 'label') nodes = Array.prototype.filter.call(scope.querySelectorAll('input,select,textarea'), function(n) {
+      var id = n.id;
+      var lab = id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : n.closest('label');
+      var text = lab ? (lab.innerText || '').trim() : '';
+      return text === rel.value;
+    });
+    else if (rel.strategy === 'role') nodes = Array.prototype.filter.call(scope.querySelectorAll('button,a,input,select,textarea,[role]'), function(n) {
+      return (attr(n, 'role') || implicitRole(n)) === rel.role && accessibleName(n) === rel.name;
+    });
+    else if (rel.strategy === 'text') nodes = Array.prototype.filter.call(scope.querySelectorAll('button,a,span,li,td,label'), function(n) {
+      return (n.innerText || '').trim() === rel.value;
+    });
+  } catch (e) { return null; }
+  if (!nodes || nodes.length !== 1) return null;
+  return nodes[0];
+})"""
+
+
+# ROUND-8C-DIAGNOSTIC-ONLY: a read-only twin of _QA_OWNER_SCOPE_JS above,
+# used strictly to populate failure telemetry (owner_scope_found,
+# interaction_target_match_count) when the proven resolution JS above
+# returns null. It performs no click, selects nothing, and its result is
+# NEVER used to decide what gets clicked -- only _QA_OWNER_SCOPE_JS's own
+# result does that, unchanged, byte-for-byte, from Round 8. Kept as a
+# separate script (rather than changing _QA_OWNER_SCOPE_JS's return
+# contract) so the proven Round 8 resolution path -- Step 12's regression
+# case included -- is not touched in any way by Round 8C.
+_QA_OWNER_SCOPE_DIAGNOSTIC_JS = r"""(function(args) {
+  var owner = args.owner;
+  var rel = args.relative;
+  var result = {scope_found: false, match_count: 0};
+  if (!owner || !rel) return result;
+  function attr(node, name) { return node.getAttribute ? node.getAttribute(name) : null; }
+  function implicitRole(node) {
+    var tag = (node.tagName || '').toLowerCase();
+    if (tag === 'button') return 'button';
+    if (tag === 'a' && node.hasAttribute('href')) return 'link';
+    if (tag === 'select') return 'combobox';
+    return '';
+  }
+  function accessibleName(node) {
+    var label = attr(node, 'aria-label');
+    if (label) return label.trim();
+    return (node.innerText || node.textContent || '').trim();
+  }
+  var COMPOSITE_SCOPE_SELECTOR = '[role="combobox"],[role="listbox"],[role="grid"],[role="dialog"],[role="menu"],.k-dropdown,.k-dropdownlist,.k-combobox,.k-autocomplete,.k-datepicker,.k-picker,.k-widget';
+  var scope = null;
+  var node = owner.parentElement;
+  var depth = 0;
+  while (node && node !== document.body && depth < 10) {
+    if (node.matches && node.matches(COMPOSITE_SCOPE_SELECTOR) && node.contains(owner)) { scope = node; break; }
+    node = node.parentElement;
+    depth += 1;
+  }
+  if (!scope) return result;
+  result.scope_found = true;
+  var nodes = [];
+  try {
+    if (rel.strategy === 'testid') nodes = scope.querySelectorAll('[data-testid="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'id') nodes = scope.querySelectorAll('#' + CSS.escape(rel.value));
+    else if (rel.strategy === 'name') nodes = scope.querySelectorAll('[name="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'placeholder') nodes = scope.querySelectorAll('[placeholder="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'title') nodes = scope.querySelectorAll('[title="' + CSS.escape(rel.value) + '"]');
+    else if (rel.strategy === 'css') nodes = scope.querySelectorAll(rel.value);
+    else if (rel.strategy === 'label') nodes = Array.prototype.filter.call(scope.querySelectorAll('input,select,textarea'), function(n) {
+      var id = n.id;
+      var lab = id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : n.closest('label');
+      var text = lab ? (lab.innerText || '').trim() : '';
+      return text === rel.value;
+    });
+    else if (rel.strategy === 'role') nodes = Array.prototype.filter.call(scope.querySelectorAll('button,a,input,select,textarea,[role]'), function(n) {
+      return (attr(n, 'role') || implicitRole(n)) === rel.role && accessibleName(n) === rel.name;
+    });
+    else if (rel.strategy === 'text') nodes = Array.prototype.filter.call(scope.querySelectorAll('button,a,span,li,td,label'), function(n) {
+      return (n.innerText || '').trim() === rel.value;
+    });
+  } catch (e) { return result; }
+  result.match_count = nodes ? nodes.length : 0;
+  return result;
+})"""
+
+
+def _qa_resolve_owner_scoped_trigger(metadata, resolved_owner=None):
+    """
+    Resolves the owner-scoped physical interaction target for the
+    current step, or returns (None, diagnostics) if it cannot be
+    safely, uniquely resolved. Performs no side-effecting action.
+    Called from _qa_run_step() BEFORE that step's single exec() --
+    never after a click, never as a repair/retry.
+
+    ROUND-8C: resolved_owner, when provided, is the enriched candidate
+    dict already produced and verified by the generic readiness/
+    semantic cascade (_qa_resolve_action()) -- i.e. the exact logical
+    owner this replay run actually selected, whether via "primary",
+    "exact_semantic", or "fallback". When present, this is the ONLY
+    source used to derive the owner locator: no independent
+    re-resolution from metadata["primary_locator"] is performed here.
+    This is the fix for the proven Case A defect -- owner-scoped
+    resolution silently re-deriving the owner from the raw primary
+    locator and failing whenever that owner only resolves via
+    fallback/exact_semantic, even though the generic cascade had
+    already found a safe, verified owner through that path. The
+    metadata-only branch below is a defensive fallback for isolated/
+    direct calls (e.g. tests) and is never exercised by the production
+    call site in _qa_run_step(), which always passes resolved_owner.
+
+    Returns a (element_handle_or_None, diagnostics) tuple. diagnostics
+    is always a dict (never None) so the caller can emit full
+    telemetry regardless of outcome; it only ever contains locator/
+    source/count/visibility bookkeeping -- never credentials or filled
+    values.
+    """
+    details = metadata or {}
+    relative_display = details.get("interaction_target")
+    diagnostics = {
+        "logical_owner_source": None,
+        "logical_owner_locator": None,
+        "logical_owner_verified": False,
+        "owner_scope_found": False,
+        "interaction_target_requested": relative_display,
+        "interaction_target_match_count": None,
+        "interaction_target_visible": False,
+        "interaction_target_actionable": None,
+        "failure_reason": None,
+    }
+    if resolved_owner and resolved_owner.get("code"):
+        owner_code = _qa_locator_expression_from_code(resolved_owner["code"])
+        diagnostics["logical_owner_source"] = resolved_owner.get("source")
+        diagnostics["logical_owner_locator"] = resolved_owner.get("code")
+    else:
+        owner_display = details.get("primary_locator")
+        owner_code = _qa_locator_code(owner_display) if owner_display else ""
+        diagnostics["logical_owner_source"] = "primary_locator_fallback"
+        diagnostics["logical_owner_locator"] = owner_display
+    relative = _qa_parse_relative_locator(relative_display)
+    if not owner_code or not relative:
+        diagnostics["failure_reason"] = "no_owner_or_relative_locator"
+        return None, diagnostics
+    try:
+        # ROUND-8C: re-verify against the full step metadata (not None)
+        # so a stale/mismatched owner is caught by the same semantic
+        # check the generic cascade itself relies on -- belt-and-
+        # suspenders defense-in-depth, never the ONLY gate (the cascade
+        # in _qa_resolve_action() already required this for whichever
+        # candidate it selected), but it keeps this function safe to
+        # call on its own too. Trivially permissive when metadata omits
+        # field_name/field_type (matches Round 8's original behavior for
+        # direct/isolated calls), never restrictive of anything the
+        # cascade would have already allowed through.
+        owner_check = _qa_verify_code(owner_code, metadata)
+        if not (owner_check.get("count") == 1 and owner_check.get("visible")
+                and owner_check.get("semantic_compatible", True)):
+            diagnostics["failure_reason"] = "owner_not_uniquely_resolved"
+            diagnostics["interaction_target_match_count"] = 0
+            return None, diagnostics
+        diagnostics["logical_owner_verified"] = True
+        active_page = _qa_active_page()
+        owner_locator = eval(owner_code, {**globals(), "page": active_page})
+        owner_handle = owner_locator.first.element_handle()
+        if owner_handle is None:
+            diagnostics["failure_reason"] = "owner_handle_unavailable"
+            return None, diagnostics
+        result_handle = active_page.evaluate_handle(
+            _QA_OWNER_SCOPE_JS, {"owner": owner_handle, "relative": relative}
+        )
+        element_handle = result_handle.as_element() if result_handle else None
+        if element_handle is None:
+            try:
+                scope_diag = active_page.evaluate(
+                    _QA_OWNER_SCOPE_DIAGNOSTIC_JS, {"owner": owner_handle, "relative": relative}
+                ) or {}
+            except Exception:
+                scope_diag = {}
+            diagnostics["owner_scope_found"] = bool(scope_diag.get("scope_found"))
+            match_count = scope_diag.get("match_count", 0)
+            diagnostics["interaction_target_match_count"] = match_count
+            if not scope_diag.get("scope_found"):
+                diagnostics["failure_reason"] = "owner_scope_not_found"
+            elif not match_count:
+                diagnostics["failure_reason"] = "interaction_target_not_found"
+            else:
+                diagnostics["failure_reason"] = "interaction_target_ambiguous"
+            return None, diagnostics
+        diagnostics["owner_scope_found"] = True
+        diagnostics["interaction_target_match_count"] = 1
+        if not element_handle.is_visible():
+            diagnostics["failure_reason"] = "interaction_target_not_visible"
+            return None, diagnostics
+        diagnostics["interaction_target_visible"] = True
+        # ROUND-8C safety rule (spec item 8G): a uniquely-resolved,
+        # visible physical target that is nonetheless not actionable
+        # (explicitly disabled, or pointer-events: none) must still not
+        # be clicked. Deliberately narrow -- it never requires the
+        # target to match any particular tag/role whitelist (a bare
+        # icon <span> like Step 12/14's own .k-icon.k-i-arrow-s has no
+        # such semantics and must keep working exactly as proven), it
+        # only rejects a target that is affirmatively marked unusable.
+        try:
+            actionable = bool(element_handle.evaluate(r"""el => {
+                if (el.disabled) return false;
+                if (el.getAttribute('aria-disabled') === 'true') return false;
+                const style = getComputedStyle(el);
+                return style.pointerEvents !== 'none' && style.visibility !== 'hidden' && style.display !== 'none';
+            }"""))
+        except Exception:
+            actionable = False
+        if not actionable:
+            diagnostics["interaction_target_actionable"] = False
+            diagnostics["failure_reason"] = "interaction_target_not_actionable"
+            return None, diagnostics
+        diagnostics["interaction_target_actionable"] = True
+        return element_handle, diagnostics
+    except Exception as ex:
+        diagnostics["failure_reason"] = "exception: " + str(ex)
+        return None, diagnostics
+# ROUND-8-OWNER-SCOPED-INTERACTION-TARGET (end) ------------------------
+
+
 def _qa_smart_wait(metadata=None):
     details = metadata or {}
     field_type = str(details.get("field_type") or "").lower()
@@ -1419,6 +1832,25 @@ class _QaPostActionVerificationError(RuntimeError):
     pass
 
 
+class _QaOwnerScopedTargetResolutionError(RuntimeError):
+    """
+    ROUND-8C: raised when metadata declares INTERACTION_TARGET_SCOPE:
+    owner, a verified logical owner was (or should have been) available,
+    but the owner-scoped PHYSICAL interaction target could not be
+    safely, uniquely resolved. Raised strictly BEFORE exec() -- no
+    action, physical or logical, has been executed for this step when
+    this is raised. Handled as an immediate, non-retried failure (never
+    entering the auto-repair/fallback-candidate/parent-reopen retry
+    machinery) so that owner-scoped processing never silently falls
+    through to clicking the plain logical/fallback control as though it
+    were equivalent to the declared physical trigger.
+    """
+    def __init__(self, diagnostics):
+        self.diagnostics = diagnostics or {}
+        reason = self.diagnostics.get("failure_reason") or "unresolved"
+        super().__init__("Owner-scoped interaction target could not be safely resolved: " + str(reason))
+
+
 class _QaLocatorResolutionError(RuntimeError):
     def __init__(self, attempts):
         self.attempts = attempts
@@ -1429,15 +1861,247 @@ class _QaLocatorResolutionError(RuntimeError):
         super().__init__("No saved locator candidate resolved safely. " + summary)
 
 
-def _qa_verify_post_action(code_text, metadata=None):
-    """Verify deterministic semantic outcomes; report skipped when no safe assertion exists."""
+class _QaNonReplayableRuntimePlaceholderError(RuntimeError):
+    """
+    PERSISTENCE SAFETY: raised when a step's OWN recorded code_text --
+    i.e. what was persisted into recorded_script and handed to this run
+    before any resolution ever happened -- is itself a runtime-only
+    internal placeholder (e.g. "_QA_OWNER_SCOPED_TRIGGER_HANDLE['handle']
+    .click()"), rather than an independently replayable Playwright
+    statement. Such a placeholder has no meaning outside the single
+    execution that originally resolved and assigned it; there is no
+    stale handle, owner, or locator safe to reuse for it. This is the
+    fail-closed response to a previously-corrupted recorded_script (see
+    _qa_is_durable_persistable_code()'s docstring for how such
+    corruption could have been written in the first place) -- it
+    protects every OTHER test case that may already carry the same kind
+    of corruption, independent of the persistence-guard fix that stops
+    new corruption from being written.
+
+    Raised BEFORE the per-step while-loop even starts (never inside a
+    retry/auto-repair attempt), so: zero exec() calls for this step,
+    zero reuse of any handle left over from a prior step, and no auto-
+    repair/fallback/parent-reopen machinery is ever entered for it.
+    """
+    def __init__(self, step_number, code_text):
+        self.step_number = step_number
+        self.code_text = code_text
+        super().__init__(
+            "NON_REPLAYABLE_RUNTIME_PLACEHOLDER: recorded step %s's own code is a "
+            "runtime-only internal placeholder and cannot be safely executed: %r"
+            % (step_number, code_text)
+        )
+
+
+# PERSISTENCE SAFETY ---------------------------------------------------
+# Every internal, execution-scoped-only reference this harness ever
+# substitutes into current_code for a single run's exec() -- never
+# meaningful outside that one run -- is listed here. Extend this tuple,
+# never relax the check below, if a future execution-time adaptation
+# introduces another such internal handle/global.
+_QA_NON_REPLAYABLE_RUNTIME_MARKERS = (
+    "_QA_OWNER_SCOPED_TRIGGER_HANDLE",
+)
+
+
+def _qa_contains_non_replayable_runtime_marker(code):
+    text = str(code or "")
+    return any(marker in text for marker in _QA_NON_REPLAYABLE_RUNTIME_MARKERS)
+
+
+def _qa_is_durable_persistable_code(code):
+    """
+    PERSISTENCE SAFETY (central guard, item 4): the ONLY gate that
+    decides whether a candidate "corrected" code string is eligible to
+    be saved into durable recorded_script and independently replayed in
+    a future process/run.
+
+    This is the fix for the proven repair-persistence corruption: Step
+    14's owner-scoped PHYSICAL-TRIGGER substitution (current_code
+    reassigned to "_QA_OWNER_SCOPED_TRIGGER_HANDLE['handle'].click()" --
+    an execution-scoped adaptation, never a locator repair) was, before
+    this fix, indistinguishable from a genuine durable locator repair
+    (e.g. Step 13's page.get_by_role('option', name='Commercial',
+    exact=True).click()) by the ONLY test previously applied
+    ("current_code != code_text"). Both are "a change"; only one is
+    safe to persist. This function is explicit about WHY a candidate is
+    or is not durable, rather than guessing from the fact that it
+    changed at all:
+
+      1. Known-internal-reference rejection (explicit provenance): any
+         code referencing one of this harness's own execution-scoped
+         runtime handles (_QA_NON_REPLAYABLE_RUNTIME_MARKERS) is never
+         durable, full stop -- this is checked first and is the primary
+         basis for the decision, not a fallback.
+      2. Defensive sanity check (never the primary basis by itself):
+         the code must also reduce to a real locator-producing
+         expression that starts with "page." -- the same shape every
+         genuine durable repair already has (auto-repair fallback
+         candidates, manually-selected repairs, the generic cascade's
+         own resolved_code). This catches anything else that doesn't
+         look like an ordinary Playwright statement, even if it never
+         happens to mention a known marker by name.
+
+    Legitimate durable repairs -- primary-to-fallback locator repair,
+    exact-semantic locator repair, manual/user-selected repair, and any
+    other persisted page.* candidate -- are unaffected: all of those
+    satisfy both checks exactly as before.
+    """
+    if not code:
+        return False
+    stripped = str(code).strip()
+    if _qa_contains_non_replayable_runtime_marker(stripped):
+        return False
+    expression = _qa_locator_expression_from_code(stripped)
+    return bool(expression) and expression.startswith("page.")
+
+
+def _qa_post_action_event_name(post_check):
+    """
+    Section 13: separate ACTION/APPLICATION-STATE failures from a bug
+    in the verification infrastructure itself, so an operator (or a
+    server log) never mistakes "our verifier crashed" for "the
+    application didn't reach the expected state" — the exact
+    confusion a prior "name 'time' is not defined" regression caused,
+    since it surfaced as an ordinary post_action_failed event
+    indistinguishable from a real mismatch. Purely a naming/labeling
+    change: _qa_run_step()'s control flow (never repeat the
+    side-effecting action once verification is anything but a clean
+    "verified": True) is identical for all three event names.
+    """
+    if post_check.get("verified"):
+        return "post_action_verified"
+    if post_check.get("infrastructure_error"):
+        return "post_action_infrastructure_error"
+    return "post_action_failed"
+
+
+_QA_POPUP_SURFACE_SELECTOR = (
+    '[role="listbox"],[role="option"],[role="grid"],[role="dialog"],'
+    '.k-list-container,.k-popup,.k-calendar,.k-animation-container,.k-list'
+)
+
+
+def _qa_visible_popup_surface_ids():
+    """Stable-for-one-replay-tick identities of every currently visible
+    popup-like surface on the page. Used both to snapshot what was
+    ALREADY open before a side-effecting action (_qa_popup_surface_snapshot(),
+    called from _qa_run_step() right before exec()) and, inside
+    _qa_verify_post_action(), to tell a genuinely NEW popup -- opened BY
+    the action just executed -- apart from one that was already open
+    elsewhere on the page before it. Never PSW/field-specific: the
+    selector is the same generic listbox/dialog/Kendo-surface vocabulary
+    Round 4 already used; this only adds identity so "visible" can mean
+    "newly visible" (ownership-aware) instead of "visible at all"
+    (previously acceptable from an unrelated, already-open popup)."""
+    try:
+        return _qa_active_page().locator(_QA_POPUP_SURFACE_SELECTOR).evaluate_all(r"""
+            els => els.filter(el => {
+                const s = getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.getClientRects().length > 0;
+            }).map(el => el.id || el.getAttribute('data-qa-popup-key') ||
+                (el.tagName + ':' + Array.prototype.indexOf.call(el.parentNode ? el.parentNode.children : [], el)))
+        """)
+    except Exception:
+        return []
+
+
+def _qa_popup_surface_snapshot():
+    """Call immediately BEFORE executing a side-effecting action (never
+    after) so post-action verification can require NEW popup evidence
+    instead of accepting whatever was already visible on the page."""
+    return _qa_visible_popup_surface_ids()
+
+
+def _qa_wait_for_next_step_readiness(next_metadata):
+    """UNIVERSAL STEP COMPLETION GATE / NEXT-STEP READINESS GATE (item 4):
+    for step shapes that have no other deterministic post-condition of
+    their own (a plain button, a navigation/goto, a generic click) --
+    flow D (navigation -> destination control delayed) and the "button:
+    next-step readiness" case from the spec -- wait, state-based and
+    bounded by the SAME configured readiness timeout every other dynamic
+    wait in this harness already uses (never a fixed sleep), for the next
+    recorded step's own locator to become resolvable, visible, actionable,
+    and semantically compatible with its recorded identity. This reuses
+    the exact same generic _qa_verify_code() check the dropdown/modal
+    branches already use for their own next-step lookahead -- nothing
+    field-type- or application-specific.
+
+    Returns True the moment readiness is observed, so the caller can cite
+    it as strong completion evidence. Returns False -- never raises -- when
+    no next_metadata/locator was supplied at all (nothing to look ahead
+    to, e.g. the script's last step) or when the window elapses without
+    observing readiness. False is never itself a failure signal here: a
+    step with nothing meaningful to look ahead to, or whose real next step
+    will simply keep polling under its OWN precondition gate when it
+    starts, must not be forced to fail merely because this best-effort
+    lookahead didn't confirm it early.
+    """
+    if not next_metadata:
+        return False
+    next_locator_code = _qa_locator_code((next_metadata or {}).get("primary_locator"))
+    if not next_locator_code:
+        return False
+    deadline = time.monotonic() + (_QA_STATE_READINESS_TIMEOUT_MS / 1000.0)
+    while time.monotonic() < deadline:
+        try:
+            next_check = _qa_verify_code(next_locator_code, next_metadata)
+            if (next_check.get("count") == 1 and next_check.get("visible")
+                    and next_check.get("actionable") and next_check.get("semantic_compatible")):
+                return True
+        except Exception:
+            pass
+        try:
+            _qa_active_page().wait_for_timeout(100)
+        except Exception:
+            break
+    return False
+
+
+def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_action_popup_ids=None, resolved_owner=None):
+    """Verify deterministic semantic outcomes; report skipped when no safe assertion exists.
+
+    UNIVERSAL STEP COMPLETION GATE: resolved_owner, when provided, is the
+    SAME enriched candidate dict (source/code) the precondition/
+    resolution gate (_qa_resolve_action()) already selected and verified
+    for this exact step -- whichever candidate source it used (primary,
+    exact_semantic, or fallback). When present, it is the PREFERRED
+    source for re-deriving the owning control below, instead of
+    independently re-deriving it from metadata["primary_locator"] alone.
+    This is the same Case-A-shaped defect Round 8C fixed for owner-scoped
+    ACTION resolution, proven still present here by a live run: Step 14's
+    physical trigger executed correctly (Round 8C's own fix working), but
+    this function's OWN prior independent re-derivation from the raw,
+    never-resolving PRIMARY_LOCATOR still failed immediately with "Owning
+    control is no longer uniquely resolvable" -- before any popup/aria-
+    expanded evidence was ever even polled for. metadata["primary_locator"]
+    remains the fallback derivation when no resolved_owner is supplied
+    (isolated/legacy callers), so nothing here narrows what already
+    worked.
+    """
     field_type = str((metadata or {}).get("field_type") or "").lower()
     action_type = str((metadata or {}).get("action_type") or "").lower()
     expected = str((metadata or {}).get("expected_value") or "").strip()
     _, code_value = _qa_extract_locator_and_value(code_text)
     expected = expected or (code_value if action_type in {"fill", "type", "select_option"} else "")
     if action_type in {"goto", "navigation", "execute"} or code_text.lstrip().startswith(("assert ", "expect(")):
-        return {"verified": True, "checked": False, "reason": "Step itself supplied the available verification."}
+        # UNIVERSAL STEP COMPLETION GATE (flow D: navigation -> destination
+        # control delayed -> wait dynamically -> PASS only when destination
+        # ready): a navigation/goto/execute step has no deterministic post-
+        # condition of its own, but when the next recorded step's control is
+        # known, waiting for it here is exactly the state-based (never
+        # sleep-based) synchronization the spec calls for -- this is a bounded
+        # wait, not an additional pass/fail branch: it never turns this into
+        # a failure, it only lets the step wait for real destination-readiness
+        # evidence before declaring itself complete.
+        next_ready = _qa_wait_for_next_step_readiness(next_metadata)
+        return {
+            "verified": True, "checked": next_ready,
+            "reason": (
+                "The next recorded step's control became resolvable, visible, and semantically "
+                "matches its recorded identity."
+            ) if next_ready else "Step itself supplied the available verification.",
+        }
     try:
         expression = _qa_locator_expression_from_code(code_text)
         locator = eval(expression, {**globals(), "page": _qa_active_page()}) if expression else None
@@ -1447,19 +2111,202 @@ def _qa_verify_post_action(code_text, metadata=None):
             node = locator.first
             actual = node.input_value()
             return {"verified": actual == expected, "checked": True, "reason": f"Expected value '{expected}', found '{actual}'."}
+        if field_type == "modal" or action_type in {"open_modal", "dialog"}:
+            # UNIVERSAL STEP COMPLETION GATE: the recorder tags a control
+            # as field_type "modal" whenever it lives inside a dialog/
+            # modal wrapper (role=dialog, or a modal/dialog class) --
+            # this covers BOTH opening and closing a modal, and nothing
+            # in the persisted metadata reliably distinguishes direction.
+            # So this checks for the generically correct thing either
+            # way: the set of visible popup/dialog-like surfaces on the
+            # page actually CHANGING as a result of this action -- a
+            # surface appearing is evidence an opener completed, a
+            # previously-open surface disappearing is evidence a close
+            # completed. Reuses the exact same generic
+            # _qa_visible_popup_surface_ids() ownership machinery Round 5
+            # already built for dropdowns (never PSW-/Kendo-specific --
+            # the selector already covers [role="dialog"]).
+            post_action_dynamic_deadline_s = _QA_STATE_READINESS_TIMEOUT_MS / 1000.0
+            deadline = time.monotonic() + post_action_dynamic_deadline_s
+            pre_ids = set(pre_action_popup_ids or [])
+            next_locator_code = _qa_locator_code((next_metadata or {}).get("primary_locator"))
+            while time.monotonic() < deadline:
+                try:
+                    if set(_qa_visible_popup_surface_ids()) != pre_ids:
+                        return {"verified": True, "checked": True, "reason": "Modal/dialog visibility state changed (opened or closed)."}
+                except Exception:
+                    pass
+                if next_locator_code and next_metadata:
+                    try:
+                        next_check = _qa_verify_code(next_locator_code, next_metadata)
+                        if (next_check.get("count") == 1 and next_check.get("visible")
+                                and next_check.get("actionable") and next_check.get("semantic_compatible")):
+                            return {
+                                "verified": True, "checked": True,
+                                "reason": "The next recorded step's control became resolvable, visible, and semantically matches its recorded identity.",
+                            }
+                    except Exception:
+                        pass
+                _qa_active_page().wait_for_timeout(100)
+            return {
+                "verified": False, "checked": True,
+                "reason": (
+                    "Modal/dialog visibility did not change after a "
+                    f"{post_action_dynamic_deadline_s:.1f}-second synchronization window."
+                ),
+            }
         popup_evidence = any(
             str((metadata or {}).get(key) or "").strip() not in {"", "-"}
             for key in ("popup_locator", "transaction_popup")
         ) or str((metadata or {}).get("control_role") or "").lower() == "combobox"
         if ((field_type in {"dropdown", "combobox", "autocomplete", "calendar"}
              or action_type in {"open_dropdown", "open_calendar"}) and popup_evidence):
-            if locator is None or not hasattr(locator, "count") or locator.count() != 1:
+            # ROUND-5-INTERACTION-TARGET: `code_text` is whatever actually
+            # got clicked -- as of this round, that can now be a distinct
+            # physical interaction surface (e.g. a composite widget's own
+            # trigger icon) rather than the logical/semantic control
+            # itself. Popup/ARIA state (aria-expanded, aria-controls,
+            # aria-owns) belongs to the LOGICAL control described by this
+            # step's own metadata, never to whatever happened to be
+            # clicked -- so resolve the owning node from the ALREADY-
+            # VERIFIED logical owner this step's precondition gate
+            # selected (resolved_owner, whichever source it used),
+            # falling back to metadata["primary_locator"] only when no
+            # resolved_owner was supplied, and falling back further to
+            # the already-resolved `locator` (code_text's own target)
+            # when neither is available/unique. For every script
+            # recorded before Round 8C and every step where the cascade
+            # selected "primary", resolved_owner's code and
+            # metadata["primary_locator"] name the same element, so this
+            # is a no-op there.
+            resolved_owner_code = (
+                _qa_locator_expression_from_code(resolved_owner["code"])
+                if resolved_owner and resolved_owner.get("code") else ""
+            )
+            owner_locator_code = resolved_owner_code or _qa_locator_code((metadata or {}).get("primary_locator"))
+            owner_locator = locator
+            if owner_locator_code:
+                try:
+                    candidate_owner = eval(owner_locator_code, {**globals(), "page": _qa_active_page()})
+                    if hasattr(candidate_owner, "count") and candidate_owner.count() == 1:
+                        owner_locator = candidate_owner
+                except Exception:
+                    pass
+            if owner_locator is None or not hasattr(owner_locator, "count") or owner_locator.count() != 1:
                 return {"verified": False, "checked": True, "reason": "Owning control is no longer uniquely resolvable."}
-            node = locator.first
-            expanded = node.get_attribute("aria-expanded")
-            visible_popup = _qa_active_page().locator('[role="listbox"],[role="option"],.k-list-container,.k-popup,.k-calendar').evaluate_all(r"""els => els.some(el => getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && el.getClientRects().length)""")
-            ok = expanded == "true" if expanded is not None else bool(visible_popup)
-            return {"verified": ok, "checked": True, "reason": "Owning popup/calendar did not become visible."}
+            node = owner_locator.first
+            # Dynamic SPA widgets (Kendo/React/etc.) often mount their popup on
+            # the next animation/render tick.  An immediate check can therefore
+            # report POST_ACTION_UNCERTAIN even though the click succeeded.
+            # Poll briefly and accept independent runtime evidence from the
+            # owning control, its aria-controls/aria-owns target, or a visible
+            # popup surface.  Do not rely on the recorded popup UUID: framework
+            # generated IDs can legitimately change between record and replay.
+            # Section 8 readiness signal: the NEXT recorded step's own
+            # locator becoming uniquely resolvable and visible is
+            # independent, strong evidence that THIS step's popup
+            # really did open — e.g. "Commercial" appearing is
+            # evidence Consignment Category's dropdown opened, even on
+            # a render tick where aria-expanded/aria-owns/the generic
+            # popup-surface scan above haven't (yet, or ever, for this
+            # particular widget) reported anything. Computed lazily,
+            # only once per poll iteration, and never allowed to raise
+            # past this check — a bad/absent next-step locator simply
+            # contributes no extra evidence, it never fails the step.
+            next_locator_code = _qa_locator_code((next_metadata or {}).get("primary_locator"))
+            # ROUND-4-DYNAMIC-SYNC: this used to be an isolated, hard-
+            # coded `+ 3.0` literal — the ONLY wait budget in the whole
+            # harness not owned by the operator-configured timeout
+            # system. Every other "give the SPA time to reach an
+            # expected state" wait (_qa_resolve_action()'s pre-action
+            # readiness polling, above) already scales off
+            # _QA_STATE_READINESS_TIMEOUT_MS (5-15s, derived from the
+            # configured Execute timeout at harness-build time). This
+            # is the exact same category of wait -- an async
+            # dropdown/calendar/popup mount tick -- so it now shares
+            # that same budget instead of its own disconnected,
+            # un-configurable 3-second ceiling. The polling loop itself
+            # (100ms interval, multiple independent positive-evidence
+            # checks, next-step-readiness) was already correctly
+            # state-based, not sleep-based -- only the deadline size
+            # and its ownership were wrong. A slow render now gets the
+            # same runway a slow locator resolution already gets;
+            # nothing here got a blanket, unconditional longer sleep.
+            post_action_dynamic_deadline_s = _QA_STATE_READINESS_TIMEOUT_MS / 1000.0
+            deadline = time.monotonic() + post_action_dynamic_deadline_s
+            last_expanded = None
+            while time.monotonic() < deadline:
+                try:
+                    last_expanded = node.get_attribute("aria-expanded")
+                    if last_expanded == "true":
+                        return {"verified": True, "checked": True, "reason": "Owning control reports aria-expanded=true."}
+                    owns = (node.get_attribute("aria-controls") or node.get_attribute("aria-owns") or "").strip()
+                    if owns:
+                        for popup_id in owns.split():
+                            owned = _qa_active_page().locator("#" + popup_id)
+                            if owned.count() == 1 and owned.first.is_visible():
+                                return {"verified": True, "checked": True, "reason": "Owning control's runtime popup is visible."}
+                    # ROUND-5-POPUP-OWNERSHIP: a page can legitimately have
+                    # more than one popup-capable control. "Something
+                    # matching the generic surface selector is visible
+                    # ANYWHERE on the page" is not ownership evidence -- it
+                    # would equally (and wrongly) satisfy this step if some
+                    # OTHER, unrelated popup happened to already be open.
+                    # Require NEW evidence instead: a popup-like surface
+                    # that was not present in the pre-action snapshot taken
+                    # immediately before this step's action executed
+                    # (_qa_popup_surface_snapshot(), in _qa_run_step()).
+                    # This still supports a framework portal that renders
+                    # its popup outside the control's own DOM subtree --
+                    # judged by newness, never by ancestry -- and costs
+                    # nothing extra when no snapshot was supplied (treated
+                    # as "nothing was visible before", i.e. identical to
+                    # the previous behavior).
+                    current_popup_ids = _qa_visible_popup_surface_ids()
+                    new_popup_ids = [
+                        popup_id for popup_id in current_popup_ids
+                        if popup_id not in (pre_action_popup_ids or [])
+                    ]
+                    if new_popup_ids:
+                        return {"verified": True, "checked": True, "reason": "A new popup/calendar surface became visible."}
+                except Exception:
+                    pass
+                if next_locator_code and next_metadata:
+                    try:
+                        # ROUND-4-DYNAMIC-SYNC (items K/L): reuse the SAME
+                        # generic verifier the pre-action readiness loop
+                        # uses (_qa_resolve_action() -> _qa_verify_code(),
+                        # above) instead of a bespoke count()==1/is_visible()
+                        # check. A page element that happens to be the only
+                        # match for the next step's raw locator string, but
+                        # belongs to a different field/role/section (an
+                        # unrelated popup elsewhere on the page -- item K),
+                        # is rejected the same way a mismatched AI-suggested
+                        # locator candidate is rejected during pre-action
+                        # resolution: count()==1 AND visible AND actionable
+                        # AND semantic_compatible against the next step's own
+                        # recorded metadata (field_name/type/context) -- "safe
+                        # semantic compatibility, not merely something
+                        # exists" (item L). Nothing here is field-name- or
+                        # application-specific; the comparison is purely
+                        # structural, driven entirely by next_metadata.
+                        next_check = _qa_verify_code(next_locator_code, next_metadata)
+                        if (next_check.get("count") == 1 and next_check.get("visible")
+                                and next_check.get("actionable") and next_check.get("semantic_compatible")):
+                            return {
+                                "verified": True, "checked": True,
+                                "reason": "The next recorded step's control became resolvable, visible, and semantically matches its recorded identity.",
+                            }
+                    except Exception:
+                        pass
+                _qa_active_page().wait_for_timeout(100)
+            return {
+                "verified": False, "checked": True,
+                "reason": (
+                    "Owning popup/calendar did not become visible after a "
+                    f"{post_action_dynamic_deadline_s:.1f}-second synchronization window."
+                ),
+            }
         if field_type == "checkbox":
             if locator is None or locator.count() != 1:
                 return {"verified": False, "checked": True, "reason": "Checkbox is no longer uniquely resolvable."}
@@ -1486,9 +2333,52 @@ def _qa_verify_post_action(code_text, metadata=None):
         # uniquely actionable before dispatch. Modal/dialog buttons and
         # navigation/rerender controls commonly disappear afterwards; their
         # old locator is therefore not a valid post-condition.
-        return {"verified": True, "checked": False, "reason": "Action completed; no deterministic post-condition was required."}
+        # UNIVERSAL STEP COMPLETION GATE (item 3 "button: recorded expected
+        # post-state and/or next-step readiness"; item 4's generic NEXT-STEP
+        # READINESS GATE): a plain button/click with no other deterministic
+        # post-condition still gets one bounded, state-based look ahead at
+        # the next recorded step before declaring itself complete -- this
+        # never turns into a failure by itself (see
+        # _qa_wait_for_next_step_readiness's own contract), it only lets a
+        # button-triggered async transition (e.g. Create -> first form
+        # control) finish before Step N is marked PASS.
+        next_ready = _qa_wait_for_next_step_readiness(next_metadata)
+        return {
+            "verified": True, "checked": next_ready,
+            "reason": (
+                "The next recorded step's control became resolvable, visible, and semantically "
+                "matches its recorded identity."
+            ) if next_ready else "Action completed; no deterministic post-condition was required.",
+        }
     except Exception as ex:
-        return {"verified": False, "checked": True, "reason": str(ex)}
+        # Section 13: NameError/AttributeError/TypeError/KeyError here
+        # can only come from a bug in THIS function's own Python code
+        # (a typo'd name, a wrong argument count, a missing key) — they
+        # are never how Playwright reports "the application didn't do
+        # what I expected" (that comes back as playwright's own Error/
+        # TimeoutError subclasses, or as a plain False from an is_*()
+        # call, both already handled as ordinary "verified": False
+        # results above). Tagging these separately is what let a prior
+        # "name 'time' is not defined" failure be mistaken for a real
+        # Consignment Category state problem instead of what it always
+        # was: a bug in this verifier itself. The action is still
+        # never repeated either way — see _qa_post_action_event_name()
+        # and _qa_run_step()'s _QaPostActionVerificationError handling,
+        # neither of which treats infrastructure_error as safe to retry.
+        infrastructure_error = isinstance(
+            ex, (NameError, AttributeError, TypeError, KeyError, UnboundLocalError)
+        )
+        reason = str(ex)
+        if infrastructure_error:
+            reason = (
+                f"Verification infrastructure error ({type(ex).__name__}: {ex}). "
+                "This is a bug in the verifier itself, not evidence the application "
+                "failed to reach the expected state."
+            )
+        return {
+            "verified": False, "checked": True, "reason": reason,
+            "infrastructure_error": infrastructure_error,
+        }
 def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadata=None):
     if _QA_STATE["failed_step"] != step_number:
         _QA_STATE["repair_generation"] += 1
@@ -1615,15 +2505,117 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
         return None
 
 
-def _qa_run_step(step_number, code_text, metadata=None):
+def _qa_confirm_repair_persistence(step_number, repair_generation, code_text, corrected_code, selection=None):
+    # By the time this is called, the browser action for this step has
+    # ALREADY executed and ALREADY passed post-action verification. This
+    # function's job is bookkeeping only: confirm (or not) that the parent
+    # orchestrator's persistence ack matches this step/generation. It must
+    # NEVER raise -- an unconfirmed ack is a distinct, non-fatal outcome
+    # (REPAIR_PERSISTENCE_FAILED), not an ACTION_FAILED or
+    # VERIFICATION_FAILED outcome, and must never cause the already-
+    # succeeded action to be treated as a failure or retried/repeated.
+    #
+    # PERSISTENCE SAFETY (central guard, item 4): this is the one place
+    # every call site in this file funnels through before anything is
+    # actually requested to be written into durable recorded_script.
+    # _qa_run_step() itself is already fixed to never offer an execution-
+    # scoped runtime adaptation (e.g. the owner-scoped physical-trigger
+    # click) here as `corrected_code` in the first place -- this is
+    # deliberate defense-in-depth on top of that, not the only gate: a
+    # future call site, or a mistake, must not be able to persist a non-
+    # durable candidate just by calling this function directly.
+    if not _qa_is_durable_persistable_code(corrected_code):
+        _qa_send_event({
+            "event": "runtime_adaptation_not_persisted",
+            "step": step_number,
+            "total_steps": _QA_TOTAL_STEPS,
+            "repair_generation": repair_generation,
+            "adaptation_type": (
+                "owner_scoped_physical_trigger"
+                if _qa_contains_non_replayable_runtime_marker(corrected_code)
+                else "non_durable_candidate"
+            ),
+        })
+        return False
+    persistence = _qa_read_command()
+    # NOTE: `repair_generation` legitimately starts at 0 (the very first
+    # repair in a run, via the resolve-first path, is generation 0). The
+    # previous `value or -1` pattern treated that real 0 as falsy and
+    # substituted -1, so a perfectly matching ack for generation 0 could
+    # never compare equal -- a second, independent root cause of the
+    # reported "Verified repair could not be persisted" failures on a
+    # step's first-ever repair. Use explicit `is not None` checks instead
+    # so a genuine 0 is never mistaken for "missing".
+    ack_step = persistence.get("step")
+    ack_generation = persistence.get("repair_generation")
+    confirmed = (
+        persistence.get("action") == "repair_persisted"
+        and ack_step is not None and int(ack_step) == step_number
+        and ack_generation is not None and int(ack_generation) == repair_generation
+    )
+    repair_record = {
+        "step": step_number,
+        "repair_generation": repair_generation,
+        "original": code_text,
+        "corrected": corrected_code,
+        "persistence_confirmed": confirmed,
+    }
+    if selection is not None:
+        repair_record["selection"] = selection
+    _QA_REPAIRS.append(repair_record)
+    if not confirmed:
+        _qa_send_event({
+            "event": "repair_persistence_uncertain",
+            "step": step_number,
+            "total_steps": _QA_TOTAL_STEPS,
+            "repair_generation": repair_generation,
+            "detail": persistence,
+        })
+    return confirmed
+
+
+def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
     global _QA_LAST_DYNAMIC_CONTROL
     if step_number <= _QA_STATE["last_passed_step"]:
         raise RuntimeError("Interactive replay attempted to rerun an already checkpointed step.")
+    # LEGACY/CORRUPTED-SCRIPT FAIL-CLOSED PROTECTION (item 6): a step's
+    # OWN recorded code_text -- what this run was handed before any
+    # resolution ever ran -- must never itself be a runtime-only
+    # internal placeholder. This can only happen if a prior (now fixed)
+    # repair-persistence defect already wrote one into durable
+    # recorded_script. Detected here, once, before the per-step retry
+    # loop even starts: zero exec() calls, and no stale handle left over
+    # from an earlier step in this same run is ever consulted or reused
+    # for it.
+    if _qa_contains_non_replayable_runtime_marker(code_text):
+        _qa_send_event({
+            "event": "step_failed_non_replayable_placeholder",
+            "step": step_number, "total_steps": _QA_TOTAL_STEPS,
+            "reason": "NON_REPLAYABLE_RUNTIME_PLACEHOLDER",
+            "details": _qa_step_details(code_text, metadata),
+        })
+        raise _QaNonReplayableRuntimePlaceholderError(step_number, code_text)
     _QA_STATE.update({"current_step": step_number, "repair_state": "executing"})
     current_code = code_text
     attempt = 0
     while True:
         _qa_send_event({"event": "step_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
+        pre_action_popup_ids = None
+        owner_scoped_diagnostics = None
+        resolved_candidate = None
+        # PERSISTENCE SAFETY (item 2): tracks ONLY genuinely durable,
+        # independently-replayable code -- defaults to whatever
+        # current_code already is (code_text, unchanged, on the common
+        # path). The owner-scoped physical-trigger substitution below
+        # deliberately does NOT update this: that substitution is an
+        # execution-scoped adaptation for THIS run only, never a locator
+        # repair, so it must never make this step look durably repaired.
+        durable_candidate_code = current_code
+        # Independent safety requirement (item 5): never let a step
+        # silently inherit a handle a DIFFERENT, earlier step resolved
+        # and assigned. Only a successful owner-scoped resolution for
+        # THIS step/attempt may populate it again below.
+        _QA_OWNER_SCOPED_TRIGGER_HANDLE["handle"] = None
         try:
             action_type = str((metadata or {}).get("action_type") or "").lower()
             expression = _qa_locator_expression_from_code(current_code)
@@ -1654,46 +2646,199 @@ def _qa_run_step(step_number, code_text, metadata=None):
                 if not resolved_code:
                     raise _QaLocatorResolutionError(resolution_attempts)
                 current_code = resolved_code
+                # The generic cascade's own resolved_code is always a
+                # genuinely durable, independently replayable statement
+                # (primary/exact_semantic/fallback candidates are never
+                # runtime-only references) -- safe to track as the
+                # durable candidate unconditionally.
+                durable_candidate_code = resolved_code
                 if current_code != code_text:
                     _QA_SELECTIONS[step_number] = {
                         "repair_source": resolved_candidate.get("source"),
                         "selected_candidate": resolved_candidate,
                     }
+                # ROUND-5-INTERACTION-TARGET: the logical/semantic control
+                # is now resolved and fully validated above (identity,
+                # visibility, actionability, semantic compatibility) --
+                # that stays the owner for validation/ownership/next-step
+                # purposes, unchanged. Separately, when the recorder
+                # captured a distinct physical interaction surface for
+                # this control (metadata["interaction_target"] -- e.g. a
+                # composite widget's own trigger icon; present only when
+                # the recorder observed the real click land somewhere
+                # other than the logical control -- never a PSW- or
+                # field-specific special case), resolve and validate THAT
+                # too, generically, through the exact same verifier used
+                # everywhere else in this harness (_qa_verify_code(), the
+                # same one _qa_resolve_action() itself uses above). Absent
+                # or unresolvable, this is a silent no-op: current_code
+                # stays exactly what it already was. Target selection
+                # happens exactly once, here, BEFORE any execution --
+                # never as a second attempt after an uncertain click
+                # (side-effect safety: one action, chosen up front).
+                interaction_target_display = (metadata or {}).get("interaction_target")
+                interaction_target_scope = str((metadata or {}).get("interaction_target_scope") or "").strip().lower()
+                # ROUND-8-OWNER-SCOPED-INTERACTION-TARGET: a separate,
+                # explicit metadata field -- never inferred from the
+                # display string's own format, never a reinterpretation of
+                # old scripts -- distinguishes the new owner-scoped path
+                # from the existing global path below. Absent/"-"/
+                # "global" (every script recorded before this round, and
+                # every step whose physical trigger DOES have a safe
+                # global locator) takes the completely unchanged Round 5/6
+                # branch. Only "owner" takes this new branch, and it does
+                # so INSTEAD of the global branch, never in addition to
+                # it: interaction_target_display in the owner-scoped case
+                # is a scope-RELATIVE locator, never safe to resolve
+                # globally. If owner-scoped resolution fails for any
+                # reason, this is a silent no-op -- current_code stays
+                # exactly what it already was (the validated logical-
+                # owner action), exactly like the existing "absent or
+                # unresolvable" no-op convention below.
+                if interaction_target_scope == "owner" and interaction_target_display:
+                    owner_scoped_handle, owner_scoped_diagnostics = _qa_resolve_owner_scoped_trigger(
+                        metadata, resolved_owner=resolved_candidate
+                    )
+                    if owner_scoped_handle is not None:
+                        _QA_OWNER_SCOPED_TRIGGER_HANDLE["handle"] = owner_scoped_handle
+                        _qa_send_event({
+                            "event": "interaction_target_selected", "step": step_number,
+                            "total_steps": _QA_TOTAL_STEPS,
+                            "logical_locator": (metadata or {}).get("primary_locator"),
+                            "interaction_target": interaction_target_display,
+                            "interaction_target_scope": "owner",
+                            "logical_owner_source": owner_scoped_diagnostics.get("logical_owner_source"),
+                            "logical_owner_locator": owner_scoped_diagnostics.get("logical_owner_locator"),
+                            "owner_scope_found": owner_scoped_diagnostics.get("owner_scope_found"),
+                            "interaction_target_match_count": owner_scoped_diagnostics.get("interaction_target_match_count"),
+                        })
+                        current_code = "_QA_OWNER_SCOPED_TRIGGER_HANDLE['handle'].click()"
+                    else:
+                        # ROUND-8C fail-closed contract: a verified
+                        # logical owner exists (or resolution was
+                        # attempted against the cascade's own selected
+                        # candidate) but the declared owner-scoped
+                        # PHYSICAL target could not be safely, uniquely
+                        # resolved. Never fall through to clicking the
+                        # plain logical/fallback control as though it
+                        # were equivalent to the declared physical
+                        # trigger -- that exact silent fallthrough is
+                        # what produced the live Step-14
+                        # POST_ACTION_UNCERTAIN failure. Raise
+                        # immediately, before exec() is ever reached, so
+                        # no action -- physical or logical -- is taken
+                        # for this step. Do not add a second click.
+                        raise _QaOwnerScopedTargetResolutionError(owner_scoped_diagnostics)
+                else:
+                    interaction_target_code = (
+                        _qa_locator_code(interaction_target_display) if interaction_target_display else ""
+                    )
+                    if interaction_target_code:
+                        interaction_check = _qa_verify_code(interaction_target_code, None)
+                        if (interaction_check.get("count") == 1 and interaction_check.get("visible")
+                                and interaction_check.get("actionable")):
+                            swapped_code = _qa_replace_locator_expression(current_code, interaction_target_code)
+                            if swapped_code and swapped_code != current_code:
+                                _qa_send_event({
+                                    "event": "interaction_target_selected", "step": step_number,
+                                    "total_steps": _QA_TOTAL_STEPS,
+                                    "logical_locator": (metadata or {}).get("primary_locator"),
+                                    "interaction_target": interaction_target_display,
+                                })
+                                current_code = swapped_code
+                                # Unlike the owner-scoped physical-trigger
+                                # substitution above, this global-path swap
+                                # (Round 5/6, pre-existing) produces a real,
+                                # standalone "page."-prefixed locator
+                                # statement -- a genuinely durable
+                                # improvement over the plain logical code,
+                                # safe to persist exactly like any other
+                                # durable repair.
+                                durable_candidate_code = swapped_code
+                # ROUND-5-POPUP-OWNERSHIP: snapshot which popup-like
+                # surfaces are already visible BEFORE this action executes
+                # (never after), so post-action verification's generic
+                # popup-surface scan can require NEW evidence instead of
+                # accepting an unrelated popup that was already open
+                # elsewhere on the page.
+                pre_action_popup_ids = _qa_popup_surface_snapshot()
             exec(current_code, globals())
             _qa_smart_wait(metadata)
-            post_check = _qa_verify_post_action(current_code, metadata)
-            _qa_send_event({"event": "post_action_verified" if post_check["verified"] else "post_action_failed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, **post_check})
+            post_check = _qa_verify_post_action(
+                current_code, metadata, next_metadata, pre_action_popup_ids, resolved_owner=resolved_candidate
+            )
+            _qa_send_event({"event": _qa_post_action_event_name(post_check), "step": step_number, "total_steps": _QA_TOTAL_STEPS, **post_check})
             if not post_check["verified"]:
                 raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
             if str((metadata or {}).get("field_type") or "").lower() in {"dropdown", "calendar", "autocomplete", "accordion"}:
-                _QA_LAST_DYNAMIC_CONTROL = current_code
-            if current_code != code_text:
+                # Track the durable logical control here, not whatever
+                # physical surface this particular run happened to
+                # execute against -- a parent-reopen retry needs the
+                # LOGICAL control's own name/locator to work from, and
+                # the owner-scoped execution placeholder never carries
+                # one anyway.
+                _QA_LAST_DYNAMIC_CONTROL = durable_candidate_code
+            # PERSISTENCE SAFETY (items 1/2): gate persistence on the
+            # DURABLE candidate, never on whatever current_code happens
+            # to equal after a possible execution-scoped substitution.
+            # When the only thing that changed this run was the owner-
+            # scoped physical-trigger swap, durable_candidate_code still
+            # equals code_text here, so this block -- and the
+            # "step_repaired"/"Repair saved" telemetry it implies -- is
+            # correctly never entered at all for that case.
+            if durable_candidate_code != code_text:
                 selection = _QA_SELECTIONS.pop(step_number, {})
                 _qa_send_event({
                     "event": "step_repaired",
                     "step": step_number,
                     "repair_generation": _QA_STATE["repair_generation"],
                     "original_code": code_text,
-                    "corrected_code": current_code,
+                    "corrected_code": durable_candidate_code,
                     "selection": selection,
                 })
-                persistence = _qa_read_command()
-                if (persistence.get("action") != "repair_persisted" or
-                        int(persistence.get("step") or -1) != step_number or
-                        int(persistence.get("repair_generation") or -1) != _QA_STATE["repair_generation"]):
-                    raise RuntimeError("Verified repair could not be persisted for this step generation.")
-                _QA_REPAIRS.append({
-                    "step": step_number, "repair_generation": _QA_STATE["repair_generation"],
-                    "original": code_text, "corrected": current_code, "selection": selection,
-                })
+                _qa_confirm_repair_persistence(
+                    step_number, _QA_STATE["repair_generation"], code_text, durable_candidate_code, selection,
+                )
             _qa_clear_failed_control()
             _QA_STATE.update({
                 "last_passed_step": step_number, "failed_step": None,
                 "repair_state": "passed", "pending_selection_step": None,
             })
-            _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
+            step_passed_event = {"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)}
+            if owner_scoped_diagnostics is not None:
+                # ROUND-8C telemetry: step_passed is a reliably-persisted
+                # event (unlike the standalone interaction_target_selected
+                # event, which was observed to never reach
+                # runtime_activity_json even on a successful Round 8 run)
+                # -- embed the owner-scoped diagnostics here so a passed
+                # owner-scoped step still proves logical_owner_source,
+                # owner_scope_found, interaction_target_match_count, etc.
+                # without needing a second code path outside Core/.
+                step_passed_event["owner_scoped_diagnostics"] = owner_scoped_diagnostics
+            _qa_send_event(step_passed_event)
+            # UNIVERSAL STEP COMPLETION GATE: Step N is already PASSed
+            # and persisted above -- this pause is pure human-observation
+            # pacing for the NEXT step's precondition gate, never a
+            # substitute for the state-based verification that already
+            # ran to get here.
+            _qa_replay_speed_pause()
             return
         except Exception as ex:
+            if isinstance(ex, _QaOwnerScopedTargetResolutionError):
+                _QA_STATE.update({"failed_step": step_number, "repair_state": "owner_scoped_target_resolution_failed"})
+                _qa_send_event({
+                    "event": "owner_scoped_target_resolution_failed", "step": step_number,
+                    "total_steps": _QA_TOTAL_STEPS, "error": str(ex),
+                    "details": _qa_step_details(current_code, metadata),
+                    "owner_scoped_diagnostics": ex.diagnostics,
+                })
+                # No physical or logical action was ever executed for
+                # this step -- this failure occurs strictly before
+                # exec(). Fail closed immediately: never enter the
+                # auto-repair/fallback-candidate/parent-reopen retry
+                # machinery below, and never fall through to clicking
+                # the plain logical control as a substitute action.
+                raise
             if isinstance(ex, _QaPostActionVerificationError):
                 _QA_STATE.update({"failed_step": step_number, "repair_state": "post_action_uncertain"})
                 _qa_send_event({
@@ -1719,7 +2864,10 @@ def _qa_run_step(step_number, code_text, metadata=None):
                     try:
                         exec(fallback_code, globals())
                         _qa_smart_wait(metadata)
-                        post_check = _qa_verify_post_action(fallback_code, metadata)
+                        post_check = _qa_verify_post_action(
+                            fallback_code, metadata, next_metadata,
+                            resolved_owner={"code": fallback_code, "source": "auto_repair_fallback"},
+                        )
                         if not post_check["verified"]:
                             raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
                         current_code = fallback_code
@@ -1735,15 +2883,9 @@ def _qa_run_step(step_number, code_text, metadata=None):
                             "original_code": code_text,
                             "corrected_code": current_code,
                         })
-                        persistence = _qa_read_command()
-                        if (persistence.get("action") != "repair_persisted" or
-                                int(persistence.get("step") or -1) != step_number or
-                                int(persistence.get("repair_generation") or -1) != _QA_STATE["repair_generation"]):
-                            raise RuntimeError("Validated fallback could not be persisted for this step generation.")
-                        _QA_REPAIRS.append({
-                            "step": step_number, "repair_generation": _QA_STATE["repair_generation"],
-                            "original": code_text, "corrected": current_code,
-                        })
+                        _qa_confirm_repair_persistence(
+                            step_number, _QA_STATE["repair_generation"], code_text, current_code,
+                        )
                         _qa_clear_failed_control()
                         _QA_STATE.update({"last_passed_step": step_number, "failed_step": None, "repair_state": "passed", "pending_selection_step": None})
                         _qa_send_event({
@@ -1751,6 +2893,7 @@ def _qa_run_step(step_number, code_text, metadata=None):
                             "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1,
                             "details": _qa_step_details(current_code, metadata),
                         })
+                        _qa_replay_speed_pause()
                         return
                     except _QaPostActionVerificationError as post_error:
                         _qa_send_event({
@@ -1768,12 +2911,16 @@ def _qa_run_step(step_number, code_text, metadata=None):
                     try:
                         exec(current_code, globals())
                         _qa_smart_wait(metadata)
-                        post_check = _qa_verify_post_action(current_code, metadata)
+                        post_check = _qa_verify_post_action(
+                            current_code, metadata, next_metadata,
+                            resolved_owner=resolved_candidate or {"code": current_code, "source": "parent_reopen_retry"},
+                        )
                         if not post_check["verified"]:
                             raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
                         _qa_clear_failed_control()
                         _QA_STATE.update({"last_passed_step": step_number, "failed_step": None, "repair_state": "passed", "pending_selection_step": None})
                         _qa_send_event({"event": "step_passed", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
+                        _qa_replay_speed_pause()
                         return
                     except Exception as parent_retry_error:
                         if isinstance(parent_retry_error, _QaPostActionVerificationError):
@@ -1810,6 +2957,122 @@ def _qa_run_step(step_number, code_text, metadata=None):
 # --- end QA AI Studio interactive step runner ---
 
 '''
+
+# Computed once, at import time, from the exact template text above —
+# this is the "harness_version"/"harness_template_sha256" identity
+# proof described in the runtime-identity-proof comment inside the
+# template itself. Every replay logs this value (see run_script_interactive()
+# / _build_interactive_script() / _build_generic_interactive_script()
+# below) and bakes it into the generated child script, so the operator
+# can always confirm the PARENT process's in-memory template matches
+# what actually ran — instead of only being able to inspect the .py
+# file on disk, which proves nothing about what a long-running
+# --no-reload server process still has loaded in memory.
+_QA_HARNESS_TEMPLATE_SHA256 = hashlib.sha256(
+    INTERACTIVE_HARNESS_TEMPLATE.encode("utf-8")
+).hexdigest()[:16]
+
+
+def _qa_static_dependency_gaps(source_text):
+    """
+    Best-effort, non-blocking static safety net for a MECHANICALLY
+    ASSEMBLED harness (never arbitrary free-form user code): flags any
+    `name.attr` / bare `name(...)` reference whose `name` is never
+    bound ANYWHERE in the whole generated file (as an import,
+    assignment, def, class, function/lambda parameter, for/with/except
+    target, etc.). Such a name is a certain NameError at runtime.
+
+    This is exactly the class of defect a prior "name 'time' is not
+    defined" regression turned out to be reachable through (see the
+    runtime-identity-proof comments above): compile() alone only
+    catches SyntaxError, never a NameError that only manifests once a
+    specific branch (e.g. the dropdown/combobox post-action check)
+    actually executes on a real device, potentially minutes into a
+    real replay. Running this check in the PARENT process, before a
+    browser is ever launched, surfaces that same class of mistake
+    immediately and for free — deliberately conservative (whole-file
+    union of "bound anywhere" vs. "used anywhere", not scope-accurate)
+    so it cannot false-positive on ordinary forward references or
+    conditionally-executed imports; callers should therefore treat any
+    finding as a strong warning to log and investigate, not as proof
+    the script cannot possibly run.
+    """
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return []
+
+    bound = set(dir(_qa_builtins_module))
+
+    class _BindingCollector(ast.NodeVisitor):
+        def visit_Import(self, node):
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".")[0])
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node):
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bound.add(alias.asname or alias.name)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node):
+            bound.add(node.name)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node):
+            bound.add(node.name)
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node):
+            bound.add(node.name)
+            self.generic_visit(node)
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                bound.add(node.id)
+            self.generic_visit(node)
+
+        def visit_arg(self, node):
+            bound.add(node.arg)
+            self.generic_visit(node)
+
+        def visit_Global(self, node):
+            for name in node.names:
+                bound.add(name)
+            self.generic_visit(node)
+
+        def visit_Nonlocal(self, node):
+            for name in node.names:
+                bound.add(name)
+            self.generic_visit(node)
+
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                bound.add(node.name)
+            self.generic_visit(node)
+
+    _BindingCollector().visit(tree)
+
+    used_roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            used_roots.add(node.value.id)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            used_roots.add(node.id)
+
+    missing = used_roots - bound
+    # Names beginning with "_" or "self"/"cls" are overwhelmingly
+    # either this template's own private helpers (always bound, so
+    # never actually flagged) or conventions this conservative,
+    # whole-file pass isn't a good fit for; excluding them keeps the
+    # signal-to-noise ratio high for what this is actually meant to
+    # catch — a genuinely missing top-level `import`.
+    return sorted(
+        name for name in missing
+        if name and not name.startswith("_") and name not in {"self", "cls"}
+    )
 
 
 # ================================================================
@@ -2349,7 +3612,7 @@ class PlaywrightRunner:
                 pending = {"step": int(marker.group(1)), "description": (marker.group(2) or "").strip()}
                 continue
             metadata_match = re.match(
-                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|EXPECTED_VALUE|EXPECTED_POST_STATE|PRIMARY_LOCATOR|FALLBACK_LOCATORS|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
+                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|EXPECTED_VALUE|EXPECTED_POST_STATE|PRIMARY_LOCATOR|FALLBACK_LOCATORS|INTERACTION_TARGET_SCOPE|INTERACTION_TARGET|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
                 line, re.IGNORECASE,
             )
             if metadata_match and pending is not None:
@@ -2424,11 +3687,31 @@ class PlaywrightRunner:
             "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
         ).replace(
             "__STATE_READINESS_TIMEOUT_MS__", str(max(5000, min(timeout_ms // 3, 15000)))
-        ).replace("__TOTAL_STEPS__", str(len(lines)))
+        ).replace("__TOTAL_STEPS__", str(len(lines))).replace(
+            "__HARNESS_VERSION__", _QA_HARNESS_TEMPLATE_SHA256
+        ).replace(
+            # UNIVERSAL STEP COMPLETION GATE: Replay Speed reuses the
+            # SAME configured slow_mo_ms value that already paces
+            # Playwright's own slow_mo below -- one setting, two
+            # connected effects (per-action slow-motion during a step,
+            # plus a single clean pacing pause between a step's PASS and
+            # the next step's precondition gate) -- rather than a second,
+            # separately-configured value.
+            "__REPLAY_SPEED_MS__", str(slow_mo_ms)
+        )
 
+        # Section 8 readiness signal: the step AFTER the one about to
+        # run is strong evidence that step succeeded (e.g. "Commercial"
+        # becoming resolvable is strong evidence the Consignment
+        # Category dropdown opened) — see _qa_verify_post_action()'s
+        # use of next_metadata inside INTERACTIVE_HARNESS_TEMPLATE.
+        # Computed here, at BUILD time in the parent, because only the
+        # parent has the full ordered step list; baked into each call
+        # as a 4th literal argument so the child needs no extra lookup.
         steps_code = "\n".join(
-            f"        _qa_run_step({item['step']}, {item['code']!r}, {item['metadata']!r})"
-            for item in lines
+            f"        _qa_run_step({item['step']}, {item['code']!r}, {item['metadata']!r}, "
+            f"{(lines[index + 1]['metadata'] if index + 1 < len(lines) else None)!r})"
+            for index, item in enumerate(lines)
         )
 
         return (
@@ -2620,6 +3903,8 @@ class PlaywrightRunner:
             "__DISCOVERY_TIMEOUT_MS__", str(max(500, min(timeout_ms // 20, 2500)))
         ).replace(
             "__STATE_READINESS_TIMEOUT_MS__", str(max(5000, min(timeout_ms // 3, 15000)))
+        ).replace(
+            "__HARNESS_VERSION__", _QA_HARNESS_TEMPLATE_SHA256
         )
 
         shim = SPEED_SHIM_TEMPLATE.format(
@@ -2722,6 +4007,8 @@ class PlaywrightRunner:
         on_element_selected=None,
         on_runtime_event=None,
         max_repair_rounds=3,
+        script_source=None,
+        script_id=None,
     ):
         """
         Interactive counterpart to run_script() — for a single,
@@ -2800,6 +4087,82 @@ class PlaywrightRunner:
             OUTPUT_FOLDER / f"{safe_name}_{timestamp}_interactive.py"
         )
 
+        generated_sha256 = hashlib.sha256(interactive_script.encode("utf-8")).hexdigest()
+
+        # --------------------------------------------------------------
+        # RUNTIME/HARNESS PRE-FLIGHT (2026-09-25)
+        #
+        # Root-cause context: a "name 'time' is not defined" failure
+        # during a real replay's post-action verification traced back
+        # to the PARENT process (started with --no-reload) still
+        # holding an OLD in-memory copy of INTERACTIVE_HARNESS_TEMPLATE
+        # from before a fix had been applied to this file on disk —
+        # editing the .py file is not enough; the long-running server
+        # process itself has to actually restart to pick it up, since
+        # Python caches an already-imported module for the life of the
+        # process. `python -m py_compile Core/playwright_runner.py`
+        # only ever proves the file ON DISK is valid; it says nothing
+        # about what the RUNNING process currently has loaded, and
+        # nothing at all about the *generated* per-run child script,
+        # which is built from whatever INTERACTIVE_HARNESS_TEMPLATE the
+        # process holds right now. This block is what actually proves
+        # (not assumes) that the text about to be written to
+        # script_path is syntactically valid AND self-contained BEFORE
+        # any browser is launched, and logs the exact identity of both
+        # the parent module and the generated file so a stale-process
+        # situation like the one above is immediately visible in the
+        # server log instead of only surfacing as a deep runtime error
+        # on a real device, steps into an unattended replay.
+        try:
+            compile(interactive_script, str(script_path), "exec")
+        except SyntaxError as compile_error:
+            self.logger.error(
+                "PLAYWRIGHT_RUNTIME_DIAGNOSTIC harness_compile_failed "
+                "runner_file=%s python=%s harness_template_sha256=%s "
+                "generated_script_sha256=%s script_source=%s script_id=%s "
+                "tc_number=%s error=%s",
+                __file__, sys.executable, _QA_HARNESS_TEMPLATE_SHA256,
+                generated_sha256, script_source, script_id, tc_number, compile_error,
+            )
+            return {
+                "interactive_supported": True,
+                "success": False,
+                "error": (
+                    "Internal error: the generated interactive harness failed to "
+                    f"compile before it was run ({compile_error}). No browser was "
+                    "launched and no action was performed against the application. "
+                    "This is a bug in the harness generator, not your recorded "
+                    "script — please report it."
+                ),
+            }
+
+        dependency_gaps = _qa_static_dependency_gaps(interactive_script)
+        if dependency_gaps:
+            # Logged, not blocking (see _qa_static_dependency_gaps()'s
+            # own docstring for why a hand-rolled static check is
+            # deliberately not treated as proof a script CAN'T run) —
+            # but this is exactly the log line that would have caught
+            # a missing "import time" the moment it was (re)introduced,
+            # rather than only on a real device minutes into a replay.
+            self.logger.warning(
+                "PLAYWRIGHT_RUNTIME_DIAGNOSTIC harness_dependency_gap "
+                "runner_file=%s harness_template_sha256=%s generated_script_sha256=%s "
+                "script_source=%s script_id=%s tc_number=%s possibly_undefined=%s",
+                __file__, _QA_HARNESS_TEMPLATE_SHA256, generated_sha256,
+                script_source, script_id, tc_number, dependency_gaps,
+            )
+
+        self.logger.info(
+            "PLAYWRIGHT_RUNTIME_DIAGNOSTIC replay_starting runner_file=%s "
+            "python=%s cwd=%s application_root=%s harness_template_sha256=%s "
+            "generated_script=%s script_sha256=%s script_source=%s script_id=%s "
+            "tc_number=%s",
+            __file__, sys.executable, os.getcwd(), str(APPLICATION_ROOT),
+            _QA_HARNESS_TEMPLATE_SHA256, str(script_path), generated_sha256,
+            script_source, script_id, tc_number,
+        )
+        # --- end runtime/harness pre-flight ---
+
         script_path.write_text(interactive_script, encoding="utf-8")
         self._current_script_path = script_path
 
@@ -2862,6 +4225,28 @@ class PlaywrightRunner:
 
                 line = line.rstrip("\n")
 
+                if line.startswith("QA_CHILD_DIAGNOSTIC::"):
+
+                    # Runtime identity proof from the child (see the
+                    # comment in INTERACTIVE_HARNESS_TEMPLATE). Logged
+                    # immediately, before any step runs, so a mismatch
+                    # against the "replay_starting" line this same
+                    # method already logged (below) is visible even if
+                    # the run crashes before printing anything else.
+                    try:
+                        child_diag = json.loads(line[len("QA_CHILD_DIAGNOSTIC::"):])
+                        self.logger.info(
+                            "PLAYWRIGHT_RUNTIME_DIAGNOSTIC child_started harness_version=%s "
+                            "python=%s cwd=%s harness_file=%s time_available=%s time_module=%s",
+                            child_diag.get("harness_version"), child_diag.get("python"),
+                            child_diag.get("cwd"), child_diag.get("harness_file"),
+                            child_diag.get("time_available"), child_diag.get("time_module"),
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                    stdout_lines.append(line)
+                    continue
+
                 if not line.startswith("QA_EVENT::"):
 
                     stdout_lines.append(line)
@@ -2882,9 +4267,15 @@ class PlaywrightRunner:
                 if event_type in {
                     "step_failed", "step_failure_detected",
                     "post_action_failed", "post_action_uncertain",
+                    "post_action_infrastructure_error",
                     "step_gave_up",
                 }:
                     last_failure_event = dict(event)
+                    if event_type == "post_action_infrastructure_error":
+                        self.logger.error(
+                            "PLAYWRIGHT_RUNTIME_DIAGNOSTIC post_action_infrastructure_error "
+                            "step=%s reason=%s", event.get("step"), event.get("reason"),
+                        )
                 if event_type in {"element_selected", "fallback_succeeded", "step_repaired"}:
                     last_repair_event = dict(event)
 
@@ -2893,7 +4284,7 @@ class PlaywrightRunner:
                     "step_failure_detected",
                     "locator_resolution",
                     "post_action_verified", "post_action_failed",
-                    "post_action_uncertain",
+                    "post_action_uncertain", "post_action_infrastructure_error",
                     "fallback_succeeded",
                     "selection_started", "selection_waiting",
                     "selection_cancelled", "selection_failed",

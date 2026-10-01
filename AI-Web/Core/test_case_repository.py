@@ -30,6 +30,7 @@ import shutil
 import sqlite3
 import tempfile
 import sys
+import time
 from pathlib import Path
 
 from Database.db_manager import DatabaseManager
@@ -149,6 +150,7 @@ class TestCaseRepository:
             # existing row keeps behaving exactly as it does today
             # until someone records a script and switches it.
             "ALTER TABLE test_cases ADD COLUMN recorded_script TEXT",
+            "ALTER TABLE test_cases ADD COLUMN uploaded_script TEXT",
             "ALTER TABLE test_cases ADD COLUMN active_script_source "
             "TEXT DEFAULT 'AUTO'",
             "ALTER TABLE test_cases ADD COLUMN execution TEXT DEFAULT 'Manual'",
@@ -163,6 +165,8 @@ class TestCaseRepository:
             "ALTER TABLE test_cases ADD COLUMN reviewed_workbook_path TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN auto_script_validated_hash TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN manual_script_validated_hash TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN uploaded_script_validated_hash TEXT DEFAULT ''",
+            "ALTER TABLE test_cases ADD COLUMN sql_script_path TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN test_case_version_id INTEGER",
             "ALTER TABLE test_cases ADD COLUMN actual_result TEXT DEFAULT ''",
             "ALTER TABLE test_cases ADD COLUMN bug_id TEXT DEFAULT ''",
@@ -285,6 +289,51 @@ class TestCaseRepository:
                 FOREIGN KEY(test_case_version_id) REFERENCES test_case_versions(id) ON DELETE CASCADE
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS playwright_automation_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stable_scope_key TEXT NOT NULL,
+                source_knowledge_id INTEGER,
+                tc_id TEXT NOT NULL,
+                automation_script TEXT,
+                uploaded_script TEXT,
+                recorded_script TEXT,
+                active_script_source TEXT NOT NULL DEFAULT 'AUTO',
+                auto_script_validated_hash TEXT NOT NULL DEFAULT '',
+                uploaded_script_validated_hash TEXT NOT NULL DEFAULT '',
+                manual_script_validated_hash TEXT NOT NULL DEFAULT '',
+                lifecycle_status TEXT NOT NULL DEFAULT 'Draft',
+                modified_date TEXT NOT NULL,
+                UNIQUE(stable_scope_key, tc_id)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playwright_assets_source_tc "
+            "ON playwright_automation_assets(source_knowledge_id,tc_id)"
+        )
+        for migration in (
+            "ALTER TABLE playwright_automation_assets ADD COLUMN uploaded_script TEXT",
+            "ALTER TABLE playwright_automation_assets ADD COLUMN uploaded_script_validated_hash TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                cursor.execute(migration)
+            except sqlite3.OperationalError:
+                pass
+        # A short-lived development backfill admitted any non-empty
+        # automation_script, including API/SQL envelopes. Keep this migration
+        # self-correcting and strictly Playwright-only.
+        cursor.execute(
+            """DELETE FROM playwright_automation_assets AS asset
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM test_cases tc
+                 JOIN test_case_versions v ON v.id=tc.test_case_version_id
+                 WHERE v.source_knowledge_id=asset.source_knowledge_id
+                   AND tc.tc_id=asset.tc_id
+                   AND (tc.automation_type='Playwright' OR tc.recorded_script IS NOT NULL)
+               )"""
+        )
+        self._backfill_playwright_assets(cursor)
+        self._cleanup_redundant_uploaded_scripts(cursor)
         self._migrate_legacy_desktop_rows(cursor)
         self._backfill_canonical_ids(cursor)
         self._backfill_source_relations(cursor)
@@ -292,6 +341,101 @@ class TestCaseRepository:
         conn.commit()
 
         conn.close()
+
+    @staticmethod
+    def _playwright_identity(cursor, row):
+        """Return the smallest identity that survives TC workbook revisions.
+
+        tc_id values are hierarchy-derived for generated cases, but real legacy/
+        imported data contains the same tc_id under unrelated source documents.
+        The immutable Knowledge source id therefore scopes the exact stable id.
+        """
+        version_id = row.get("test_case_version_id") if isinstance(row, dict) else None
+        if version_id:
+            version = cursor.execute(
+                "SELECT source_knowledge_id FROM test_case_versions WHERE id=?",
+                (int(version_id),),
+            ).fetchone()
+            if version:
+                source_id = version.get("source_knowledge_id") if isinstance(version, dict) else version[0]
+                return f"source:{int(source_id)}", int(source_id), str(row.get("tc_id") or "").strip()
+        try:
+            source_ids = json.loads(row.get("source_knowledge_ids") or "[]")
+        except (TypeError, ValueError):
+            source_ids = []
+        if len(source_ids) == 1 and row.get("tc_id"):
+            source_id = int(source_ids[0])
+            return f"source:{source_id}", source_id, str(row["tc_id"]).strip()
+        return None
+
+    def _backfill_playwright_assets(self, cursor):
+        cursor.connection.row_factory = self._dict_factory
+        query_cursor = cursor.connection.cursor()
+        rows = query_cursor.execute(
+            """SELECT * FROM test_cases
+               WHERE tc_id IS NOT NULL AND tc_id<>''
+                 AND (automation_type='Playwright' OR recorded_script IS NOT NULL)
+               ORDER BY COALESCE(modified_date,created_date,'') DESC,id DESC"""
+        ).fetchall()
+        for row in rows:
+            identity = self._playwright_identity(query_cursor, row)
+            if not identity or not (row.get("automation_script") or row.get("recorded_script")):
+                continue
+            scope_key, source_id, tc_id = identity
+            query_cursor.execute(
+                """INSERT OR IGNORE INTO playwright_automation_assets
+                   (stable_scope_key,source_knowledge_id,tc_id,automation_script,
+                    uploaded_script,recorded_script,active_script_source,auto_script_validated_hash,
+                    uploaded_script_validated_hash,manual_script_validated_hash,lifecycle_status,modified_date)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (scope_key, source_id, tc_id, row.get("automation_script"), None,
+                 row.get("recorded_script"), row.get("active_script_source") or "AUTO",
+                 row.get("auto_script_validated_hash") or "", "",
+                 row.get("manual_script_validated_hash") or "",
+                 row.get("status") if row.get("status") in {"Draft", "Automated"} else "Draft",
+                 row.get("modified_date") or row.get("created_date") or datetime.now().isoformat()),
+            )
+
+    def _cleanup_redundant_uploaded_scripts(self, cursor):
+        """Remove only proven JSON-derived uploaded `.py` duplicates.
+
+        Generated `{tc_id}.py` and recorded `{tc_id}.recorded.py` files are
+        deliberately outside this migration. A candidate is removed only when
+        its UTF-8 content exactly matches the stable uploaded-script value and
+        the corresponding managed JSON artifact exists.
+        """
+        cursor.connection.row_factory = self._dict_factory
+        assets = cursor.connection.execute(
+            "SELECT source_knowledge_id,tc_id,uploaded_script "
+            "FROM playwright_automation_assets WHERE uploaded_script IS NOT NULL"
+        ).fetchall()
+        central = CentralRepository()
+        for asset in assets:
+            contexts = cursor.connection.execute(
+                """SELECT DISTINCT v.version_number,v.folder_path,v.source_file_id
+                   FROM test_cases tc JOIN test_case_versions v
+                     ON v.id=tc.test_case_version_id
+                   WHERE v.source_knowledge_id=? AND tc.tc_id=?""",
+                (asset["source_knowledge_id"], asset["tc_id"]),
+            ).fetchall()
+            stem = central.sanitize_segment(asset["tc_id"], "Test Case ID")
+            for context in contexts:
+                folder = central.build_automation_path(
+                    context["folder_path"], "Playwright",
+                    context["version_number"], context["source_file_id"],
+                )
+                json_path = folder / f"{stem}.uploaded.json"
+                duplicate = folder / f"{stem}.uploaded.py"
+                if not (json_path.is_file() and duplicate.is_file()):
+                    continue
+                try:
+                    duplicate_text = duplicate.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if self._canonical_script_text(duplicate_text) == self._canonical_script_text(
+                    asset["uploaded_script"]
+                ):
+                    duplicate.unlink()
 
     @staticmethod
     def _migrate_versioned_test_case_identity(conn):
@@ -654,8 +798,10 @@ class TestCaseRepository:
         ids = [int(value) for value in test_case_ids]
         if not ids:
             return
-        conn = self.db.get_connection()
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        file_changes = []
         try:
+            conn.execute("BEGIN IMMEDIATE")
             marks = ",".join("?" for _ in ids)
             if test_case_version_id:
                 conn.execute(
@@ -667,7 +813,34 @@ class TestCaseRepository:
                     f"UPDATE test_cases SET reviewed_workbook_path=? WHERE id IN ({marks})",
                     [str(relative_path), *ids],
                 )
+            # A newly-associated TC revision immediately inherits and
+            # materializes any stable Playwright asset for the exact source +
+            # tc_id. Missing/new ids remain untouched.
+            for test_case_id in ids:
+                row = conn.execute("SELECT * FROM test_cases WHERE id=?", (test_case_id,)).fetchone()
+                asset = self._stable_playwright_asset(conn, row) if row else None
+                if not asset:
+                    continue
+                if asset.get("automation_script"):
+                    self._update_stable_playwright_script(
+                        test_case_id, asset["automation_script"], conn=conn,
+                        all_changes=file_changes,
+                    )
+                if asset.get("uploaded_script"):
+                    self._update_stable_playwright_script(
+                        test_case_id, asset["uploaded_script"], source="UPLOADED",
+                        conn=conn, all_changes=file_changes,
+                    )
+                if asset.get("recorded_script"):
+                    self._update_stable_playwright_script(
+                        test_case_id, asset["recorded_script"], source="MANUAL",
+                        conn=conn, all_changes=file_changes,
+                    )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            self._restore_playwright_files(file_changes)
+            raise
         finally:
             conn.close()
 
@@ -907,7 +1080,7 @@ class TestCaseRepository:
 
         conn.close()
 
-        return [self._with_sources(self._with_test_types(row)) for row in rows]
+        return [self._with_sources(self._with_test_types(self._with_stable_playwright(row))) for row in rows]
 
     # --------------------------------------------------
     # WEB PORT ADDITION: cross-scope listing.
@@ -1037,7 +1210,7 @@ class TestCaseRepository:
 
         conn.close()
 
-        return {"test_cases": [self._with_sources(self._with_test_types(row)) for row in rows], "total": total}
+        return {"test_cases": [self._with_sources(self._with_test_types(self._with_stable_playwright(row))) for row in rows], "total": total}
 
     def list_distinct_scopes(self):
         """
@@ -1176,6 +1349,267 @@ class TestCaseRepository:
         text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
         return text.rstrip("\n")
 
+    def _stable_playwright_asset(self, conn, row):
+        identity = self._playwright_identity(conn.cursor(), row)
+        if not identity:
+            return None
+        scope_key, _, tc_id = identity
+        conn.row_factory = self._dict_factory
+        return conn.execute(
+            "SELECT * FROM playwright_automation_assets "
+            "WHERE stable_scope_key=? AND tc_id=?",
+            (scope_key, tc_id),
+        ).fetchone()
+
+    def _with_stable_playwright(self, row):
+        if not row:
+            return row
+        item = dict(row)
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        try:
+            asset = self._stable_playwright_asset(conn, item)
+        finally:
+            conn.close()
+        if not asset:
+            return item
+        for field in (
+            "automation_script", "uploaded_script", "recorded_script", "active_script_source",
+            "auto_script_validated_hash", "uploaded_script_validated_hash",
+            "manual_script_validated_hash",
+        ):
+            item[field] = asset.get(field)
+        if item.get("automation_script") or item.get("uploaded_script") or item.get("recorded_script"):
+            item["automation_type"] = "Playwright"
+            item["execution"] = "Playwright"
+        if asset.get("lifecycle_status") in {"Draft", "Automated"}:
+            item["status"] = asset["lifecycle_status"]
+        return item
+
+    @staticmethod
+    def _restore_playwright_files(changes):
+        for path, previous, folder_created in reversed(changes):
+            try:
+                if previous is None:
+                    if path.is_file():
+                        path.unlink()
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(previous)
+                if folder_created and path.parent.is_dir() and not any(path.parent.iterdir()):
+                    path.parent.rmdir()
+            except OSError:
+                pass
+
+    def _materialize_playwright_script(self, conn, source_id, tc_id, script, source="AUTO"):
+        """Write one executable script into every existing matching TC folder.
+
+        SQLite remains authoritative. Files are synchronized copies for the
+        Central Repository hierarchy, staged and replace-written so a failed
+        write can be restored before the database transaction is committed.
+        """
+        contexts = conn.execute(
+            """SELECT DISTINCT v.version_number,v.folder_path,v.source_file_id
+               FROM test_cases tc
+               JOIN test_case_versions v ON v.id=tc.test_case_version_id
+               WHERE v.source_knowledge_id=? AND tc.tc_id=?""",
+            (int(source_id), tc_id),
+        ).fetchall()
+        central = CentralRepository()
+        filename_stem = central.sanitize_segment(tc_id, "Test Case ID")
+        filename = filename_stem
+        if source == "MANUAL":
+            filename += ".recorded"
+        filename += ".py"
+        changes = []
+        try:
+            for raw in contexts:
+                version_number, folder_path, source_file_id = (
+                    (raw.get("version_number"), raw.get("folder_path"), raw.get("source_file_id"))
+                    if isinstance(raw, dict) else raw
+                )
+                automation_folder = central.build_automation_path(
+                    folder_path, "Playwright", version_number, source_file_id
+                )
+                folder_created = not automation_folder.exists()
+                automation_folder.mkdir(parents=True, exist_ok=True)
+                if source == "UPLOADED":
+                    mapping_target = automation_folder / f"{filename_stem}.uploaded.json"
+                    mapping_text = json.dumps(
+                        [{"Test Case ID": tc_id, "Script": script or ""}],
+                        ensure_ascii=False, indent=2,
+                    ) + "\n"
+                    targets = [(mapping_target, mapping_text)]
+                else:
+                    targets = [(automation_folder / filename, script or "")]
+                for target_index, (write_target, content) in enumerate(targets):
+                    previous = write_target.read_bytes() if write_target.is_file() else None
+                    changes.append((write_target, previous, folder_created and target_index == 0))
+                    descriptor, staged_name = tempfile.mkstemp(
+                        prefix=f".{write_target.stem}-", suffix=".tmp", dir=automation_folder
+                    )
+                    try:
+                        with open(descriptor, "w", encoding="utf-8", newline="\n", closefd=True) as handle:
+                            handle.write(content)
+                        staged_path = Path(staged_name)
+                        for attempt in range(3):
+                            try:
+                                staged_path.replace(write_target)
+                                break
+                            except PermissionError:
+                                if attempt == 2:
+                                    raise
+                                time.sleep(0.05 * (attempt + 1))
+                    except Exception:
+                        Path(staged_name).unlink(missing_ok=True)
+                        raise
+                if source == "UPLOADED":
+                    duplicate = automation_folder / f"{filename_stem}.uploaded.py"
+                    if duplicate.is_file():
+                        duplicate_bytes = duplicate.read_bytes()
+                        try:
+                            duplicate_text = duplicate_bytes.decode("utf-8")
+                        except UnicodeDecodeError:
+                            duplicate_text = None
+                        if (
+                            duplicate_text is not None
+                            and self._canonical_script_text(duplicate_text)
+                            == self._canonical_script_text(script)
+                        ):
+                            changes.append((duplicate, duplicate_bytes, False))
+                            duplicate.unlink()
+            return changes
+        except Exception:
+            self._restore_playwright_files(changes)
+            raise
+
+    def _update_stable_playwright_script(
+        self, test_case_id, script, source="AUTO", conn=None, all_changes=None,
+    ):
+        owns_connection = conn is None
+        conn = conn or self.db.get_connection(); conn.row_factory = self._dict_factory
+        changes = []
+        try:
+            if owns_connection:
+                conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM test_cases WHERE id=?", (test_case_id,)).fetchone()
+            if not row:
+                raise ValueError(f"Test case {test_case_id} not found.")
+            identity = self._playwright_identity(conn.cursor(), row)
+            if not identity:
+                return None
+            scope_key, source_id, tc_id = identity
+            current = conn.execute(
+                "SELECT * FROM playwright_automation_assets WHERE stable_scope_key=? AND tc_id=?",
+                (scope_key, tc_id),
+            ).fetchone()
+            fields = {
+                "AUTO": ("automation_script", "auto_script_validated_hash"),
+                "UPLOADED": ("uploaded_script", "uploaded_script_validated_hash"),
+                "MANUAL": ("recorded_script", "manual_script_validated_hash"),
+            }
+            if source not in fields:
+                raise ValueError("Playwright script source must be AUTO, UPLOADED, or MANUAL.")
+            script_field, _ = fields[source]
+            active_source = (current or row).get("active_script_source") or "AUTO"
+            previous_script = (current or row).get(script_field)
+            changed = self._canonical_script_text(previous_script) != self._canonical_script_text(script)
+            lifecycle = (current or {}).get("lifecycle_status") or (
+                row.get("status") if row.get("status") in {"Draft", "Automated"} else "Draft"
+            )
+            if changed and active_source.upper() == source:
+                lifecycle = "Draft"
+            now = datetime.now().isoformat()
+            auto_script = (current or row).get("automation_script")
+            uploaded_script = (current or row).get("uploaded_script")
+            manual_script = (current or row).get("recorded_script")
+            auto_hash = (current or row).get("auto_script_validated_hash") or ""
+            uploaded_hash = (current or row).get("uploaded_script_validated_hash") or ""
+            manual_hash = (current or row).get("manual_script_validated_hash") or ""
+            if source == "MANUAL":
+                manual_script = script
+                if changed: manual_hash = ""
+            elif source == "UPLOADED":
+                uploaded_script = script
+                if changed: uploaded_hash = ""
+            else:
+                auto_script = script
+                if changed: auto_hash = ""
+            changes = self._materialize_playwright_script(
+                conn, source_id, tc_id, script, source=source
+            )
+            if all_changes is not None:
+                all_changes.extend(changes)
+            conn.execute(
+                """INSERT INTO playwright_automation_assets
+                   (stable_scope_key,source_knowledge_id,tc_id,automation_script,
+                    uploaded_script,recorded_script,active_script_source,auto_script_validated_hash,
+                    uploaded_script_validated_hash,manual_script_validated_hash,lifecycle_status,modified_date)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(stable_scope_key,tc_id) DO UPDATE SET
+                    automation_script=excluded.automation_script,
+                    uploaded_script=excluded.uploaded_script,
+                    recorded_script=excluded.recorded_script,
+                    active_script_source=excluded.active_script_source,
+                    auto_script_validated_hash=excluded.auto_script_validated_hash,
+                    uploaded_script_validated_hash=excluded.uploaded_script_validated_hash,
+                    manual_script_validated_hash=excluded.manual_script_validated_hash,
+                    lifecycle_status=excluded.lifecycle_status,
+                    modified_date=excluded.modified_date""",
+                (scope_key, source_id, tc_id, auto_script, uploaded_script, manual_script, active_source,
+                 auto_hash, uploaded_hash, manual_hash, lifecycle, now),
+            )
+            rows = conn.execute(
+                """SELECT tc.id FROM test_cases tc JOIN test_case_versions v
+                   ON v.id=tc.test_case_version_id
+                   WHERE v.source_knowledge_id=? AND tc.tc_id=?""",
+                (source_id, tc_id),
+            ).fetchall()
+            ids = [item.get("id") if isinstance(item, dict) else item[0] for item in rows]
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                conn.execute(
+                    f"""UPDATE test_cases SET automation_script=?,uploaded_script=?,recorded_script=?,
+                         active_script_source=?,auto_script_validated_hash=?,uploaded_script_validated_hash=?,
+                         manual_script_validated_hash=?,automation_type='Playwright',
+                         execution='Playwright',status=?,modified_date=? WHERE id IN ({marks})""",
+                    (auto_script, uploaded_script, manual_script, active_source, auto_hash, uploaded_hash, manual_hash,
+                     lifecycle, now, *ids),
+                )
+            if owns_connection:
+                conn.commit()
+            return changed
+        except Exception:
+            if owns_connection:
+                conn.rollback()
+                self._restore_playwright_files(changes)
+            raise
+        finally:
+            if owns_connection:
+                conn.close()
+
+    def update_playwright_scripts_atomically(self, updates):
+        """Persist a validated multi-row Playwright mapping as one unit."""
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        file_changes = []
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for test_case_id, script in updates:
+                result = self._update_stable_playwright_script(
+                    test_case_id, script, source="UPLOADED", conn=conn,
+                    all_changes=file_changes,
+                )
+                if result is None:
+                    raise ValueError(
+                        f"Test case {test_case_id} has no stable Knowledge source identity."
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            self._restore_playwright_files(file_changes)
+            raise
+        finally:
+            conn.close()
+
     @classmethod
     def script_fingerprint(cls, value):
         text = cls._canonical_script_text(value)
@@ -1265,14 +1699,15 @@ class TestCaseRepository:
                 and test_case.get("auto_script_validated_hash")
                 == self.script_fingerprint(content)
             )
-        script_field = (
-            "recorded_script" if source == "MANUAL" else "automation_script"
-        )
-        hash_field = (
-            "manual_script_validated_hash"
-            if source == "MANUAL"
-            else "auto_script_validated_hash"
-        )
+        script_field = {
+            "AUTO": "automation_script", "UPLOADED": "uploaded_script",
+            "MANUAL": "recorded_script",
+        }.get(source, "automation_script")
+        hash_field = {
+            "AUTO": "auto_script_validated_hash",
+            "UPLOADED": "uploaded_script_validated_hash",
+            "MANUAL": "manual_script_validated_hash",
+        }.get(source, "auto_script_validated_hash")
         return (
             bool(test_case.get(script_field))
             and test_case.get(hash_field)
@@ -1283,24 +1718,28 @@ class TestCaseRepository:
         self, test_case_id, source, keep_active=False, env_fingerprint="",
     ):
         source = str(source or "AUTO").upper()
-        if source not in {"AUTO", "MANUAL"}:
-            raise ValueError("source must be 'AUTO' or 'MANUAL'.")
+        if source not in {"AUTO", "UPLOADED", "MANUAL"}:
+            raise ValueError("source must be 'AUTO', 'UPLOADED', or 'MANUAL'.")
         conn = self.db.get_connection()
         conn.row_factory = self._dict_factory
         try:
             row = conn.execute(
-                """
-                SELECT automation_script, recorded_script,
-                       active_script_source, status, automation_type,
-                       bound_api_endpoint_id, api_expected_status_code,
-                       api_request_config_json
-                FROM test_cases
-                WHERE id=?
-                """,
+                "SELECT * FROM test_cases WHERE id=?",
                 (test_case_id,),
             ).fetchone()
             if not row:
                 raise ValueError(f"Test case {test_case_id} not found.")
+            row = dict(row)
+            stable_asset = self._stable_playwright_asset(conn, row)
+            if stable_asset:
+                for stable_field in (
+                    "automation_script", "uploaded_script", "recorded_script", "active_script_source",
+                    "auto_script_validated_hash", "uploaded_script_validated_hash",
+                    "manual_script_validated_hash",
+                ):
+                    row[stable_field] = stable_asset.get(stable_field)
+                row["automation_type"] = "Playwright"
+                row["status"] = stable_asset.get("lifecycle_status") or row.get("status")
             is_api = str(row.get("automation_type") or "").upper() == "API"
             if is_api and source == "AUTO":
                 # API readiness content is the bound endpoint + expected
@@ -1315,22 +1754,42 @@ class TestCaseRepository:
                     row.get("api_request_config_json") or "",
                 )
             else:
-                script = (
-                    row.get("recorded_script")
-                    if source == "MANUAL"
-                    else row.get("automation_script")
-                )
-            field = (
-                "manual_script_validated_hash"
-                if source == "MANUAL"
-                else "auto_script_validated_hash"
-            )
+                script = {
+                    "AUTO": row.get("automation_script"),
+                    "UPLOADED": row.get("uploaded_script"),
+                    "MANUAL": row.get("recorded_script"),
+                }[source]
+            field = {
+                "AUTO": "auto_script_validated_hash",
+                "UPLOADED": "uploaded_script_validated_hash",
+                "MANUAL": "manual_script_validated_hash",
+            }[source]
             keep_automated = (
                 keep_active
                 and (row.get("active_script_source") or "AUTO").upper()
                 == source
             )
             status = "Automated" if keep_automated else row.get("status")
+            fingerprint = self.script_fingerprint(script)
+            identity = self._playwright_identity(conn.cursor(), row) if not is_api else None
+            asset = stable_asset if identity else None
+            if asset:
+                scope_key, source_id, tc_id = identity
+                conn.execute(
+                    f"""UPDATE playwright_automation_assets
+                        SET {field}=?,lifecycle_status=?,modified_date=?
+                        WHERE stable_scope_key=? AND tc_id=?""",
+                    (fingerprint, status, datetime.now().isoformat(), scope_key, tc_id),
+                )
+                conn.execute(
+                    f"""UPDATE test_cases SET {field}=?,status=?,modified_date=?
+                        WHERE id IN (SELECT tc.id FROM test_cases tc
+                        JOIN test_case_versions v ON v.id=tc.test_case_version_id
+                        WHERE v.source_knowledge_id=? AND tc.tc_id=?)""",
+                    (fingerprint, status, datetime.now().isoformat(), source_id, tc_id),
+                )
+                conn.commit()
+                return
             conn.execute(
                 f"""
                 UPDATE test_cases
@@ -1338,7 +1797,7 @@ class TestCaseRepository:
                 WHERE id=?
                 """,
                 (
-                    self.script_fingerprint(script), status,
+                    fingerprint, status,
                     datetime.now().isoformat(), test_case_id,
                 ),
             )
@@ -1493,6 +1952,13 @@ class TestCaseRepository:
         Returns True when executable script configuration changed.
         """
 
+        if str(automation_type or "") == "Playwright" and automation_script is not None:
+            stable_result = self._update_stable_playwright_script(
+                test_case_id, automation_script, source="AUTO"
+            )
+            if stable_result is not None:
+                return stable_result
+
         conn = self.db.get_connection()
         cursor = conn.cursor()
         now = datetime.now().isoformat()
@@ -1543,6 +2009,31 @@ class TestCaseRepository:
         conn.close()
         return changed
 
+    def update_sql_asset(self, test_case_id, script_json, repository_path):
+        """Atomically bind one validated SQL script and its managed file."""
+        conn = self.db.get_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status,active_script_source FROM test_cases WHERE id=?",
+                (int(test_case_id),),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Test case {test_case_id} not found.")
+            conn.execute(
+                """UPDATE test_cases SET automation_type='SQL',execution='SQL',
+                   automation_script=?,sql_script_path=?,status='Draft',
+                   auto_script_validated_hash='',modified_date=? WHERE id=?""",
+                (script_json, str(repository_path), datetime.now().isoformat(), int(test_case_id)),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return self.get_test_case(test_case_id)
+
     def update_recorded_script(self, test_case_id, recorded_script):
         """Persist the Manual/Recorded script.
 
@@ -1551,6 +2042,12 @@ class TestCaseRepository:
         not undo a prior Set Active.  Returns True when script content
         changed.
         """
+
+        stable_result = self._update_stable_playwright_script(
+            test_case_id, recorded_script, source="MANUAL"
+        )
+        if stable_result is not None:
+            return stable_result
 
         conn = self.db.get_connection()
         cursor = conn.cursor()
@@ -1591,6 +2088,32 @@ class TestCaseRepository:
         conn.close()
         return changed
 
+    def update_uploaded_script(self, test_case_id, uploaded_script):
+        """Persist an explicitly uploaded Playwright source separately."""
+        stable_result = self._update_stable_playwright_script(
+            test_case_id, uploaded_script, source="UPLOADED"
+        )
+        if stable_result is not None:
+            return stable_result
+        conn = self.db.get_connection(); cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        current = cursor.execute(
+            "SELECT uploaded_script,status,active_script_source FROM test_cases WHERE id=?",
+            (test_case_id,),
+        ).fetchone()
+        if current is None:
+            conn.close(); return False
+        changed = self._canonical_script_text(current[0]) != self._canonical_script_text(uploaded_script)
+        active_changed = changed and (current[2] or "AUTO").upper() == "UPLOADED"
+        cursor.execute(
+            """UPDATE test_cases SET uploaded_script=?,automation_type='Playwright',
+               execution='Playwright',status=?,uploaded_script_validated_hash=CASE
+               WHEN ? THEN '' ELSE uploaded_script_validated_hash END,modified_date=? WHERE id=?""",
+            (uploaded_script, "Draft" if active_changed else (current[1] or "Draft"),
+             1 if changed else 0, now, test_case_id),
+        )
+        conn.commit(); conn.close(); return changed
+
 
     def set_active_script_source(self, test_case_id, source):
         """
@@ -1598,11 +2121,30 @@ class TestCaseRepository:
         hand-recorded one).
         """
 
-        self._update_field(
-            test_case_id,
-            "active_script_source",
-            source
-        )
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        try:
+            row = conn.execute("SELECT * FROM test_cases WHERE id=?", (test_case_id,)).fetchone()
+            identity = self._playwright_identity(conn.cursor(), row) if row else None
+            asset = self._stable_playwright_asset(conn, row) if identity else None
+            if asset:
+                scope_key, source_id, tc_id = identity
+                conn.execute(
+                    "UPDATE playwright_automation_assets SET active_script_source=?,lifecycle_status='Automated',modified_date=? "
+                    "WHERE stable_scope_key=? AND tc_id=?",
+                    (source, datetime.now().isoformat(), scope_key, tc_id),
+                )
+                conn.execute(
+                    """UPDATE test_cases SET active_script_source=?,status='Automated' WHERE id IN (
+                       SELECT tc.id FROM test_cases tc JOIN test_case_versions v
+                       ON v.id=tc.test_case_version_id
+                       WHERE v.source_knowledge_id=? AND tc.tc_id=?)""",
+                    (source, source_id, tc_id),
+                )
+                conn.commit()
+                return
+        finally:
+            conn.close()
+        self._update_field(test_case_id, "active_script_source", source)
 
     def update_result(self, test_case_id, result):
 
@@ -1650,13 +2192,55 @@ class TestCaseRepository:
 
         conn.close()
 
-        return self._with_sources(self._with_test_types(row)) if row else None
+        if not row:
+
+            return None
+
+        item = self._with_stable_playwright(row)
+
+        # 2026-09-29 sync fix: _with_test_types() -> normalize_test_case()
+        # -> normalize_status() (Core/test_case_workbook.py) overwrites
+        # "status" with the WORKBOOK-EXPORT execution-result status
+        # (Pass/Fail/Not Executed) -- and normalize_status() explicitly
+        # collapses the literal automation-lifecycle value "Automated"
+        # itself into "Not Executed" (it's listed alongside "draft"/
+        # "manual"/"pending" as a value with no dedicated run result).
+        # That silently broke every Playwright/SQL automation-lifecycle
+        # readiness check in AutomationWebRepository
+        # (validate_for_execution()'s active_script_approved check,
+        # can_auto_execute()) — they read THIS SAME "status" field
+        # expecting the raw "Draft"/"Automated" value that
+        # _with_stable_playwright() just set two lines above, so a test
+        # case that had actually been Set Active could never again read
+        # as ready, even with a perfectly matching validated hash.
+        # Preserve the pre-normalization value under
+        # automation_lifecycle_status so those two call sites can read
+        # the real value, without changing what "status" means for any
+        # existing execution-result consumer (dashboards, workbook
+        # export, etc. all keep seeing exactly what they saw before).
+        item["automation_lifecycle_status"] = item.get("status")
+
+        return self._with_sources(self._with_test_types(item))
 
     @staticmethod
     def _serialize_test_types(values):
         supplied = values.get("test_types")
+        if isinstance(supplied, str):
+            try:
+                decoded = json.loads(supplied)
+                supplied = decoded if isinstance(decoded, list) else supplied.split(",")
+            except (TypeError, ValueError):
+                supplied = supplied.split(",")
         if not supplied:
-            supplied = str(values.get("test_type") or "").split(",")
+            legacy = str(values.get("test_type") or "").strip()
+            if legacy.startswith("["):
+                try:
+                    decoded = json.loads(legacy)
+                    supplied = decoded if isinstance(decoded, list) else legacy.split(",")
+                except (TypeError, ValueError):
+                    supplied = legacy.split(",")
+            else:
+                supplied = legacy.split(",")
         ordered = []
         for value in supplied:
             cleaned = str(value).strip()
@@ -1667,7 +2251,19 @@ class TestCaseRepository:
     @staticmethod
     def _with_test_types(row):
         item = normalize_test_case(row)
-        item["test_types"] = [value.strip() for value in str(item.get("test_type") or "").split(",") if value.strip()]
+        raw_types = str(item.get("test_type") or "").strip()
+        parsed_types = None
+        if raw_types.startswith("["):
+            try:
+                candidate = json.loads(raw_types)
+                if isinstance(candidate, list):
+                    parsed_types = candidate
+            except (TypeError, ValueError):
+                pass
+        item["test_types"] = [
+            str(value).strip() for value in (parsed_types or raw_types.split(","))
+            if str(value).strip()
+        ]
         try:
             item["source_knowledge_ids"] = json.loads(item.get("source_knowledge_ids") or "[]")
         except (TypeError, ValueError):

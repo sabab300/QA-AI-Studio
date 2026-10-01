@@ -755,15 +755,33 @@ class MetadataManager:
             if not row:
                 raise ValueError(f"Domain '{domain_name}' was not found.")
             domain_id = row[0]
-            cursor.execute("SELECT COUNT(*) FROM modules WHERE domain_id=?", (domain_id,))
-            if cursor.fetchone()[0]:
-                raise ValueError("Delete the Domain's Modules first. No Knowledge was deleted.")
+            cursor.execute("SELECT name FROM modules WHERE domain_id=? ORDER BY name", (domain_id,))
+            module_names = [r[0] for r in cursor.fetchall()]
+            if module_names:
+                # Section 24 (Manage Knowledge Full Hierarchy Administration):
+                # name the REAL blocking children, not a generic refusal.
+                shown = module_names[:5]
+                listing = "\n".join(f"Module: {name}" for name in shown)
+                if len(module_names) > 5:
+                    listing += f"\n(+{len(module_names) - 5} more)"
+                raise ValueError(
+                    f'Cannot delete Domain "{domain_name}". Existing child hierarchy:\n'
+                    f"{listing}\nDelete the child items first."
+                )
             cursor.execute(
-                "SELECT COUNT(*) FROM knowledge_items WHERE domain_id=? OR domain=?",
+                "SELECT DISTINCT knowledge_name FROM knowledge_items WHERE domain_id=? OR domain=? ORDER BY knowledge_name",
                 (domain_id, domain_name),
             )
-            if cursor.fetchone()[0]:
-                raise ValueError("This Domain is referenced by Knowledge and cannot be deleted.")
+            knowledge_names = [r[0] for r in cursor.fetchall() if r[0]]
+            if knowledge_names:
+                shown = knowledge_names[:5]
+                listing = "\n".join(f"Knowledge: {name}" for name in shown)
+                if len(knowledge_names) > 5:
+                    listing += f"\n(+{len(knowledge_names) - 5} more)"
+                raise ValueError(
+                    f'Cannot delete Domain "{domain_name}". Existing child hierarchy:\n'
+                    f"{listing}\nDelete the child items first."
+                )
             cursor.execute(
                 "SELECT COUNT(*) FROM discovery_business_processes WHERE linked_domain_id=?",
                 (domain_id,),
@@ -996,7 +1014,53 @@ class MetadataManager:
 
         conn.close()
 
-        return names    
+        return names
+
+    # ==================================================
+    # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: lightweight, join-free listing of
+    # every knowledge_items row (version + document type + source file +
+    # indexing status) under one Domain/Module/Knowledge Name — used by
+    # the Impact Analysis Source Document cascade. Deliberately NOT
+    # KnowledgeRepository.list_items(), which additionally joins
+    # test_case_versions/playwright_automation_assets/api_collections/
+    # discovery flows for every item in the whole repository and is far
+    # more than a dropdown needs.
+    # ==================================================
+
+    def list_items_for_knowledge(self, domain, module, knowledge_name):
+
+        conn = self.db.get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                version,
+                document_type,
+                file_name,
+                status,
+                source_type,
+                created_date
+            FROM knowledge_items
+            WHERE domain=?
+            AND module=?
+            AND knowledge_name=?
+            ORDER BY version, file_name
+            """,
+            (
+                domain,
+                module,
+                knowledge_name
+            )
+        )
+
+        rows = [dict(row) for row in cursor.fetchall()]
+
+        conn.close()
+
+        return rows
 
     # ==================================================
 
@@ -1111,11 +1175,21 @@ class MetadataManager:
                 raise ValueError(f"Module '{module_name}' was not found under Domain '{domain_name}'.")
             module_id = row[0]
             cursor.execute(
-                "SELECT COUNT(*) FROM knowledge_items WHERE module_id=? OR (domain=? AND module=?)",
+                "SELECT DISTINCT knowledge_name FROM knowledge_items WHERE module_id=? OR (domain=? AND module=?) ORDER BY knowledge_name",
                 (module_id, domain_name, module_name),
             )
-            if cursor.fetchone()[0]:
-                raise ValueError("This Module is referenced by Knowledge and cannot be deleted.")
+            knowledge_names = [r[0] for r in cursor.fetchall() if r[0]]
+            if knowledge_names:
+                # Section 24 (Manage Knowledge Full Hierarchy Administration):
+                # name the REAL blocking children, not a generic refusal.
+                shown = knowledge_names[:5]
+                listing = "\n".join(f"Knowledge: {name}" for name in shown)
+                if len(knowledge_names) > 5:
+                    listing += f"\n(+{len(knowledge_names) - 5} more)"
+                raise ValueError(
+                    f'Cannot delete Module "{module_name}". Existing child hierarchy:\n'
+                    f"{listing}\nDelete the child items first."
+                )
             cursor.execute(
                 "SELECT COUNT(*) FROM discovery_business_processes WHERE linked_module_id=?",
                 (module_id,),
@@ -1373,6 +1447,8 @@ class MetadataManager:
             "repository_path",
             "repository_relative_path",
             "source_file_id",
+            "source_type",
+            "file_name",
         }
  
         updates = {

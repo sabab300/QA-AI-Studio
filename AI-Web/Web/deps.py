@@ -63,6 +63,41 @@ def get_current_user(
             status_code=401, detail="This account is no longer active."
         )
 
+    # The signed token carries this session's active role. It is accepted
+    # only while that role remains assigned to the user; this prevents a
+    # stale or tampered role claim from becoming a privilege escalation.
+    token_role_id = payload.get("role_id")
+
+    if token_role_id is not None:
+
+        try:
+
+            token_role_id = int(token_role_id)
+
+        except (TypeError, ValueError):
+
+            token_role_id = None
+
+    if token_role_id is not None and repository.is_role_assigned(user["id"], token_role_id):
+
+        role = repository.get_role_by_id(token_role_id)
+        user["role_id"] = token_role_id
+        user["role_name"] = role["name"] if role else ""
+
+    elif token_role_id is not None:
+
+        raise HTTPException(
+            status_code=401,
+            detail="The active role is no longer assigned — please sign in again.",
+        )
+
+    elif not repository.is_role_assigned(user["id"], user["role_id"]):
+
+        raise HTTPException(
+            status_code=401,
+            detail="The active role is no longer assigned — please sign in again.",
+        )
+
     request.state.current_user = user
 
     return user

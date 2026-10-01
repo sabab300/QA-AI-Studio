@@ -359,9 +359,20 @@ def list_source_documents(
             })
     else:
         _, _, source_folder = service.source_context(source_knowledge_id)
+        persisted_path = service.central.resolve_managed(
+            source.get("repository_path"), source.get("repository_relative_path") or ""
+        )
+        seen_document_names = set()
+        if persisted_path.is_file() and persisted_path.suffix.lower() != ".xlsx":
+            documents.append({
+                "id": f"doc:{persisted_path.name}", "name": persisted_path.name,
+                "kind": "SOURCE_DOCUMENT", "source_type": source_type,
+            })
+            seen_document_names.add(persisted_path.name.casefold())
         if source_folder.is_dir():
             for path in sorted(source_folder.iterdir(), key=lambda item: item.name.casefold()):
-                if path.is_file() and path.suffix.lower() != ".xlsx":
+                if (path.is_file() and path.suffix.lower() != ".xlsx"
+                        and path.name.casefold() not in seen_document_names):
                     documents.append({"id": f"doc:{path.name}", "name": path.name,
                                       "kind": "SOURCE_DOCUMENT", "source_type": source_type})
 

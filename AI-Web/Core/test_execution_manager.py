@@ -1812,9 +1812,9 @@ class TestExecutionManager:
         — see get_active_script().
         """
 
-        if source not in ("AUTO", "MANUAL"):
+        if source not in ("AUTO", "UPLOADED", "MANUAL"):
 
-            raise ValueError("source must be 'AUTO' or 'MANUAL'.")
+            raise ValueError("source must be 'AUTO', 'UPLOADED', or 'MANUAL'.")
 
         self.repository.set_active_script_source(
             test_case_id, source
@@ -1839,6 +1839,10 @@ class TestExecutionManager:
         if source == "MANUAL" and test_case.get("recorded_script"):
 
             return test_case.get("recorded_script")
+
+        if source == "UPLOADED" and test_case.get("uploaded_script"):
+
+            return test_case.get("uploaded_script")
 
         return test_case.get("automation_script")
 
@@ -2413,6 +2417,14 @@ class TestExecutionManager:
             on_element_selected=on_element_selected,
             on_runtime_event=on_runtime_event,
             max_repair_rounds=max_repair_rounds,
+            # Threaded through to PLAYWRIGHT_RUNTIME_DIAGNOSTIC logging
+            # (see PlaywrightRunner.run_script_interactive()) so a
+            # server-log line can always be tied back to exactly which
+            # test case / active-script slot produced it — this method
+            # already computes both just above, for its own
+            # "Interactive replay source resolved" log line.
+            script_source=active_source,
+            script_id=test_case_id,
         )
         result.setdefault("script_source", active_source)
         result.setdefault("script_fingerprint", script_fingerprint)
@@ -2436,6 +2448,194 @@ class TestExecutionManager:
             result["outcome"] = outcome
 
         return result
+
+    @staticmethod
+    def _propagate_transaction_opener_locator(lines, transaction_id, old_locator_display, new_locator_display, skip_range):
+        """
+        When a repair changes a dropdown/calendar/autocomplete OPENER
+        step's primary locator, any LATER step that depends on that same
+        opener (an option/date/autocomplete-suggestion step sharing the
+        same CONTROL_TRANSACTION id) still has its own TRANSACTION_OPENER
+        / PARENT_LOCATOR metadata pointing at the opener's OLD locator
+        text. Left alone, the next Preflight/replay then reports a
+        mismatch ("parent ... does not match the current opener ...")
+        purely because bookkeeping never followed the repair, even though
+        the repair itself was correct.
+
+        This propagation is intentionally narrow: it only ever touches
+        OTHER QA_STEP blocks whose OWN CONTROL_TRANSACTION value exactly
+        equals `transaction_id` (never a global locator-string replace
+        across the script), it only rewrites a TRANSACTION_OPENER /
+        PARENT_LOCATOR value that is an EXACT match for the opener's
+        previous locator text, and it never touches the step block that
+        was just repaired (`skip_range`). Parent-opener validation itself
+        is untouched by this — this only keeps the value that validation
+        compares against in sync with the opener's new, actual identity.
+        """
+        skip_start, skip_end = skip_range
+        index = 0
+        total = len(lines)
+        while index < total:
+            marker = re.match(r"^\s*#\s*QA_STEP:\s*0*(\d+)(?:\D|$)", lines[index])
+            if not marker:
+                index += 1
+                continue
+            block_start = index
+            block_end = next((
+                candidate for candidate in range(block_start + 1, total)
+                if re.match(r"^\s*#\s*QA_STEP:", lines[candidate])
+            ), total)
+            if skip_start <= block_start < skip_end:
+                index = block_end
+                continue
+            block_transaction = next((
+                re.sub(r"^\s*#\s*CONTROL_TRANSACTION:\s*", "", lines[meta_index], flags=re.I).strip()
+                for meta_index in range(block_start + 1, block_end)
+                if re.match(r"^\s*#\s*CONTROL_TRANSACTION:", lines[meta_index], re.I)
+            ), "")
+            if block_transaction and block_transaction == transaction_id:
+                for meta_index in range(block_start + 1, block_end):
+                    for field in ("TRANSACTION_OPENER", "PARENT_LOCATOR"):
+                        field_match = re.match(rf"^(\s*#\s*{field}:\s*)(.*)$", lines[meta_index], re.I)
+                        if field_match and field_match.group(2).strip() == old_locator_display:
+                            indent = lines[meta_index][:len(lines[meta_index]) - len(lines[meta_index].lstrip())]
+                            lines[meta_index] = indent + metadata_comment(field, new_locator_display)
+            index = block_end
+        return lines
+
+    @staticmethod
+    def reconcile_transaction_metadata(script_text):
+        """
+        Whole-script reconciliation for STALE TRANSACTION_OPENER /
+        PARENT_LOCATOR metadata on option/date/autocomplete-suggestion
+        steps, for a script that was already persisted before any
+        propagation ran for the repair that changed its opener step
+        (e.g. repaired through an older code path, or through the
+        live per-step persistence before _propagate_transaction_opener_
+        locator() existed). apply_script_repairs()'s own propagation
+        only fires reactively, in response to a NEW repair event — it
+        cannot retroactively fix metadata that went stale before this
+        round. This is the retroactive counterpart: given the CURRENT
+        persisted script text, find any transaction-scoped dependent
+        step whose parent/opener bookkeeping has fallen out of sync
+        with its opener's CURRENT locator, and safely re-sync it.
+
+        Deliberately conservative — the exact same ownership rules
+        apply_script_repairs()'s live propagation already enforces:
+          - only ever rewrites another step's TRANSACTION_OPENER /
+            PARENT_LOCATOR fields, never a step's own action code,
+            never its own PRIMARY_LOCATOR;
+          - only reconciles a CONTROL_TRANSACTION id that has EXACTLY
+            ONE distinct opener step (unambiguous ownership) — a
+            transaction id that appears on more than one opener step
+            with DIFFERING PRIMARY_LOCATOR values is left completely
+            untouched, and is reported as a genuine conflict by
+            assess_playwright_script_quality() same as before;
+          - only reconciles a dependent step whose OWNERSHIP_ACCEPTED
+            metadata already reads "true" — ownership must already
+            have been proven and recorded; this never manufactures new
+            ownership, it only re-syncs a value that was already
+            trusted to the opener's current identity.
+
+        Returns (reconciled_text, changes). When nothing needed
+        reconciling, reconciled_text IS script_text (unchanged) and
+        changes is []. `changes` is a list of
+        {"step", "transaction_id", "field", "old", "new"} describing
+        every rewrite, for audit/reporting — this never mutates
+        silently.
+        """
+        original = script_text or ""
+        lines = original.splitlines()
+        total = len(lines)
+
+        def field_value(start, end, field):
+            return next((
+                re.sub(rf"^\s*#\s*{field}:\s*", "", lines[meta_index], flags=re.I).strip()
+                for meta_index in range(start + 1, end)
+                if re.match(rf"^\s*#\s*{field}:", lines[meta_index], re.I)
+            ), "")
+
+        blocks = []
+        index = 0
+        while index < total:
+            marker = re.match(r"^\s*#\s*QA_STEP:\s*0*(\d+)(?:\D|$)", lines[index])
+            if not marker:
+                index += 1
+                continue
+            start = index
+            end = next((
+                candidate for candidate in range(start + 1, total)
+                if re.match(r"^\s*#\s*QA_STEP:", lines[candidate])
+            ), total)
+            blocks.append((start, end, int(marker.group(1))))
+            index = end
+
+        openers_by_transaction = {}
+        ambiguous_transactions = set()
+        for start, end, step_number in blocks:
+            transaction_id = field_value(start, end, "CONTROL_TRANSACTION")
+            if not transaction_id or transaction_id == "-":
+                continue
+            field_type = field_value(start, end, "FIELD_TYPE").lower()
+            action_type = field_value(start, end, "ACTION_TYPE").lower()
+            is_opener = (
+                field_type in {"dropdown", "autocomplete", "calendar"}
+                or action_type in {"open_dropdown", "open_calendar"}
+            )
+            if not is_opener:
+                continue
+            primary = field_value(start, end, "PRIMARY_LOCATOR")
+            if not primary or primary == "-":
+                continue
+            existing = openers_by_transaction.get(transaction_id)
+            if existing and existing[0] != primary:
+                # More than one distinct opener locator claims this
+                # transaction id -- ownership is ambiguous. Never guess;
+                # leave it for assess_playwright_script_quality() to
+                # report as a genuine conflict.
+                ambiguous_transactions.add(transaction_id)
+                continue
+            openers_by_transaction[transaction_id] = (primary, step_number)
+
+        changes = []
+        for start, end, step_number in blocks:
+            transaction_id = field_value(start, end, "CONTROL_TRANSACTION")
+            if not transaction_id or transaction_id == "-" or transaction_id in ambiguous_transactions:
+                continue
+            opener_info = openers_by_transaction.get(transaction_id)
+            if not opener_info:
+                continue
+            opener_locator, opener_step = opener_info
+            if step_number == opener_step:
+                continue
+            field_type = field_value(start, end, "FIELD_TYPE").lower()
+            action_type = field_value(start, end, "ACTION_TYPE").lower()
+            is_dependent = field_type in {"option", "date"} or action_type in {"select_option", "select_date"}
+            if not is_dependent:
+                continue
+            ownership_accepted = field_value(start, end, "OWNERSHIP_ACCEPTED").lower() == "true"
+            if not ownership_accepted:
+                continue
+            for field in ("TRANSACTION_OPENER", "PARENT_LOCATOR"):
+                current_value = field_value(start, end, field)
+                if not current_value or current_value in {"-", opener_locator}:
+                    continue
+                for meta_index in range(start + 1, end):
+                    if re.match(rf"^\s*#\s*{field}:", lines[meta_index], re.I):
+                        indent = lines[meta_index][:len(lines[meta_index]) - len(lines[meta_index].lstrip())]
+                        lines[meta_index] = indent + metadata_comment(field, opener_locator)
+                        changes.append({
+                            "step": step_number, "transaction_id": transaction_id,
+                            "field": field, "old": current_value, "new": opener_locator,
+                        })
+                        break
+
+        if not changes:
+            return script_text, []
+        line_separator = "\r\n" if "\r\n" in original else "\n"
+        had_trailing_newline = original.endswith(("\r\n", "\n"))
+        reconciled = line_separator.join(lines) + (line_separator if had_trailing_newline else "")
+        return reconciled, changes
 
     def apply_script_repairs(self, test_case_id, repairs):
         """
@@ -2471,19 +2671,39 @@ class TestExecutionManager:
                 f"Test case {test_case_id} not found."
             )
 
-        use_recorded_slot = (
-            (test_case.get("active_script_source") or "AUTO").upper()
-            == "MANUAL"
-            and test_case.get("recorded_script")
-        )
+        active_source = (test_case.get("active_script_source") or "AUTO").upper()
+        use_recorded_slot = active_source == "MANUAL" and test_case.get("recorded_script")
+        use_uploaded_slot = active_source == "UPLOADED" and test_case.get("uploaded_script")
 
         if use_recorded_slot:
 
             script = test_case.get("recorded_script") or ""
 
+        elif use_uploaded_slot:
+
+            script = test_case.get("uploaded_script") or ""
+
         else:
 
             script = test_case.get("automation_script") or ""
+
+        # 2026-09-29 sync fix: a repair that cannot actually be located in
+        # the script text (marker-scoped exact match failed AND the exact
+        # `original` string does not appear anywhere else in the script,
+        # e.g. because the interactive harness's line formatting differs
+        # from the clean stored script's) used to fall through to
+        # str.replace(), which silently no-ops when its target isn't
+        # found -- returning the UNCHANGED script with no error. The code
+        # below then still called mark_script_validated(), certifying the
+        # untouched (still-broken) content as validated/Active. Track
+        # every repair that could not be verifiably applied so this
+        # method can refuse to persist a false "validated" checkpoint
+        # against content that was never actually fixed -- the required
+        # contract is "the saved repaired script and validation
+        # checkpoint refer to the SAME exact content", which a silent
+        # no-op violates in spirit even though hash and content still
+        # matched EACH OTHER (they just both matched the WRONG content).
+        unresolved_repairs = []
 
         for repair in repairs:
 
@@ -2504,6 +2724,7 @@ class TestExecutionManager:
                 if re.match(rf"^\s*#\s*QA_STEP:\s*0*{int(step_number or 0)}(?:\D|$)", line)
             ), None)
             replaced = False
+            already_applied = False
             if marker_index is not None:
                 end = next((
                     index for index in range(marker_index + 1, len(lines))
@@ -2531,6 +2752,11 @@ class TestExecutionManager:
                                 for meta_index in range(marker_index + 1, end)
                                 if re.match(r"^\s*#\s*PRIMARY_LOCATOR:", lines[meta_index])
                             ), "")
+                            transaction_id = next((
+                                re.sub(r"^\s*#\s*CONTROL_TRANSACTION:\s*", "", lines[meta_index], flags=re.I).strip()
+                                for meta_index in range(marker_index + 1, end)
+                                if re.match(r"^\s*#\s*CONTROL_TRANSACTION:", lines[meta_index], re.I)
+                            ), "")
                             if previous_primary and previous_primary != locator:
                                 fallback_values.insert(0, previous_primary)
                                 fallback_values = list(dict.fromkeys(fallback_values))[:4]
@@ -2549,16 +2775,68 @@ class TestExecutionManager:
                                     lines[meta_index] = indent + metadata_comment("SECTION", selection["section"])
                                 if re.match(r"^\s*#\s*SOURCE:", lines[meta_index]):
                                     lines[meta_index] = indent + metadata_comment("SOURCE", "repaired/user-selected")
+                            if transaction_id and transaction_id != "-" and previous_primary and previous_primary != locator:
+                                # Atomic, transaction-scoped propagation: a
+                                # LATER option/date/suggestion step sharing
+                                # this SAME CONTROL_TRANSACTION must follow
+                                # the opener to its new locator identity,
+                                # never a global locator-string replace.
+                                self._propagate_transaction_opener_locator(
+                                    lines, transaction_id, previous_primary, locator,
+                                    skip_range=(marker_index, end),
+                                )
+                        break
+                    if lines[index].strip() == corrected.strip():
+                        # This exact repair was already applied — the
+                        # corrected text is already what's on disk, most
+                        # often because the SAME step went through both
+                        # the resolve-first and exception-driven repair
+                        # paths in one interactive run, and this is the
+                        # second, redundant apply_script_repairs() call
+                        # for it. The original text being gone here is
+                        # success (already fixed), not a failure to
+                        # locate anything.
+                        already_applied = True
                         break
                 script = line_separator.join(lines) + (line_separator if had_trailing_newline else "")
-            if not replaced:
+            if not replaced and not already_applied:
+                if corrected in script:
+                    # Same idempotent-reapplication case, just outside the
+                    # marker-scoped search (e.g. the step marker itself
+                    # wasn't found this time, but the corrected text is
+                    # already present from an earlier, successful
+                    # application of this exact repair).
+                    continue
+                if original not in script:
+                    # Nothing this method could safely change -- record it
+                    # and move on to the remaining repairs rather than
+                    # silently pretending this one succeeded.
+                    unresolved_repairs.append(repair.get("step"))
+                    continue
                 script = script.replace(original, corrected, 1)
+
+        if unresolved_repairs:
+            raise ValueError(
+                "Could not locate the original code for step(s) "
+                + ", ".join(str(step) for step in unresolved_repairs)
+                + " in the currently saved script — no repair was applied "
+                "and nothing was (re)validated. This usually means the "
+                "saved script's formatting no longer matches what actually "
+                "ran; re-record or re-save the affected step(s) and retry."
+            )
 
         if use_recorded_slot:
 
             self.update_recorded_script(test_case_id, script)
             self.repository.mark_script_validated(
                 test_case_id, "MANUAL", keep_active=True
+            )
+
+        elif use_uploaded_slot:
+
+            self.repository.update_uploaded_script(test_case_id, script)
+            self.repository.mark_script_validated(
+                test_case_id, "UPLOADED", keep_active=True
             )
 
         else:

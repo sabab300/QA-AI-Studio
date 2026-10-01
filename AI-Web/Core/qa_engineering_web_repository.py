@@ -162,6 +162,10 @@ class QaEngineeringWeb:
         if len(source_ids) != 1:
             raise ValueError("AI generation requires exactly one selected source document.")
         source = QaEngineeringVersionService().get_source(source_ids[0])
+        self.logger.info(
+            "QA generation preflight source_id=%s status=%s file=%r",
+            source.get("id"), source.get("status"), source.get("file_name"),
+        )
         expected = {
             "domain": payload.get("domain"), "module": payload.get("module"),
             "knowledge_name": payload.get("knowledge_name"), "version": payload.get("version"),
@@ -170,16 +174,25 @@ class QaEngineeringWeb:
         if any(str(source.get(key) or "") != str(value or "") for key, value in expected.items()):
             raise ValueError("The selected source document does not belong to the selected Knowledge hierarchy.")
         if str(source.get("status") or "").upper() == "FAILED_NO_TEXT":
+            self.logger.warning(
+                "QA generation preflight blocked source_id=%s reason=no_indexable_text",
+                source.get("id"),
+            )
             raise ValueError(
-                "The selected source document is stored in Knowledge Hub but contains no indexed knowledge. "
-                "Test Cases cannot be generated from this document."
+                "This document contains no extractable/indexed text. Upload or select a text-based "
+                "document with indexed knowledge before generating Test Cases."
             )
         from Core.vector_store import VectorStore
-        if not VectorStore().has_source_vectors(
+        has_vectors = VectorStore().has_source_vectors(
             domain=source.get("domain"), module=source.get("module"),
             knowledge_name=source.get("knowledge_name"), version=source.get("version"),
             file_name=source.get("file_name"),
-        ):
+        )
+        if not has_vectors:
+            self.logger.warning(
+                "QA generation preflight blocked source_id=%s reason=no_retrievable_vectors",
+                source.get("id"),
+            )
             raise ValueError(
                 "The selected indexed source has no retrievable vectors. Re-index this source before generating Test Cases."
             )
@@ -308,6 +321,10 @@ class QaEngineeringWeb:
             self._append_log(job_id, "Completed", f"Generated and persisted {len(all_rows)} test case(s).")
         except Exception as error:
             message = str(error) or "Generation failed."
+            self.logger.exception(
+                "QA generation job failed job_id=%s source_ids=%s",
+                job_id, payload.get("knowledge_source_ids") or [],
+            )
             self._set_job(job_id, status="error", message="Failed", error=message,
                           finished_at=datetime.now().isoformat())
             self._append_log(job_id, "Failed", message)

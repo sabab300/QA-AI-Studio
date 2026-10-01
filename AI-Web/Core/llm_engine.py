@@ -293,6 +293,18 @@ class LLMEngine:
 
             start = time.perf_counter()
 
+            # [AI-DIAG] temporary diagnostic — confirms which provider/mode
+            # and configured model is actually about to be invoked for
+            # this request, per the requested Phase 2/3 boundary logging.
+            self.logger.info(
+                "[AI-DIAG] LLM provider selected: %s (AI_MODE=%s) model=%s"
+                % (
+                    type(provider).__name__,
+                    settings.AI_MODE,
+                    getattr(provider, "model", None),
+                )
+            )
+
 
             result = provider.generate(
 
@@ -312,6 +324,18 @@ class LLMEngine:
 
             self.logger.info(
                 f"LLM completed in {elapsed:.2f} seconds."
+            )
+
+            # [AI-DIAG] temporary diagnostic — raw provider response shape,
+            # before any validator/guard stage has touched it.
+            self.logger.info(
+                "[AI-DIAG] Provider raw result: type=%s success=%s "
+                "response_chars=%s error=%s" % (
+                    type(result).__name__,
+                    result.get("success") if isinstance(result, dict) else None,
+                    len(str(result.get("response") or "")) if isinstance(result, dict) else 0,
+                    result.get("error") if isinstance(result, dict) else "non-dict result",
+                )
             )
 
 
@@ -392,6 +416,15 @@ class LLMEngine:
 
                 response
 
+            )
+
+            # [AI-DIAG] temporary diagnostic — final generated answer
+            # length after validator + guard + formatter, i.e. exactly
+            # what LLMEngine.generate() is about to hand back as a
+            # success.
+            self.logger.info(
+                "[AI-DIAG] LLM generate() success: final answer_chars=%s"
+                % len(response or "")
             )
 
 
