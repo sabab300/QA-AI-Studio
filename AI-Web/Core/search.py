@@ -29,6 +29,8 @@ class KnowledgeSearch:
         knowledge_name=None,
         version=None,
         source_file_names=None,
+        document_type=None,
+        document_version_id=None,
     ):
 
         vector = self.embedding.generate_embedding(query)
@@ -49,6 +51,10 @@ class KnowledgeSearch:
 
         if version:
             filters.append({"version": version})
+        if document_type:
+            filters.append({'document_type':document_type})
+        if document_version_id is not None:
+            filters.append({'document_version_id':int(document_version_id)})
 
         if source_file_names:
             filters.append({"file_name": {"$in": list(source_file_names)}})

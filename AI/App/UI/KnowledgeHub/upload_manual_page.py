@@ -269,26 +269,26 @@ class UploadManualPage(QWidget):
 
 
         info_layout.addWidget(
-            QLabel("Version"),
+            QLabel("Document Type"),
             1,
             3
         )
 
         info_layout.addWidget(
-            self.version,
+            self.document_type,
             1,
             4
         )
 
 
         info_layout.addWidget(
-            QLabel("Document Type"),
+            QLabel("Version"),
             2,
             0
         )
 
         info_layout.addWidget(
-            self.document_type,
+            self.version,
             2,
             1
         )

@@ -333,20 +333,20 @@ class SmartUploadPage(QWidget):
         )
 
         info_layout.addWidget(
-            QLabel("Version"), 1, 2
+            QLabel("Document Type"), 1, 2
         )
 
         info_layout.addWidget(
-            self.version, 1, 3
+            self.document_type, 1, 3
         )
 
 
         info_layout.addWidget(
-            QLabel("Document Type"), 2, 0
+            QLabel("Version"), 2, 0
         )
 
         info_layout.addWidget(
-            self.document_type, 2, 1
+            self.version, 2, 1
         )
 
         layout.addWidget(

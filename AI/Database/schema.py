@@ -702,3 +702,12 @@ DISCOVERY_VARIANTS_MIGRATION = [
     ADD COLUMN linked_knowledge_item_id INTEGER
     """,
 ]
+
+import sys
+from pathlib import Path
+_project_root = Path(__file__).resolve().parents[2]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0,str(_project_root))
+from Shared.document_hierarchy import SCHEMA as DOCUMENT_HIERARCHY_SCHEMA
+ALL_TABLES.extend(DOCUMENT_HIERARCHY_SCHEMA)
+KNOWLEDGE_ITEMS_MIGRATION.append('ALTER TABLE knowledge_items ADD COLUMN document_version_id INTEGER REFERENCES document_versions(id) ON DELETE RESTRICT')

@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import tempfile
 from pathlib import Path
+from Shared.hierarchy_values import canonical_source_type
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -335,14 +336,51 @@ class CentralRepository:
         }.get(str(source_type or "Files").upper(), source_type or "Files")
         parts = (
             ("D", domain, "domain"), ("M", module, "module"),
-            ("K", knowledge_name, "knowledge name"), ("V", version, "version"),
-            ("DT", document_type or "Other", "document type"),
+            ("K", knowledge_name, "knowledge name"),
+            ("DT", document_type or "Other", "document type"), ("V", version, "version"),
             ("ST", source_type or "Files", "source type"),
         )
         path = self.root
-        for prefix, value, label in parts:
-            path /= self.compact_segment(prefix, value, label)
+        fields=('domain','module','knowledge_name','document_type','version','source_type')
+        for (prefix, value, label),field in zip(parts,fields):
+            path /= self._hierarchy_segment(path,prefix,value,label,field)
         return path
+
+    def _hierarchy_segment(self,parent,prefix,value,label,field,max_length=14):
+        """Reuse persisted ownership; new lossy names need deterministic identity.
+
+        Root truncation previously merged distinct business names silently.
+        Existing unambiguous compact segments remain unchanged. New truncated
+        or sanitized names carry a bounded digest, never a display label.
+        """
+        original=str(value or '').strip();cleaned=self.sanitize_segment(original,label)
+        existing={}
+        database=self._metadata_db_path()
+        if database.is_file():
+            connection=sqlite3.connect('file:'+str(database)+'?mode=ro',uri=True)
+            try:
+                columns={row[1] for row in connection.execute('PRAGMA table_info(knowledge_items)')}
+                if field in columns:
+                    for stored,identity in connection.execute('SELECT repository_path,'+field+" FROM knowledge_items WHERE repository_path IS NOT NULL AND repository_path<>''"):
+                        try:relative=Path(stored).resolve().relative_to(parent.resolve())
+                        except (ValueError,OSError):continue
+                        if relative.parts and relative.parts[0].startswith(prefix+'-'):
+                            identity=canonical_source_type(identity) if field=='source_type' else str(identity or '')
+                            existing.setdefault(relative.parts[0],set()).add(identity)
+            finally:connection.close()
+        owned=[segment for segment,owners in existing.items() if original in owners]
+        if any(len(existing[segment])!=1 for segment in owned) or len(owned)>1:
+            raise ValueError('Managed hierarchy segment has ambiguous persisted ownership; explicit migration is required.')
+        if owned:return owned[0]
+        candidate=self.compact_segment(prefix,original,label,max_length)
+        lossy=cleaned!=original or len(prefix+'-'+cleaned)>max_length
+        if lossy:
+            suffix=hashlib.sha256(original.encode('utf8')).hexdigest()[:6]
+            stem=cleaned[:max(1,max_length-len(prefix)-len(suffix)-2)].rstrip(' ._-')
+            candidate=prefix+'-'+stem+'_'+suffix
+        conflicts=[owners for segment,owners in existing.items() if segment.casefold()==candidate.casefold() and owners!={original}]
+        if conflicts:raise ValueError('Managed hierarchy path belongs to another entity; no folder merge was applied.')
+        return candidate
 
     def create_source_file_id(self, source_name: str) -> str:
         stem = self.sanitize_segment(Path(source_name).stem or "Source", "source name")

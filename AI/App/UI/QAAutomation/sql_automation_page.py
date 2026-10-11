@@ -609,6 +609,8 @@ class SqlAutomationPage(QWidget):
         select_layout.addWidget(self.knowledge_name, 1, 1)
 
         select_layout.addWidget(self.load_btn, 1, 3)
+        from UI.QAAutomation.document_scope import DocumentScope
+        self.document_scope = DocumentScope(self, select_layout)
 
         layout.addWidget(select_group)
 
@@ -825,6 +827,7 @@ class SqlAutomationPage(QWidget):
         all_cases = self.manager.repository.list_test_cases(
             domain, module, knowledge_name
         )
+        all_cases = self.document_scope.filter_cases(all_cases)
 
         sql_tool = self.manager.repository.execution_tool_for_automation_type("SQL")
         self.test_cases = [

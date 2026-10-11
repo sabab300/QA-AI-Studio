@@ -43,6 +43,8 @@ class TestCaseGenerationWorker(QObject):
         version,
         test_types,
         output_formats,
+        document_type=None,
+        document_version_id=None,
     ):
 
         super().__init__()
@@ -60,6 +62,8 @@ class TestCaseGenerationWorker(QObject):
         self.test_types = test_types
 
         self.output_formats = output_formats
+        self.document_type=document_type
+        self.document_version_id=document_version_id
 
         self.generator = TestCaseGenerator()
 
@@ -117,6 +121,8 @@ class TestCaseGenerationWorker(QObject):
                 test_types=self.test_types,
 
                 output_formats=self.output_formats,
+                document_type=self.document_type,
+                document_version_id=self.document_version_id,
 
             )
 

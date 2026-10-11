@@ -54,6 +54,16 @@ class UploadPipeline:
         ):
 
         source_file = Path(source_file).resolve()
+        from Shared.hierarchy_values import canonical_source_type
+        source_type=canonical_source_type(source_type)
+        prior_analysis=None;prior_text=None
+        if not document_type:
+            if reviewed_analysis is not None:
+                document_type=reviewed_analysis.get('document_type') or 'Other'
+            else:
+                prior_text=self.extractor.extract_text(str(source_file))
+                prior_analysis=dict(self.analyzer.analyze(prior_text) or {})
+                document_type=prior_analysis.get('document_type') or 'Other'
 
         file_info = self.repository.save_file(
             source_file=str(source_file),
@@ -65,9 +75,7 @@ class UploadPipeline:
             source_type=source_type,
         )
 
-        text = self.extractor.extract_text(
-            file_info["repository_path"]
-        )
+        text = prior_text if prior_analysis is not None else self.extractor.extract_text(file_info['repository_path'])
 
         if not str(text or "").strip():
             extension = file_info.get("extension", "")
@@ -109,7 +117,7 @@ class UploadPipeline:
             analysis = dict(
                 reviewed_analysis
                 if reviewed_analysis is not None
-                else self.analyzer.analyze(text)
+                else prior_analysis if prior_analysis is not None else self.analyzer.analyze(text)
             )
         except Exception:
             try:
@@ -127,7 +135,6 @@ class UploadPipeline:
                 except OSError:
                     pass
 
-        print("SUMMARY:", analysis.get("summary"))
 
         if file_info.get("document_type"):
             analysis["document_type"] = file_info["document_type"]
@@ -166,6 +173,7 @@ class UploadPipeline:
             raise
 
         vectors_saved = 0
+        ownership = self.metadata.get_document_context(metadata_status)
 
         if chunks:
 
@@ -203,20 +211,17 @@ class UploadPipeline:
                 # upload time. Including the full domain/module/
                 # knowledge_name/version path keeps each version's
                 # chunks distinct even when their content is identical.
-                chunk_id = "_".join([
-                    _id_part(domain),
-                    _id_part(module),
-                    _id_part(knowledge_name),
-                    _id_part(version),
-                    file_info["sha256"],
-                    str(index),
-                ])
+                chunk_id = f"source-{metadata_status}-{file_info['sha256']}-{index}"
 
                 batch_items.append({
                     "doc_id": chunk_id,
                     "text": chunk,
                     "embedding": embedding,
                     "metadata": {
+                        "knowledge_id": int(metadata_status),
+                        "knowledge_entity_id": ownership['knowledge_entity_id'],
+                        "document_type_id": ownership['document_type_id'],
+                        "document_version_id": ownership['document_version_id'],
                         "domain": domain,
                         "module": module,
                         "knowledge_name": knowledge_name,
@@ -329,7 +334,9 @@ class UploadPipeline:
 
         knowledge_name,
 
-        version="v1.0"
+        version="v1.0",
+        document_type="",
+        source_type="Files"
 
     ):
 
@@ -406,7 +413,9 @@ class UploadPipeline:
 
                     knowledge_name=knowledge_name,
 
-                    version=version
+                    version=version,
+                    document_type=document_type,
+                    source_type=source_type
 
                 )
 

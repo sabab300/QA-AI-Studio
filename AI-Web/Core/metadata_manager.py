@@ -14,6 +14,8 @@ import json
 import sqlite3
 
 from Database.db_manager import DatabaseManager
+from Shared.document_hierarchy import DocumentHierarchy
+from Shared.hierarchy_values import canonical_source_type
 
 
 class MetadataManager:
@@ -21,6 +23,16 @@ class MetadataManager:
     def __init__(self):
 
         self.db = DatabaseManager()
+
+    def get_document_context(self, knowledge_id):
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute('SELECT document_version_id FROM knowledge_items WHERE id=?',(int(knowledge_id),)).fetchone()
+            if not row or row[0] is None:
+                raise ValueError('Source has no canonical Document Type/version owner.')
+            return DocumentHierarchy(conn).context(row[0])
+        finally:
+            conn.close()
 
 
     # --------------------------------------------------
@@ -37,6 +49,7 @@ class MetadataManager:
         analysis=None,
         source_type="FILE",
     ):
+        source_type=canonical_source_type(source_type)
 
         domain_id = self.get_or_create_domain(domain)
 
@@ -87,6 +100,11 @@ class MetadataManager:
             ""
         )
 
+        document_type = document_type or 'Other'
+        hierarchy = DocumentHierarchy(conn)
+        hierarchy.ensure_schema()
+        ownership = hierarchy.ensure_context(domain_id, module_id, knowledge_name, document_type or 'Other', version)
+
 
         cursor.execute(
             """
@@ -119,13 +137,14 @@ class MetadataManager:
                 domain_id,
                 module_id,
                 source_file_id,
-                repository_relative_path
+                repository_relative_path,
+                document_version_id
             )
             VALUES
             (
                 ?,?,?,?,?,?,?,?,?,?,
                 ?,?,?,?,?,?,?,?,?,?,
-                ?,?,?,?,?,?,?,?
+                ?,?,?,?,?,?,?,?,?
             )
             """,
             (
@@ -133,7 +152,7 @@ class MetadataManager:
                 module,
                 knowledge_name,
                 version,
-                f"{domain}/{module}/{knowledge_name}/{version}",
+                f"{domain}/{module}/{knowledge_name}/{document_type or 'Other'}/{version}",
 
                 file_info["file_name"],
 
@@ -177,7 +196,8 @@ class MetadataManager:
 
                 module_id,
                 file_info.get("source_file_id"),
-                file_info.get("repository_relative_path", "")
+                file_info.get("repository_relative_path", ""),
+                ownership['document_version_id']
             )
         )
 
@@ -193,17 +213,19 @@ class MetadataManager:
                 version,
                 sha256,
                 repository_path,
-                created_date
+                created_date,
+                document_version_id
             )
             VALUES
-            (?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?)
             """,
             (
                 knowledge_id,
                 version,
                 file_info["sha256"],
                 file_info["repository_path"],
-                now
+                now,
+                ownership['document_version_id']
             )
         )
 
@@ -483,21 +505,23 @@ class MetadataManager:
 
         for row in rows:
 
-            domain = row[1]
-            module = row[2]
-            knowledge = row[3]
-            version = row[4]
+            domain = row['domain']
+            module = row['module']
+            knowledge = row['knowledge_name']
+            document_type = row['document_type'] or 'Other'
+            version = row['version']
 
             tree.setdefault(domain, {})
             tree[domain].setdefault(module, {})
             tree[domain][module].setdefault(
                 knowledge,
-                []
+                {}
             )
 
-            if version not in tree[domain][module][knowledge]:
+            tree[domain][module][knowledge].setdefault(document_type,[])
+            if version not in tree[domain][module][knowledge][document_type]:
 
-                tree[domain][module][knowledge].append(
+                tree[domain][module][knowledge][document_type].append(
                     version
                 )
 
@@ -1474,7 +1498,7 @@ class MetadataManager:
         # Physical repository_path is intentionally immutable. The logical
         # hierarchy is maintained separately and is safe to edit.
         updates["knowledge_path"] = "/".join(
-            [resolved_domain, resolved_module, resolved_name, resolved_version]
+            [resolved_domain, resolved_module, resolved_name, updates.get('document_type', current['document_type']) or 'Other', resolved_version]
         )
 
         if "domain" in updates or "module" in updates:
@@ -1487,6 +1511,14 @@ class MetadataManager:
         cursor = conn.cursor()
 
         try:
+            hierarchy = DocumentHierarchy(conn)
+            hierarchy.ensure_schema()
+            ownership = hierarchy.ensure_context(
+                updates.get('domain_id', current['domain_id']) or self.get_or_create_domain(resolved_domain),
+                updates.get('module_id', current['module_id']) or self.get_or_create_module(resolved_domain,resolved_module),
+                resolved_name, updates.get('document_type', current['document_type']) or 'Other', resolved_version,
+            )
+            updates['document_version_id'] = ownership['document_version_id']
             set_clause = ", ".join(f"{key}=?" for key in updates.keys())
             values = list(updates.values())
             values.extend([datetime.now().isoformat(), knowledge_id])
@@ -1500,10 +1532,10 @@ class MetadataManager:
                 values,
             )
 
-            if "version" in updates:
+            if 'version' in updates or 'document_type' in updates:
                 cursor.execute(
-                    "UPDATE knowledge_versions SET version=? WHERE knowledge_item_id=?",
-                    (resolved_version, knowledge_id),
+                    "UPDATE knowledge_versions SET version=?,document_version_id=? WHERE knowledge_item_id=? AND version=?",
+                    (resolved_version,ownership['document_version_id'],knowledge_id,current['version']),
                 )
             if "repository_path" in updates:
                 cursor.execute(

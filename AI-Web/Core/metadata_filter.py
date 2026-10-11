@@ -30,7 +30,9 @@ class MetadataFilter:
 
         knowledge_name=None,
 
-        version=None
+        version=None,
+        document_type=None,
+        document_version_id=None,
 
     ):
 
@@ -47,6 +49,10 @@ class MetadataFilter:
 
         if version:
             where["version"] = version
+        if document_type:
+            where['document_type'] = document_type
+        if document_version_id is not None:
+            where['document_version_id'] = int(document_version_id)
 
         return where if where else None
 

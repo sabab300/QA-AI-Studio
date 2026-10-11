@@ -7,12 +7,16 @@ Production Ready
 """
 
 import chromadb
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[2])) if str(Path(__file__).resolve().parents[2]) not in sys.path else None
+from Shared.vector_integrity import VectorIntegrity
 
 from Core.config_manager import ConfigManager
 from Core.logger import Logger
 
 
-class VectorStore:
+class VectorStore(VectorIntegrity):
 
     _client = None
     _collection = None

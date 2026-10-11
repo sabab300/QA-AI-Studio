@@ -36,6 +36,8 @@ class AskRequest(BaseModel):
     module: Optional[str] = None
     knowledge_name: Optional[str] = None
     version: Optional[str] = None
+    document_type: Optional[str] = None
+    document_version_id: Optional[int] = None
 
 
 # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: mirrors the conceptual request shape
@@ -76,6 +78,7 @@ def ask(payload: AskRequest, current_user=Depends(require_permission("ai_assista
             prompt=payload.prompt, session_id=_session_id(current_user),
             domain=payload.domain, module=payload.module,
             knowledge_name=payload.knowledge_name, version=payload.version,
+            document_type=payload.document_type,document_version_id=payload.document_version_id,
         )
 
     except ValueError as error:

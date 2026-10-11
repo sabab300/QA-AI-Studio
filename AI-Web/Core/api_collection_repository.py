@@ -869,6 +869,11 @@ class ApiCollectionRepository:
             resolved_document_type = (
                 str(document_type or "").strip() or API_COLLECTION_DOCUMENT_TYPE
             )
+            from Shared.vector_ownership import api_collection_owner
+            owner=api_collection_owner(self.db,collection_id)
+            if owner is None:
+                self.logger.warning('API collection %s has unresolved ownership; no unowned vectors were indexed.',collection_id)
+                return 0
 
             text = self._build_searchable_text(
                 collection_name, domain, module, knowledge_name, endpoints,
@@ -918,6 +923,7 @@ class ApiCollectionRepository:
                         "confidence": 1.0,
                         "chunk_number": index,
                         "total_chunks": len(chunks),
+                        **owner,
                     },
                 })
 
@@ -1129,9 +1135,9 @@ class ApiCollectionRepository:
             """
             SELECT id, document_type FROM knowledge_items
             WHERE domain = ? AND module = ? AND knowledge_name = ?
-              AND version = ? AND source_type = ?
+              AND document_type = ? AND version = ? AND source_type = ?
             """,
-            (domain, module, knowledge_name, version,
+            (domain, module, knowledge_name, document_type or API_COLLECTION_DOCUMENT_TYPE, version,
              API_COLLECTION_SOURCE_TYPE),
         )
 
@@ -1140,16 +1146,6 @@ class ApiCollectionRepository:
         if row:
 
             existing_id, existing_document_type = row[0], row[1]
-
-            if document_type and document_type != existing_document_type:
-
-                cursor.execute(
-                    "UPDATE knowledge_items SET document_type = ?, "
-                    "modified_date = ? WHERE id = ?",
-                    (document_type, datetime.now().isoformat(), existing_id),
-                )
-
-                conn.commit()
 
             conn.close()
 
@@ -1165,7 +1161,7 @@ class ApiCollectionRepository:
 
         module_id = metadata_manager.get_or_create_module(domain, module)
 
-        knowledge_path = f"{domain}/{module}/{knowledge_name}/{version}"
+        knowledge_path = f"{domain}/{module}/{knowledge_name}/{document_type or API_COLLECTION_DOCUMENT_TYPE}/{version}"
 
         sentinel_sha256 = hashlib.sha256(
             f"api-collection::{knowledge_path}".encode("utf-8")

@@ -115,6 +115,7 @@ class KnowledgeDiscoverySessions:
             module=hierarchy.get("module"),
             knowledge_name=hierarchy.get("knowledge_name"),
             version=hierarchy.get("version"),
+            document_type=hierarchy.get('document_type'),
         )
         if result.get("success"):
             cls.close(session_id)

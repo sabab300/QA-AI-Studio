@@ -394,6 +394,7 @@ class DiscoveryRepository:
         module=None,
         knowledge_name=None,
         version=None,
+        document_type=None,
     ):
         """
         Persists a full, operator-confirmed, multi-step business-flow
@@ -503,7 +504,7 @@ class DiscoveryRepository:
             )
 
             knowledge_item_id = self._get_or_create_captured_knowledge_item(
-                domain, module, knowledge_name, version
+                domain, module, knowledge_name, version, document_type
             )
 
             summary["knowledge_item_id"] = knowledge_item_id
@@ -1396,7 +1397,7 @@ class DiscoveryRepository:
         return business_process_id
 
     def _get_or_create_captured_knowledge_item(
-        self, domain, module, knowledge_name, version
+        self, domain, module, knowledge_name, version, document_type=None
     ):
         """
         Files a captured business flow under the SAME Domain ->
@@ -1421,6 +1422,7 @@ class DiscoveryRepository:
         knowledge_name = (knowledge_name or "").strip()
 
         version = (version or "").strip() or DEFAULT_CAPTURED_VERSION
+        document_type=(document_type or '').strip() or CAPTURED_FLOW_DOCUMENT_TYPE
 
         if not domain or not module or not knowledge_name:
 
@@ -1434,9 +1436,9 @@ class DiscoveryRepository:
             """
             SELECT id FROM knowledge_items
             WHERE domain = ? AND module = ? AND knowledge_name = ?
-              AND version = ? AND source_type = ?
+              AND document_type = ? AND version = ? AND source_type = ?
             """,
-            (domain, module, knowledge_name, version, CAPTURED_FLOW_SOURCE_TYPE),
+            (domain, module, knowledge_name, document_type, version, CAPTURED_FLOW_SOURCE_TYPE),
         )
 
         row = cursor.fetchone()
@@ -1455,7 +1457,7 @@ class DiscoveryRepository:
 
         module_id = metadata_manager.get_or_create_module(domain, module)
 
-        knowledge_path = f"{domain}/{module}/{knowledge_name}/{version}"
+        knowledge_path = f"{domain}/{module}/{knowledge_name}/{document_type}/{version}"
 
         sentinel_sha256 = hashlib.sha256(
             f"captured-flow::{knowledge_path}".encode("utf-8")
@@ -1488,7 +1490,7 @@ class DiscoveryRepository:
                 knowledge_path,
                 sentinel_sha256,
                 CAPTURED_FLOW_SOURCE_TYPE,
-                CAPTURED_FLOW_DOCUMENT_TYPE,
+                document_type,
                 now,
                 now,
                 domain_id,

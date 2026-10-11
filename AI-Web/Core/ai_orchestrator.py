@@ -97,7 +97,9 @@ class AIOrchestrator:
         domain=None,
         module=None,
         knowledge_name=None,
-        version=None
+        version=None,
+        document_type=None,
+        document_version_id=None,
     ):
 
         start_time = time.perf_counter()
@@ -205,7 +207,9 @@ class AIOrchestrator:
                 domain=domain,
                 module=module,
                 knowledge_name=knowledge_name,
-                version=version
+                version=version,
+                document_type=document_type,
+                document_version_id=document_version_id,
             )
 
         execution_time = round(
@@ -347,4 +351,3 @@ class AIOrchestrator:
             session_id=session_id
 
         )
-

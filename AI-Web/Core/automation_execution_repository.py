@@ -185,6 +185,8 @@ class AutomationExecutionRepository:
             "ON automation_runs(sql_script_id)"
         )
 
+        from Shared.document_hierarchy import DocumentHierarchy
+        DocumentHierarchy(conn).ensure_schema()
         conn.commit()
 
         conn.close()

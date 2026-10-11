@@ -45,7 +45,7 @@ class QaEngineeringExportService:
         folder.mkdir(parents=True, exist_ok=True)
         default_stem = "TC_" + "_".join(
             str(scope.get(key) or "NA")
-            for key in ("domain", "module", "knowledge_name", "version", "document_type")
+            for key in ("domain", "module", "knowledge_name", "document_type", "version")
         )
         requested = Path(file_name).name if file_name else default_stem
         suffix = f".{fmt}"

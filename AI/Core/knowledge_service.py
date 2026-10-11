@@ -82,7 +82,8 @@ class KnowledgeService:
                         domain=domain,
                         module=module,
                         knowledge_name=knowledge_name,
-                        version=version
+                        version=version,
+                        document_type=document_type
                     )
 
                 else:
@@ -117,7 +118,8 @@ class KnowledgeService:
                     domain=domain,
                     module=module,
                     knowledge_name=knowledge_name,
-                    version=version
+                    version=version,
+                    document_type=document_type
                 )
 
                 results.append(result)

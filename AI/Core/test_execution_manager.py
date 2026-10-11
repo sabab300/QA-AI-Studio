@@ -115,7 +115,8 @@ class TestExecutionManager:
     }
 
     def import_test_cases_from_excel(
-        self, file_path, domain, module, knowledge_name, version=None
+        self, file_path, domain, module, knowledge_name, version=None,
+        document_type=None, document_version_id=None,
     ):
         """
         Reads an .xlsx file's first sheet, maps its header row onto
@@ -239,6 +240,8 @@ class TestExecutionManager:
                 knowledge_name=knowledge_name,
                 version=version or "1.0",
                 rows=parsed_rows,
+                document_type=document_type,
+                document_version_id=document_version_id,
             )
 
         except Exception as ex:
@@ -350,7 +353,9 @@ class TestExecutionManager:
             domain=domain,
             module=module,
             knowledge_name=knowledge_name,
-            version=version,
+            version=test_case.get('version') or version,
+            document_type=test_case.get('document_type'),
+            document_version_id=test_case.get('document_version_id'),
         )
 
         if not result.get("success"):
@@ -707,7 +712,8 @@ class TestExecutionManager:
             )
 
             endpoints = ApiCollectionRepository().get_endpoints_for_scope(
-                domain, module, knowledge_name
+                domain, module, knowledge_name,
+                document_version_id=test_case.get('document_version_id'),
             )
 
         except Exception:
@@ -845,6 +851,7 @@ class TestExecutionManager:
                 test_case.get("domain", ""),
                 test_case.get("module", ""),
                 test_case.get("knowledge_name", ""),
+                document_version_id=test_case.get('document_version_id'),
             )
 
         if not endpoints:
@@ -935,6 +942,7 @@ class TestExecutionManager:
     def generate_automation_from_collection(
         self, domain, module, knowledge_name, version=None,
         automation_type="API", endpoint_ids=None,
+        document_type=None, document_version_id=None,
     ):
         """
         For every endpoint imported under this Domain / Module /
@@ -974,7 +982,7 @@ class TestExecutionManager:
             )
 
             endpoints = ApiCollectionRepository().get_endpoints_for_scope(
-                domain, module, knowledge_name
+                domain, module, knowledge_name, document_version_id=document_version_id
             )
 
         except Exception as ex:
@@ -1003,6 +1011,8 @@ class TestExecutionManager:
         existing_cases = self.repository.list_test_cases(
             domain, module, knowledge_name
         )
+        if document_version_id is not None:
+            existing_cases=[case for case in existing_cases if case.get('document_version_id')==document_version_id]
 
         existing_by_marker = {
             test_case.get("test_case"): test_case
@@ -1058,6 +1068,8 @@ class TestExecutionManager:
                         knowledge_name=knowledge_name,
                         version=version or "1.0",
                         rows=[row],
+                        document_type=document_type,
+                        document_version_id=document_version_id,
                     )
 
                     if not saved_ids:
@@ -2006,4 +2018,3 @@ class TestExecutionManager:
                 "        run(playwright)\n"
                 "    print('TEST PASSED')\n"
             )
-    

@@ -152,24 +152,26 @@ class ImpactAnalysisService:
         module = str(source.get("module") or "").strip()
         knowledge_name = str(source.get("knowledge_name") or "").strip()
         version = str(source.get("version") or "").strip()
+        document_type = str(source.get('document_type') or '').strip()
         source_document = str(source.get("source_document") or "").strip()
 
-        if not all([domain, module, knowledge_name, version, source_document]):
+        if not all([domain, module, knowledge_name, document_type, version, source_document]):
             raise ImpactAnalysisError(
                 "ANALYSIS_VALIDATION_FAILED",
-                "Source Domain, Module, Knowledge, Version, and Source Document are all required.",
+                "Source Domain, Module, Knowledge, Document Type, Version, and Source Document are all required.",
             )
 
         items = self.metadata.list_items_for_knowledge(domain, module, knowledge_name)
 
-        match = next(
-            (
+        matches = [
                 item for item in items
                 if str(item.get("version") or "") == version
+                and item.get('document_type') == document_type
                 and item.get("file_name") == source_document
-            ),
-            None,
-        )
+        ]
+        if len(matches)>1:
+            raise ImpactAnalysisError("SOURCE_AMBIGUOUS", "Multiple sources have this name in the selected document version. Select a unique source.")
+        match = matches[0] if matches else None
 
         if match is None:
             raise ImpactAnalysisError(
@@ -179,7 +181,8 @@ class ImpactAnalysisService:
 
         # Fill in document_type from the resolved record rather than
         # trusting whatever the client happened to send.
-        source["document_type"] = source.get("document_type") or match.get("document_type") or ""
+        source['document_type'] = match.get('document_type') or ''
+        source['document_version_id'] = match.get('document_version_id')
 
         # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: attach the stable knowledge_items
         # row id alongside the canonical hierarchy strings above. The match
@@ -201,6 +204,7 @@ class ImpactAnalysisService:
         has_vectors = self.vector_store.has_source_vectors(
             domain=domain, module=module, knowledge_name=knowledge_name,
             version=version, file_name=source_document,
+            document_type=document_type, document_version_id=match.get('document_version_id'),
         )
 
         if not has_vectors:
@@ -323,7 +327,7 @@ class ImpactAnalysisService:
             total_target_chunks += len(target_documents)
 
             for meta in target_metadata:
-                matched_docs.add((meta.get("file_name"), meta.get("knowledge_name"), meta.get("version")))
+                matched_docs.add((meta.get("knowledge_id"), meta.get("file_name"), meta.get("knowledge_name"), meta.get("document_type"), meta.get("version")))
 
             target_context = self.context_builder.build(
                 target_documents, target_metadata,
@@ -446,6 +450,8 @@ class ImpactAnalysisService:
             module=source.get("module"),
             knowledge_name=source.get("knowledge_name"),
             version=source.get("version"),
+            document_type=source.get('document_type'),
+            document_version_id=source.get('document_version_id'),
             source_file_names=[source.get("source_document")],
             top_k=self.SOURCE_TOP_K,
             rerank_top=self.SOURCE_RERANK_TOP,
@@ -622,7 +628,7 @@ class ImpactAnalysisService:
 
             for doc, meta in zip(result.get("documents", []), result.get("metadata", [])):
 
-                key = (meta.get("file_name"), meta.get("chunk_number"), doc[:200])
+                key = (meta.get("knowledge_id"), meta.get("document_version_id"), meta.get("document_type"), meta.get("version"), meta.get("file_name"), meta.get("chunk_number"), doc[:200])
 
                 if key in seen_keys:
                     continue
@@ -640,7 +646,7 @@ class ImpactAnalysisService:
 
         for meta in metadata_list:
 
-            key = (meta.get("file_name"), meta.get("knowledge_name"), meta.get("version"))
+            key = (meta.get("knowledge_id"), meta.get("file_name"), meta.get("knowledge_name"), meta.get("document_type"), meta.get("version"))
 
             if key in seen:
                 continue
@@ -685,7 +691,8 @@ class ImpactAnalysisService:
             if not name or not version:
                 continue
 
-            by_knowledge.setdefault(name, set()).add(version)
+            identity=(meta.get('domain'),meta.get('module'),name,meta.get('document_type'))
+            by_knowledge.setdefault(identity, set()).add(version)
 
         return any(len(versions) > 1 for versions in by_knowledge.values())
 

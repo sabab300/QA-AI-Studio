@@ -6,6 +6,7 @@ Version: 6.0
 """
 
 import time
+import json
 
 from Core.logger import Logger
 from Core.retrieval_engine import RetrievalEngine
@@ -51,10 +52,12 @@ class RAGEngine:
 
         version,
         source_file_names=None,
+        document_type=None,
+        document_version_id=None,
 
     ):
 
-        return "|".join([
+        return json.dumps([
 
             str(question).lower().strip(),
 
@@ -67,7 +70,7 @@ class RAGEngine:
             str(knowledge_name),
 
             str(version),
-            ",".join(sorted(source_file_names or []))
+            sorted(source_file_names or []), str(document_type), document_version_id,
 
         ])
 
@@ -93,6 +96,8 @@ class RAGEngine:
 
         version=None,
         source_file_names=None,
+        document_type=None,
+        document_version_id=None,
 
     ):
 
@@ -124,6 +129,8 @@ class RAGEngine:
 
                 version,
                 source_file_names,
+                document_type,
+                document_version_id,
 
             )
 
@@ -167,6 +174,8 @@ class RAGEngine:
 
                 version=version,
                 source_file_names=source_file_names,
+                document_type=document_type,
+                document_version_id=document_version_id,
 
             )
 
@@ -384,7 +393,9 @@ class RAGEngine:
 
         knowledge_name=None,
 
-        version=None
+        version=None,
+        document_type=None,
+        document_version_id=None
 
     ):
 
@@ -412,7 +423,9 @@ class RAGEngine:
 
             knowledge_name=knowledge_name,
 
-            version=version
+            version=version,
+            document_type=document_type,
+            document_version_id=document_version_id
 
         )
 

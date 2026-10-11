@@ -17,36 +17,16 @@ class KnowledgeTree:
     # --------------------------------------------------
 
     def build(self):
-
-        tree = {}
-
-        domains = self.metadata.get_domains()
-
-        for domain in domains:
-
-            tree[domain] = {}
-
-            modules = self.metadata.get_modules(domain)
-
-            for module in modules:
-
-                tree[domain][module] = {}
-
-                knowledge_names = self.metadata.get_knowledge_names(
-                    domain,
-                    module
-                )
-
-                for knowledge_name in knowledge_names:
-
-                    versions = self.metadata.get_versions(
-                        domain,
-                        module,
-                        knowledge_name
-                    )
-
-                    tree[domain][module][knowledge_name] = versions
-
+        from pathlib import Path
+        from Shared.hierarchy_values import canonical_source_type
+        tree={}
+        for row in self.metadata.list_all():
+            filename=row.get('file_name') or row.get('source_location')
+            if not filename:continue
+            values=[row.get('domain'),row.get('module'),row.get('knowledge_name'),row.get('document_type'),row.get('version'),
+                canonical_source_type(row.get('source_type')),row.get('source_file_id') or Path(filename).stem,filename]
+            node=tree
+            for value in values:node=node.setdefault(str(value or 'Unspecified'),{})
         return tree
 
     # --------------------------------------------------
@@ -55,18 +35,7 @@ class KnowledgeTree:
 
         tree = self.build()
 
-        for domain, modules in tree.items():
-
-            print(domain)
-
-            for module, knowledge in modules.items():
-
-                print(f"  └── {module}")
-
-                for name, versions in knowledge.items():
-
-                    print(f"      └── {name}")
-
-                    for version in versions:
-
-                        print(f"          └── {version}")
+        def show(nodes,depth=0):
+            for name,children in nodes.items():
+                print('  '*depth+name);show(children,depth+1)
+        show(tree)

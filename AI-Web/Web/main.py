@@ -51,10 +51,12 @@ frontend origin(s) — flagged again in the roadmap document.
 """
 
 from pathlib import Path
+import sqlite3
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from Core.user_repository import UserRepository
 from Core.automation_execution_repository import AutomationExecutionRepository
@@ -100,6 +102,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(sqlite3.IntegrityError)
+async def database_conflict(request,error):
+    # Expected ownership/uniqueness/dependency failures are application errors,
+    # not HTML 500 pages or SQL/credential-bearing traceback text.
+    return JSONResponse(status_code=409,content={'detail':'The selected hierarchy conflicts with persisted ownership or dependent records. Refresh the hierarchy and review the selection.'})
+
+
+@app.exception_handler(Exception)
+async def unexpected_api_error(request,error):
+    Logger.get_logger().error('Unexpected API error on %s: %s',request.url.path,type(error).__name__)
+    return JSONResponse(status_code=500,content={'detail':'The server could not complete this operation. No successful result is claimed; review the server diagnostics.'})
 
 
 @app.on_event("startup")

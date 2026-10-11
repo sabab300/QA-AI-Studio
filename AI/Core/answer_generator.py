@@ -32,7 +32,9 @@ class AnswerGenerator:
 
         knowledge_name=None,
 
-        version=None
+        version=None,
+        document_type=None,
+        document_version_id=None
 
     ):
 
@@ -54,7 +56,9 @@ class AnswerGenerator:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                document_type=document_type,
+                document_version_id=document_version_id
 
             )
 

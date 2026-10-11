@@ -10,6 +10,7 @@ from Core.knowledge_web_repository import KnowledgeRepository
 from Core.logger import Logger
 from Core.test_case_repository import TestCaseRepository
 from Database.db_manager import DatabaseManager
+from Shared.document_hierarchy import DocumentHierarchy
 
 _JOBS_LOCK = threading.RLock()
 
@@ -136,22 +137,31 @@ class QaEngineeringWeb:
         return None
 
     def start_generation(self, payload):
-        self.preflight_generation(payload)
+        source = self.preflight_generation(payload)
+        payload = dict(payload)
         job_id = uuid.uuid4().hex
         now = datetime.now().isoformat()
         logs = [self._event("Preparing", "Generation request accepted.")]
         conn = self.db.get_connection()
-        conn.execute("""
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            owner = DocumentHierarchy(conn).resolve_source(source['id'])
+            payload['document_version_id'] = owner['document_version_id']
+            conn.execute("""
             INSERT INTO qa_generation_jobs
             (job_id,status,domain,module,knowledge_name,version,requested_count,
-             started_at,message,payload_json,logs_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             started_at,message,payload_json,logs_json,document_version_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """, (job_id, "queued", payload.get("domain"), payload.get("module"),
                 payload.get("knowledge_name"), payload.get("version"),
                 str(payload.get("number_of_cases", "all")), now, "Queued",
-                json.dumps(payload), json.dumps(logs)))
-        conn.commit()
-        conn.close()
+                json.dumps(payload), json.dumps(logs), owner['document_version_id']))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         threading.Thread(target=self._generate, args=(job_id, payload), daemon=True).start()
         return {"job_id": job_id, "status": "queued"}
 
@@ -187,6 +197,7 @@ class QaEngineeringWeb:
             domain=source.get("domain"), module=source.get("module"),
             knowledge_name=source.get("knowledge_name"), version=source.get("version"),
             file_name=source.get("file_name"),
+            document_type=source.get('document_type'), document_version_id=source.get('document_version_id'),
         )
         if not has_vectors:
             self.logger.warning(
@@ -241,6 +252,7 @@ class QaEngineeringWeb:
                 source_knowledge_ids=payload.get("knowledge_source_ids"),
                 test_case_document_name=payload.get("test_case_document_name"),
                 document_type=payload.get("document_type"),
+                document_version_id=payload.get("document_version_id"),
             )
             conn = self.db.get_connection()
             conn.execute(
@@ -282,6 +294,7 @@ class QaEngineeringWeb:
                     number_of_cases=batch_size, domain=payload["domain"],
                     module=payload["module"], knowledge_name=payload["knowledge_name"],
                     version=payload.get("version"), test_types=payload["test_types"],
+                    document_type=payload.get('document_type'),
                     source_file_names=source_names,
                     output_formats=[], persist=False, create_exports=False,
                 )

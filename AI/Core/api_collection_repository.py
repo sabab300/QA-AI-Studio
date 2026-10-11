@@ -732,9 +732,9 @@ class ApiCollectionRepository:
             """
             SELECT id FROM knowledge_items
             WHERE domain = ? AND module = ? AND knowledge_name = ?
-              AND version = ? AND source_type = ?
+              AND document_type = ? AND version = ? AND source_type = ?
             """,
-            (domain, module, knowledge_name, version,
+            (domain, module, knowledge_name, API_COLLECTION_DOCUMENT_TYPE, version,
              API_COLLECTION_SOURCE_TYPE),
         )
 
@@ -756,7 +756,7 @@ class ApiCollectionRepository:
 
         module_id = metadata_manager.get_or_create_module(domain, module)
 
-        knowledge_path = f"{domain}/{module}/{knowledge_name}/{version}"
+        knowledge_path = f"{domain}/{module}/{knowledge_name}/{API_COLLECTION_DOCUMENT_TYPE}/{version}"
 
         import hashlib
 
@@ -962,7 +962,7 @@ class ApiCollectionRepository:
 
         return True
 
-    def get_endpoints_for_scope(self, domain, module, knowledge_name):
+    def get_endpoints_for_scope(self, domain, module, knowledge_name, document_version_id=None):
         """
         Returns every endpoint belonging to any active collection
         imported under this Domain/Module/Knowledge Name — this is
@@ -985,10 +985,11 @@ class ApiCollectionRepository:
             JOIN api_collections c ON c.id = e.collection_id
             WHERE c.status = 'Active' AND e.status = 'Active'
               AND c.domain = ? AND c.module = ?
-              AND c.knowledge_name = ?
+                AND c.knowledge_name = ?
+                AND (? IS NULL OR c.document_version_id = ?)
             ORDER BY e.id ASC
             """,
-            (domain or "", module or "", knowledge_name or ""),
+            (domain or "", module or "", knowledge_name or "", document_version_id, document_version_id),
         )
 
         rows = cursor.fetchall()

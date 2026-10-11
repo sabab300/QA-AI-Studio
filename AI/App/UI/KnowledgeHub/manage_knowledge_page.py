@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
+    QInputDialog,
 )
 
 from Core.metadata_manager import MetadataManager
@@ -82,6 +83,7 @@ ROW_ID_ROLE = Qt.UserRole
 # regular file leaf, which uses ROW_ID_ROLE instead. A node only
 # ever carries one of the two roles.
 ENDPOINT_ID_ROLE = Qt.UserRole + 1
+HIERARCHY_NODE_ROLE = Qt.UserRole + 2
 
 HTTP_METHODS = [
     "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
@@ -247,13 +249,10 @@ class EditKnowledgeDialog(QDialog):
 
         grid.addWidget(self.knowledge_name, 3, 1)
 
-        grid.addWidget(QLabel("Version"), 4, 0)
-
-        grid.addWidget(self.version, 4, 1)
-
-        grid.addWidget(QLabel("Document Type"), 5, 0)
-
-        grid.addWidget(self.document_type, 5, 1)
+        grid.addWidget(QLabel("Document Type"), 4, 0)
+        grid.addWidget(self.document_type, 4, 1)
+        grid.addWidget(QLabel("Version"), 5, 0)
+        grid.addWidget(self.version, 5, 1)
 
         grid.addWidget(QLabel("Tags"), 6, 0)
 
@@ -343,27 +342,32 @@ class EditKnowledgeDialog(QDialog):
             return
 
         try:
-
-            self.metadata_manager.ensure_domain_and_module(
-                domain, module
-            )
-
-        except Exception:
-
-            pass
-
-        try:
-
-            self.metadata_manager.update_knowledge_item(
-                self.row["id"],
-                domain=domain,
-                module=module,
-                knowledge_name=knowledge_name,
-                version=self.version.text().strip() or "1.0",
-                document_type=self.document_type.currentText(),
-                tags=self.tags.text().strip(),
-                summary=self.summary.toPlainText().strip(),
-            )
+            fields={'domain':domain,'module':module,'knowledge_name':knowledge_name,
+                'document_type':self.document_type.currentText(),'version':self.version.text().strip() or '1.0'}
+            reviewed={'summary':self.summary.toPlainText().strip(),
+                'tags':[tag.strip() for tag in self.tags.text().split(',') if tag.strip()]}
+            if any(str(self.row.get(key) or '')!=str(value) for key,value in fields.items()):
+                from Shared.hierarchy_administration import HierarchyAdministration
+                from Shared.source_administration import source_vector_ids
+                source_id=self.row.get('source_file_id')
+                if not source_id:raise ValueError('Legacy source needs managed-path adoption before hierarchy reassignment. No hierarchy was changed.')
+                store=VectorStore();central=RepositoryManager().central
+                service=HierarchyAdministration(self.metadata_manager.db,central,store,lambda row:source_vector_ids(store,row))
+                context={key:self.row.get(key) for key in ('domain','module','knowledge_name','document_type','version','source_type','source_file_id')}
+                node={'type':'source_file','name':source_id,'context':context}
+                destination=dict(fields,source_type=self.row.get('source_type') or 'Files')
+                preview=service.change(node,destination=destination,validate_only=True)
+                if QMessageBox.question(self,'Confirm source hierarchy move','Move this Source Document and '+str(preview['impact_count'])+' source file(s) with all dependents?')!=QMessageBox.Yes:return
+                service.change(node,destination=destination,item_updates={self.row['id']:reviewed})
+            else:
+                store=VectorStore()
+                from Shared.source_administration import source_vector_ids
+                ids=source_vector_ids(store,self.row);snapshot=store.snapshot(ids)
+                try:
+                    store.update_metadata(ids,{'summary':reviewed['summary'],'tags':', '.join(reviewed['tags'])})
+                    self.metadata_manager.update_knowledge_item(self.row['id'],summary=reviewed['summary'],tags=json.dumps(reviewed['tags']))
+                except Exception:
+                    store.restore_metadata(snapshot);raise
 
             self.accept()
 
@@ -805,126 +809,44 @@ class ManageKnowledgePage(QWidget):
     # ======================================================
 
     def populate_tree(self, expand=False):
-
+        from pathlib import Path
+        from Shared.hierarchy_values import canonical_source_type
         self.tree.clear()
-
-        # domain -> module -> knowledge_name -> version -> document_type -> [rows]
-        grouped = {}
-
+        grouped={}
+        fields=('domain','module','knowledge_name','document_type','version','source_type','source_file_id')
+        kinds=('domain','module','knowledge','document_type','version','source_type','source_file')
         for row in self.rows:
+            filename=row['file_name'] or row.get('source_location')
+            if not filename:
+                Logger.get_logger().warning('Knowledge source id=%s has no display filename; row omitted.',row['id'])
+                continue
+            values=[row['domain'] or 'Unspecified',row['module'] or 'Unspecified',row['knowledge_name'] or 'Unspecified',
+                row['document_type'] or 'Other',row['version'] or 'Unspecified',canonical_source_type(row['source_type']),
+                row.get('source_file_id') or Path(filename).stem]
+            current=grouped
+            for value in values:
+                entry=current.setdefault(value,{'rows':[],'children':{}})
+                entry['rows'].append(row);current=entry['children']
 
-            domain = row["domain"] or "Unspecified"
-
-            module = row["module"] or "Unspecified"
-
-            knowledge_name = row["knowledge_name"] or "Unspecified"
-
-            version = row["version"] or "Unspecified"
-
-            doc_type = row["document_type"] or "Unspecified"
-
-            grouped.setdefault(domain, {}) \
-                   .setdefault(module, {}) \
-                   .setdefault(knowledge_name, {}) \
-                   .setdefault(version, {}) \
-                   .setdefault(doc_type, []) \
-                   .append(row)
-
-        for domain, modules in sorted(grouped.items()):
-
-            domain_count = self._count_files(modules)
-
-            domain_item = QTreeWidgetItem(
-                [f"{domain} ({domain_count})", "", ""]
-            )
-
-            self.tree.addTopLevelItem(domain_item)
-
-            for module, knowledge_names in sorted(modules.items()):
-
-                module_count = self._count_files(knowledge_names)
-
-                module_item = QTreeWidgetItem(
-                    [f"{module} ({module_count})", "", ""]
-                )
-
-                domain_item.addChild(module_item)
-
-                for kn, versions in sorted(knowledge_names.items()):
-
-                    kn_count = self._count_files(versions)
-
-                    kn_item = QTreeWidgetItem(
-                        [f"{kn} ({kn_count})", "", ""]
-                    )
-
-                    module_item.addChild(kn_item)
-
-                    for version, doc_types in sorted(versions.items()):
-
-                        version_count = sum(
-                            len(files) for files in doc_types.values()
-                        )
-
-                        version_item = QTreeWidgetItem(
-                            [f"v{version} ({version_count})", "", ""]
-                        )
-
-                        kn_item.addChild(version_item)
-
-                        for doc_type, file_rows in sorted(doc_types.items()):
-
-                            doc_item = QTreeWidgetItem(
-                                [f"{doc_type} ({len(file_rows)})", "", ""]
-                            )
-
-                            version_item.addChild(doc_item)
-
-                            for file_row in file_rows:
-
-                                file_item = QTreeWidgetItem([
-                                    file_row["file_name"] or "(unnamed file)",
-                                    file_row["status"] or "",
-                                    str(file_row["confidence"] or ""),
-                                ])
-
-                                file_item.setData(
-                                    0, ROW_ID_ROLE, file_row["id"]
-                                )
-
-                                doc_item.addChild(file_item)
-
-                                # A row filed here by AI Smart Upload's
-                                # guided URL capture has no real file
-                                # behind it — nest the captured Steps/
-                                # Fields/Locators under it instead.
-
-                                if file_row["source_type"] == CAPTURED_FLOW_SOURCE_TYPE:
-
-                                    self._populate_captured_flow_children(
-                                        file_item, file_row["id"]
-                                    )
-
-                                # Same idea, for an imported Postman
-                                # Collection (QA Automation -> API
-                                # Upload) — nest its real endpoints
-                                # under this node instead of a file
-                                # preview, per the unified-hierarchy
-                                # requirement.
-                                elif file_row["source_type"] == API_COLLECTION_SOURCE_TYPE:
-
-                                    self._populate_api_collection_children(
-                                        file_item, file_row["id"]
-                                    )
-
-        if expand:
-
-            self.tree.expandAll()
-
-        else:
-
-            self.tree.expandToDepth(0)
-
+        def populate(parent,groups,level,context):
+            for value,entry in sorted(groups.items()):
+                child_context=dict(context);child_context[fields[level]]=value
+                label=('v'+value) if level==4 else value
+                item=QTreeWidgetItem([label+' ('+str(len(entry['rows']))+')','',''])
+                item.setData(0,HIERARCHY_NODE_ROLE,{'type':kinds[level],'name':value,'context':child_context})
+                if parent is None:self.tree.addTopLevelItem(item)
+                else:parent.addChild(item)
+                if level<6:
+                    populate(item,entry['children'],level+1,child_context)
+                else:
+                    for row in entry['rows']:
+                        file_item=QTreeWidgetItem([row['file_name'] or row.get('source_location'),row['status'] or '',str(row['confidence'] or '')])
+                        file_item.setData(0,ROW_ID_ROLE,row['id']);item.addChild(file_item)
+                        if row['source_type']==CAPTURED_FLOW_SOURCE_TYPE:self._populate_captured_flow_children(file_item,row['id'])
+                        elif row['source_type']==API_COLLECTION_SOURCE_TYPE:self._populate_api_collection_children(file_item,row['id'])
+        populate(None,grouped,0,{})
+        if expand:self.tree.expandAll()
+        else:self.tree.expandToDepth(0)
         self.update_button_states()
 
     def _populate_captured_flow_children(self, file_item, knowledge_item_id):
@@ -1090,22 +1012,58 @@ class ManageKnowledgePage(QWidget):
         has_file_selected = self.selected_item() is not None
 
         has_endpoint_selected = self.selected_endpoint_id() is not None
+        has_group_selected=self.selected_group_node() is not None
 
-        self.view_btn.setEnabled(has_file_selected)
+        self.view_btn.setEnabled(has_file_selected or has_group_selected)
 
-        self.edit_btn.setEnabled(has_file_selected or has_endpoint_selected)
+        self.edit_btn.setEnabled(has_file_selected or has_endpoint_selected or has_group_selected)
 
         self.run_api_btn.setEnabled(has_endpoint_selected)
 
         self.version_btn.setEnabled(has_file_selected)
 
-        self.delete_btn.setEnabled(has_file_selected)
+        self.delete_btn.setEnabled(has_file_selected or has_group_selected)
+
+    def selected_group_node(self):
+        selected=self.tree.selectedItems()
+        return selected[0].data(0,HIERARCHY_NODE_ROLE) if selected else None
+
+    def _group_administration(self):
+        from Shared.hierarchy_administration import HierarchyAdministration
+        from Shared.source_administration import source_vector_ids
+        from Core.retrieval_cache import RetrievalCache
+        return HierarchyAdministration(self.manager.db,self.repository.central,self.vector_store,
+            lambda row:source_vector_ids(self.vector_store,row),RetrievalCache().clear)
+
+    def _group_action(self,action,node):
+        try:
+            if action=='detail':
+                data={'Hierarchy':node['context'],'Name':node['name']}
+                from Shared.hierarchy_values import canonical_source_type
+                matches=[row for row in self.rows if all((canonical_source_type(row.get(key))==canonical_source_type(value) if key=='source_type'
+                    else str(row.get(key) or '')==str(value)) for key,value in node['context'].items())]
+                data['Source count']=len(matches)
+                data['Managed paths']=[row.get('repository_relative_path') or row.get('repository_path') for row in matches]
+                KnowledgeDetailDialog(data,self).exec();return
+            if action=='edit':
+                value,accepted=QInputDialog.getText(self,'Rename hierarchy','New '+node['type'].replace('_',' ')+' value:',text=node['name'])
+                if not accepted:return
+                result=self._group_administration().change(node,value=value,validate_only=True)
+                if QMessageBox.question(self,'Confirm hierarchy rename','Rename this node and '+str(result['impact_count'])+' source(s)? All descendant ownership IDs are preserved.')!=QMessageBox.Yes:return
+                self._group_administration().change(node,value=value)
+            else:
+                if QMessageBox.question(self,'Delete hierarchy','Delete '+node['name']+'? Existing child data will block deletion.')!=QMessageBox.Yes:return
+                self._group_administration().delete_empty(node)
+            self.load_data();self.knowledge_changed.emit()
+        except Exception as error:QMessageBox.warning(self,'Hierarchy action blocked',str(error))
 
     # ======================================================
     # Details
     # ======================================================
 
     def view_details(self):
+        node=self.selected_group_node()
+        if node:return self._group_action('detail',node)
 
         row = self.selected_item()
 
@@ -1136,6 +1094,8 @@ class ManageKnowledgePage(QWidget):
     # ======================================================
 
     def edit_selected(self):
+        node=self.selected_group_node()
+        if node:return self._group_action('edit',node)
 
         endpoint_id = self.selected_endpoint_id()
 
@@ -1308,6 +1268,8 @@ class ManageKnowledgePage(QWidget):
     # ======================================================
 
     def delete_selected(self):
+        node=self.selected_group_node()
+        if node:return self._group_action('delete',node)
 
         row = self.selected_item()
 
@@ -1328,17 +1290,8 @@ class ManageKnowledgePage(QWidget):
 
         try:
 
-            self.repository.delete_knowledge(
-                row["domain"],
-                row["module"],
-                row["knowledge_name"],
-            )
-
-            self.vector_store.delete_by_knowledge_name(
-                row["knowledge_name"]
-            )
-
-            self.manager.delete(row["id"])
+            from Shared.source_administration import delete_source
+            delete_source(self.manager.db,self.repository.central,self.vector_store,row['id'])
 
             QMessageBox.information(
                 self, "QA AI Studio", "Knowledge deleted."

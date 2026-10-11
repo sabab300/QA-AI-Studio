@@ -14,6 +14,8 @@ import json
 import sqlite3
 
 from Database.db_manager import DatabaseManager
+from Shared.document_hierarchy import DocumentHierarchy
+from Shared.hierarchy_values import canonical_source_type
 
 
 class MetadataManager:
@@ -21,6 +23,16 @@ class MetadataManager:
     def __init__(self):
 
         self.db = DatabaseManager()
+
+    def get_document_context(self, knowledge_id):
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute('SELECT document_version_id FROM knowledge_items WHERE id=?',(int(knowledge_id),)).fetchone()
+            if not row or row[0] is None:
+                raise ValueError('Source has no canonical Document Type/version owner.')
+            return DocumentHierarchy(conn).context(row[0])
+        finally:
+            conn.close()
 
 
     # --------------------------------------------------
@@ -34,8 +46,10 @@ class MetadataManager:
         knowledge_name,
         version,
         file_info,
-        analysis=None
+        analysis=None,
+        source_type='Files'
     ):
+        source_type=canonical_source_type(source_type)
 
         domain_id = self.get_or_create_domain(domain)
 
@@ -86,6 +100,11 @@ class MetadataManager:
             ""
         )
 
+        document_type = document_type or 'Other'
+        hierarchy = DocumentHierarchy(conn)
+        hierarchy.ensure_schema()
+        ownership = hierarchy.ensure_context(domain_id, module_id, knowledge_name, document_type or 'Other', version)
+
 
         cursor.execute(
             """
@@ -118,13 +137,14 @@ class MetadataManager:
                 domain_id,
                 module_id,
                 source_file_id,
-                repository_relative_path
+                repository_relative_path,
+                document_version_id
             )
             VALUES
             (
                 ?,?,?,?,?,?,?,?,?,?,
                 ?,?,?,?,?,?,?,?,?,?,
-                ?,?,?,?,?,?,?,?
+                ?,?,?,?,?,?,?,?,?
             )
             """,
             (
@@ -132,7 +152,7 @@ class MetadataManager:
                 module,
                 knowledge_name,
                 version,
-                f"{domain}/{module}/{knowledge_name}/{version}",
+                f"{domain}/{module}/{knowledge_name}/{document_type or 'Other'}/{version}",
 
                 file_info["file_name"],
 
@@ -148,7 +168,7 @@ class MetadataManager:
 
                 "DOCUMENT",
 
-                "FILE",
+                source_type,
 
                 summary,
 
@@ -176,7 +196,8 @@ class MetadataManager:
 
                 module_id,
                 file_info.get("source_file_id"),
-                file_info.get("repository_relative_path", "")
+                file_info.get("repository_relative_path", ""),
+                ownership['document_version_id']
             )
         )
 
@@ -192,17 +213,19 @@ class MetadataManager:
                 version,
                 sha256,
                 repository_path,
-                created_date
+                created_date,
+                document_version_id
             )
             VALUES
-            (?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?)
             """,
             (
                 knowledge_id,
                 version,
                 file_info["sha256"],
                 file_info["repository_path"],
-                now
+                now,
+                ownership['document_version_id']
             )
         )
 
@@ -482,21 +505,23 @@ class MetadataManager:
 
         for row in rows:
 
-            domain = row[1]
-            module = row[2]
-            knowledge = row[3]
-            version = row[4]
+            domain = row['domain']
+            module = row['module']
+            knowledge = row['knowledge_name']
+            document_type = row['document_type'] or 'Other'
+            version = row['version']
 
             tree.setdefault(domain, {})
             tree[domain].setdefault(module, {})
             tree[domain][module].setdefault(
                 knowledge,
-                []
+                {}
             )
 
-            if version not in tree[domain][module][knowledge]:
+            tree[domain][module][knowledge].setdefault(document_type,[])
+            if version not in tree[domain][module][knowledge][document_type]:
 
-                tree[domain][module][knowledge].append(
+                tree[domain][module][knowledge][document_type].append(
                     version
                 )
 
@@ -1274,6 +1299,10 @@ class MetadataManager:
 
             return False
 
+        current = self.get(knowledge_id)
+        if current is None:
+            return False
+
         # Keep domain_id/module_id in sync if the editable text
         # fields changed - every write path re-resolves them, so
         # they never silently drift from the domain/module text.
@@ -1298,6 +1327,18 @@ class MetadataManager:
         conn = self.db.get_connection()
  
         cursor = conn.cursor()
+
+        hierarchy = DocumentHierarchy(conn)
+        hierarchy.ensure_schema()
+        ownership = hierarchy.ensure_context(
+            updates.get('domain_id', current['domain_id']) or self.get_or_create_domain(current['domain']),
+            updates.get('module_id', current['module_id']) or self.get_or_create_module(current['domain'],current['module']),
+            updates.get('knowledge_name',current['knowledge_name']),
+            updates.get('document_type',current['document_type']) or 'Other',
+            updates.get('version',current['version']),
+        )
+        updates['document_version_id'] = ownership['document_version_id']
+        updates['knowledge_path'] = '/'.join(str(updates.get(key,current[key]) or '') for key in ('domain','module','knowledge_name','document_type','version'))
  
         set_clause = ", ".join(
             f"{key}=?" for key in updates.keys()

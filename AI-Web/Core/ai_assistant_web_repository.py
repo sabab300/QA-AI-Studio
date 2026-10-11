@@ -31,7 +31,7 @@ class AiAssistantRepository:
 
         self.orchestrator = AIOrchestrator()
 
-    def ask(self, prompt, session_id="default", domain=None, module=None, knowledge_name=None, version=None):
+    def ask(self, prompt, session_id="default", domain=None, module=None, knowledge_name=None, version=None, document_type=None, document_version_id=None):
 
         if not (prompt or "").strip():
 
@@ -40,6 +40,7 @@ class AiAssistantRepository:
         return self.orchestrator.process(
             prompt=prompt, session_id=session_id, domain=domain,
             module=module, knowledge_name=knowledge_name, version=version,
+            document_type=document_type,document_version_id=document_version_id,
         )
 
     def history(self, session_id="default", limit=10):

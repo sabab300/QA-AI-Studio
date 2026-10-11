@@ -117,7 +117,9 @@ class TestCaseGenerator:
         persist=True,
         create_exports=True,
 
-        output_folder="Output/TestCases"
+        output_folder="Output/TestCases",
+        document_type=None,
+        document_version_id=None,
 
     ):
 
@@ -149,6 +151,8 @@ class TestCaseGenerator:
 
                 version=version,
                 source_file_names=source_file_names,
+                document_type=document_type,
+                document_version_id=document_version_id,
 
             )
 

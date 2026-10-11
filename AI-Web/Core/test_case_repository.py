@@ -41,6 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from Shared.central_repository import CentralRepository
+from Shared.document_hierarchy import DocumentHierarchy
 
 
 class TestCaseRepository:
@@ -338,6 +339,7 @@ class TestCaseRepository:
         self._backfill_canonical_ids(cursor)
         self._backfill_source_relations(cursor)
 
+        DocumentHierarchy(conn).ensure_schema()
         conn.commit()
 
         conn.close()
@@ -517,6 +519,7 @@ class TestCaseRepository:
         document_type=None,
         source_type=None,
         force_direct_insert=False,
+        document_version_id=None,
 
     ):
 
@@ -524,11 +527,22 @@ class TestCaseRepository:
 
             return []
 
+        # Desktop delegates to this canonical repository. Resolve its complete
+        # typed context to real sources rather than reverting to unowned rows.
+        if not source_knowledge_ids and document_type and version:
+            scoped=self.db.get_connection()
+            try:
+                source_knowledge_ids=[row[0] for row in scoped.execute('SELECT id FROM knowledge_items WHERE domain=? AND module=? AND knowledge_name=? AND document_type=? AND version=? ORDER BY id',
+                    (domain,module,knowledge_name,document_type,version)).fetchall()]
+            finally:scoped.close()
+            if not source_knowledge_ids:raise ValueError('No Knowledge source exists in the selected Document Type/version.')
+
         scope = {
             "domain": domain, "module": module, "knowledge_name": knowledge_name,
             "version": version or "", "document_type": document_type or "",
             "source_type": source_type or "", "source_knowledge_ids": source_knowledge_ids or [],
             "test_case_document_name": test_case_document_name or "",
+            "document_version_id":document_version_id,
         }
         # QA-AI-STUDIO-API-COLLECTION-KNOWLEDGE-QA-ENGINEERING-API-AUTOMATION-FINAL-FIX
         # item 6/7: review_save() requires a real knowledge_versions
@@ -569,6 +583,32 @@ class TestCaseRepository:
 
         saved_ids = []
 
+        direct_sources = []
+        if source_knowledge_ids:
+            marks = ",".join("?" for _ in source_knowledge_ids)
+            cursor.execute(
+                f"SELECT * FROM knowledge_items WHERE id IN ({marks}) ORDER BY id",
+                [int(value) for value in source_knowledge_ids],
+            )
+            columns = [item[0] for item in cursor.description]
+            direct_sources = [
+                item if isinstance(item, dict) else dict(zip(columns, item))
+                for item in cursor.fetchall()
+            ]
+
+        document_version_id = None
+        if source_knowledge_ids:
+            try:
+                if {item['id'] for item in direct_sources} != {int(value) for value in source_knowledge_ids}:
+                    raise ValueError('Every selected Knowledge source must exist.')
+                self._validate_scope_sources(scope, direct_sources)
+                resolved_owner = self._bind_source_owner(cursor, direct_sources)
+                if document_version_id is not None and int(document_version_id)!=resolved_owner:
+                    raise ValueError('Selected document version does not match the source owner.')
+                document_version_id=resolved_owner
+            except Exception:
+                conn.rollback(); conn.close(); raise
+
         for row in rows:
 
             tc_number = f"TC{next_number:03d}"
@@ -589,7 +629,7 @@ class TestCaseRepository:
                         created_date, modified_date
                     )
                     VALUES
-                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?, ?,?)
+                    (?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?, 'Manual','None','Not Run', ?,?,?,?,?, ?,?)
                     """,
                     (
                         tc_number,
@@ -616,7 +656,11 @@ class TestCaseRepository:
                     )
                 )
 
-                saved_ids.append(cursor.lastrowid)
+                test_case_id = cursor.lastrowid
+                if document_version_id is not None:
+                    cursor.execute('UPDATE test_cases SET document_version_id=? WHERE id=?', (document_version_id,test_case_id))
+                    self._replace_sources(cursor,test_case_id,direct_sources)
+                saved_ids.append(test_case_id)
 
                 next_number += 1
 
@@ -691,6 +735,9 @@ class TestCaseRepository:
         inserted, updated, deleted, created, staged = [], [], [], [], []
         try:
             cursor.execute("BEGIN IMMEDIATE")
+            document_version_id = self._bind_source_owner(cursor, sources)
+            if scope.get('document_version_id') is not None and int(scope['document_version_id'])!=document_version_id:
+                raise ValueError('Selected document version does not match the source owner.')
             version_row = cursor.execute(
                 "SELECT id FROM knowledge_versions WHERE knowledge_item_id=? AND version=? ORDER BY id LIMIT 1",
                 (sources[0]["id"], scope.get("version") or ""),
@@ -719,6 +766,7 @@ class TestCaseRepository:
                             scope.get("test_case_document_name") or "",scope.get("document_type") or sources[0].get("document_type") or "",
                             self._combined_source_type(sources),now,now))
                     test_case_id = cursor.lastrowid; inserted.append(test_case_id)
+                    cursor.execute('UPDATE test_cases SET document_version_id=? WHERE id=?', (document_version_id,test_case_id))
                     self._replace_sources(cursor, test_case_id, sources)
                     artifact = self._write_artifact(dict(values, id=test_case_id, tc_id=tc_id, **scope), sources)
                     created.append(artifact)
@@ -775,12 +823,23 @@ class TestCaseRepository:
 
     @staticmethod
     def _validate_scope_sources(scope, sources):
+        identities={tuple(str(source.get(key) or '') for key in ('domain','module','knowledge_name','document_type','version')) for source in sources}
+        if len(identities)>1:
+            raise ValueError('Selected sources must belong to one Document Type and Version.')
         for source in sources:
             for key in ("domain", "module", "knowledge_name", "version", "document_type"):
                 expected = str(scope.get(key) or "")
                 actual = str(source.get(key) or "")
                 if expected and actual != expected:
                     raise ValueError(f"Selected source {source['id']} does not match {key}.")
+
+    @staticmethod
+    def _bind_source_owner(cursor, sources):
+        hierarchy=DocumentHierarchy(cursor.connection)
+        owners={hierarchy.resolve_source(source['id'])['document_version_id'] for source in sources}
+        if len(owners)!=1:
+            raise ValueError('Selected sources do not share one canonical document version.')
+        return next(iter(owners))
 
     def _validate_case(self, values, cursor):
         values = normalize_test_case(values)
@@ -1365,6 +1424,11 @@ class TestCaseRepository:
         if not row:
             return row
         item = dict(row)
+        # Stable Playwright slots remain available if the case later returns
+        # to Playwright, but must never overwrite an explicitly selected SQL
+        # or API asset/lifecycle in this canonical getter.
+        if item.get('execution') in ('SQL','API') or item.get('automation_type') in ('SQL','API'):
+            return item
         conn = self.db.get_connection(); conn.row_factory = self._dict_factory
         try:
             asset = self._stable_playwright_asset(conn, item)

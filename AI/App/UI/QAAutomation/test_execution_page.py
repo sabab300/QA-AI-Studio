@@ -76,6 +76,7 @@ from PySide6.QtWidgets import (
 )
 
 from Core.metadata_manager import MetadataManager
+from UI.QAAutomation.document_scope import DocumentScope
 from Core.test_environment_config import TestEnvironmentConfig
 from Core.playwright_runner import (
     DEFAULT_SLOW_MO_MS,
@@ -1862,6 +1863,7 @@ class TestExecutionPage(QWidget):
         select_layout.addWidget(self.knowledge_name, 1, 1)
 
         select_layout.addWidget(self.load_btn, 1, 3)
+        self.document_scope = DocumentScope(self, select_layout)
 
 
         layout.addWidget(select_group)
@@ -2228,6 +2230,7 @@ class TestExecutionPage(QWidget):
             module,
             knowledge_name
         )
+        self.test_cases = self.document_scope.filter_cases(self.test_cases)
 
         # QA-AUTOMATION-FINAL-ARCHITECTURE-04: filter to this tab's own
         # automation type — the scoped /test-cases-style call above
@@ -2307,7 +2310,10 @@ class TestExecutionPage(QWidget):
         try:
 
             result = self.manager.import_test_cases_from_excel(
-                file_path, domain, module, knowledge_name
+                file_path, domain, module, knowledge_name,
+                version=self.document_scope.version.currentText(),
+                document_type=self.document_scope.document_type.currentText(),
+                document_version_id=self.document_scope.version.currentData(),
             )
 
         finally:
@@ -2384,7 +2390,10 @@ class TestExecutionPage(QWidget):
         try:
 
             result = self.manager.generate_automation_from_collection(
-                domain, module, knowledge_name
+                domain, module, knowledge_name,
+                version=self.document_scope.version.currentText(),
+                document_type=self.document_scope.document_type.currentText(),
+                document_version_id=self.document_scope.version.currentData(),
             )
 
         finally:

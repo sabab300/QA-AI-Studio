@@ -96,7 +96,9 @@ class TestCaseGenerator:
 
         output_formats=None,
 
-        output_folder="Output/TestCases"
+        output_folder="Output/TestCases",
+        document_type=None,
+        document_version_id=None
 
     ):
 
@@ -126,7 +128,9 @@ class TestCaseGenerator:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                document_type=document_type,
+                document_version_id=document_version_id
 
             )
 
@@ -224,6 +228,8 @@ class TestCaseGenerator:
 
                     self.excel_exporter.export_test_cases(
                         rows=rows,
+                        document_type=document_type,
+                        document_version_id=document_version_id,
                         output_file=str(excel_file)
                     )
 

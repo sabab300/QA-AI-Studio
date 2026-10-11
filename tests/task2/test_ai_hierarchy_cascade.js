@@ -1,0 +1,13 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const html=fs.readFileSync(__dirname+'/../../AI-Web/Frontend/index.html','utf8');
+const controls={};for(const key of ['Domain','Module','Knowledge','DocumentType','Version'])controls['ai'+key+'Scope']={value:'',disabled:false,values:[]};
+controls.aiDomainScope.value='D';controls.aiModuleScope.value='M';
+const rows=[['SRS','1.0'],['SRS','2.0'],['CRF','1.0'],['CRF','1.1']].map(([document_type,version])=>({domain:'D',module:'M',knowledge_name:'K',document_type,version}));
+const scope={document:{getElementById:id=>controls[id]},aiHierarchyItems:rows,uniqueVals:values=>[...new Set(values)],aiFillSelect:(id,values)=>{controls[id].values=values;controls[id].value='';}};
+vm.createContext(scope);const match=html.match(/^  function aiRefreshHierarchy\(level\)\{[\s\S]*?^  \}/m);assert(match);vm.runInContext(match[0],scope);
+scope.aiRefreshHierarchy('module');assert.deepStrictEqual(controls.aiKnowledgeScope.values,['K']);assert(controls.aiDocumentTypeScope.disabled);
+controls.aiKnowledgeScope.value='K';scope.aiRefreshHierarchy('knowledge');assert.deepStrictEqual(controls.aiDocumentTypeScope.values,['SRS','CRF']);
+controls.aiDocumentTypeScope.value='CRF';scope.aiRefreshHierarchy('document_type');assert.deepStrictEqual(controls.aiVersionScope.values,['1.0','1.1']);
+controls.aiVersionScope.value='1.1';controls.aiDocumentTypeScope.value='SRS';scope.aiRefreshHierarchy('document_type');assert.strictEqual(controls.aiVersionScope.value,'');assert.deepStrictEqual(controls.aiVersionScope.values,['1.0','2.0']);
+controls.aiModuleScope.value='';scope.aiRefreshHierarchy('module');assert(controls.aiKnowledgeScope.disabled);assert(controls.aiVersionScope.disabled);assert.strictEqual(controls.aiVersionScope.value,'');
+console.log('AI Assistant canonical hierarchy cascade PASS.');

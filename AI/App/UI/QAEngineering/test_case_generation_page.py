@@ -179,6 +179,8 @@ class TestCaseGenerationPage(QWidget):
         self.module = QComboBox()
 
         self.knowledge_name = QComboBox()
+        self.document_type=QComboBox()
+        self.version=QComboBox()
 
         self.refresh_btn = QPushButton("Refresh")
 
@@ -194,6 +196,10 @@ class TestCaseGenerationPage(QWidget):
         select_layout.addWidget(QLabel("Knowledge Name"), 1, 0)
 
         select_layout.addWidget(self.knowledge_name, 1, 1)
+        select_layout.addWidget(QLabel('Document Type'),2,0)
+        select_layout.addWidget(self.document_type,2,1)
+        select_layout.addWidget(QLabel('Version'),2,2)
+        select_layout.addWidget(self.version,2,3)
 
         select_layout.addWidget(self.refresh_btn, 1, 3)
 
@@ -387,6 +393,8 @@ class TestCaseGenerationPage(QWidget):
         self.module.currentTextChanged.connect(
             self.on_module_changed
         )
+        self.knowledge_name.currentTextChanged.connect(self.on_knowledge_changed)
+        self.document_type.currentTextChanged.connect(self.on_document_type_changed)
 
         self.refresh_btn.clicked.connect(
             self.load_domains
@@ -480,6 +488,20 @@ class TestCaseGenerationPage(QWidget):
             )
 
             self.knowledge_name.addItems(names)
+        self.on_knowledge_changed()
+
+    def _selected_sources(self):
+        return [row for row in self.metadata.list_all() if row['domain']==self.domain.currentText()
+            and row['module']==self.module.currentText() and row['knowledge_name']==self.knowledge_name.currentText()]
+
+    def on_knowledge_changed(self, *_):
+        self.document_type.clear()
+        self.document_type.addItems(sorted({row['document_type'] or 'Other' for row in self._selected_sources()}))
+        self.on_document_type_changed()
+
+    def on_document_type_changed(self, *_):
+        self.version.clear()
+        self.version.addItems(sorted({row['version'] for row in self._selected_sources() if row['document_type']==self.document_type.currentText() and row['version']}))
 
 
     # ======================================================
@@ -527,6 +549,10 @@ class TestCaseGenerationPage(QWidget):
         module = self.module.currentText().strip()
 
         knowledge_name = self.knowledge_name.currentText().strip()
+        document_type=self.document_type.currentText().strip()
+        version=self.version.currentText().strip()
+        if not document_type or not version:
+            QMessageBox.warning(self,'Validation','Select Document Type and its Version.');return
 
 
         if not domain:
@@ -599,7 +625,8 @@ class TestCaseGenerationPage(QWidget):
             domain=domain,
             module=module,
             knowledge_name=knowledge_name,
-            version=None,
+            version=version,
+            document_type=document_type,
             test_types=test_types,
             output_formats=output_formats,
         )

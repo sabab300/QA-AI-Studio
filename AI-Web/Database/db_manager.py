@@ -84,6 +84,8 @@ class DatabaseManager:
                     # run after the first.
                     pass
 
+            from Shared.document_hierarchy import DocumentHierarchy
+            DocumentHierarchy(conn).ensure_schema()
             conn.commit()
 
         except Exception:

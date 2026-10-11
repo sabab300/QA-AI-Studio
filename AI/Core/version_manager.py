@@ -60,6 +60,14 @@ class VersionManager:
 
         now = datetime.now().isoformat()
 
+        from Shared.document_hierarchy import DocumentHierarchy
+        hierarchy=DocumentHierarchy(conn)
+        try:
+            owner=hierarchy.resolve_source(knowledge_id)
+            identity=hierarchy.ensure_context(owner['domain_id'],owner['module_id'],owner['knowledge_name'],owner['document_type'],version)
+        except Exception:
+            conn.rollback();conn.close();raise
+
         cursor.execute(
             """
             INSERT INTO knowledge_versions
@@ -68,17 +76,19 @@ class VersionManager:
                 version,
                 sha256,
                 repository_path,
-                created_date
+                created_date,
+                document_version_id
             )
             VALUES
-            (?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?)
             """,
             (
                 knowledge_id,
                 version,
                 file_info["sha256"],
                 file_info["repository_path"],
-                now
+                now,
+                identity['document_version_id']
             )
         )
 

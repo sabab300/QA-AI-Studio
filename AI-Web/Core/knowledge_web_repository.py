@@ -42,6 +42,7 @@ from Core.repository_manager import RepositoryManager
 from Core.knowledge_merge import KnowledgeMerge
 from Core.version_compare import VersionCompare
 from Core.smart_upload import SmartUpload
+from Shared.hierarchy_values import canonical_source_type
 
 
 # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4 Rule 1:
@@ -89,6 +90,12 @@ class KnowledgeRepository:
         self.metadata = MetadataManager()
         self.repository = RepositoryManager()
 
+    def _hierarchy_administration(self):
+        from Shared.hierarchy_administration import HierarchyAdministration
+        from Core.vector_store import VectorStore
+        from Core.retrieval_cache import RetrievalCache
+        return HierarchyAdministration(self.metadata.db,self.repository.central,VectorStore(),self._vector_ids_for_item,RetrievalCache().clear)
+
     # --------------------------------------------------
     # Browse
     # --------------------------------------------------
@@ -96,6 +103,24 @@ class KnowledgeRepository:
     def get_tree(self):
 
         return self.metadata.get_tree()
+
+    def hierarchy_catalog(self, **filters):
+        from Shared.document_hierarchy import DocumentHierarchy
+        conn=self.metadata.db.get_connection()
+        try:
+            return DocumentHierarchy(conn).catalog(**filters)
+        finally: conn.close()
+
+    def create_hierarchy_node(self, kind, context, name):
+        from Shared.document_hierarchy import DocumentHierarchy
+        conn=self.metadata.db.get_connection()
+        try:
+            hierarchy=DocumentHierarchy(conn);hierarchy.ensure_schema()
+            result=hierarchy.create_node(kind,context,name)
+            conn.commit();return result
+        except Exception:
+            conn.rollback();raise
+        finally: conn.close()
 
     def list_domains(self):
 
@@ -334,6 +359,7 @@ class KnowledgeRepository:
                 item.get("domain") == selected.get("domain")
                 and item.get("module") == selected.get("module")
                 and item.get("knowledge_name") == selected.get("knowledge_name")
+                and item.get("document_type") == selected.get("document_type")
             ):
                 versions.append({
                     "knowledge_id": item["id"],
@@ -410,10 +436,14 @@ class KnowledgeRepository:
             data.get("ids", []), data.get("metadatas", [])
         ):
             metadata = metadata or {}
+            if str(metadata.get('knowledge_id') or '')==str(item['id']):
+                ids.append(str(doc_id));continue
+            if metadata.get('knowledge_id') not in (None,''):continue
             if (
                 metadata.get("domain") == item.get("domain")
                 and metadata.get("module") == item.get("module")
                 and metadata.get("knowledge_name") == item.get("knowledge_name")
+                and metadata.get("document_type") == item.get("document_type")
                 and metadata.get("version") == item.get("version")
                 and metadata.get("file_name") == item.get("file_name")
                 and (not sha256 or sha256 in str(doc_id))
@@ -427,167 +457,49 @@ class KnowledgeRepository:
     # --------------------------------------------------
 
     def update_item(self, knowledge_id, **fields):
+        """Use the same atomic hierarchy service as managed-node edits."""
         from Core.vector_store import VectorStore
+        from Core.retrieval_cache import RetrievalCache
 
         existing = self.get_item(knowledge_id)
-
         if existing is None:
             raise ValueError("Knowledge item not found.")
-
-        for key in ("domain", "module", "knowledge_name", "version", "document_type"):
-            if key in fields:
-                fields[key] = str(fields[key] or "").strip()
-
-        required = {
-            "domain": fields.get("domain", existing.get("domain")),
-            "module": fields.get("module", existing.get("module")),
-            "knowledge_name": fields.get(
-                "knowledge_name", existing.get("knowledge_name")
-            ),
-            "version": fields.get("version", existing.get("version")),
-            "document_type": fields.get(
-                "document_type", existing.get("document_type")
-            ),
-        }
-
-        missing = [name for name, value in required.items() if not value]
-
-        if missing:
-            raise ValueError("Required and missing: " + ", ".join(missing) + ".")
-
-        # Rule 1: block CHANGING document_type to a disallowed value.
-        # A row that already has one of these values (from before this
-        # rule existed) can still be saved unchanged — the frontend's
-        # edit dropdown injects the row's current value as an option
-        # precisely so "save this row with everything else edited"
-        # keeps working — this only rejects actually assigning the
-        # disallowed value to a row that didn't already have it.
-        if (
-            "document_type" in fields
-            and fields["document_type"] in DISALLOWED_NEW_DOCUMENT_TYPES
-            and fields["document_type"] != existing.get("document_type")
-        ):
-            raise ValueError(
-                f"'{fields['document_type']}' is an automation asset type, not "
-                "a Knowledge Hub Document Type, and cannot be newly assigned here."
+        hierarchy_fields = ("domain", "module", "knowledge_name", "document_type", "version")
+        required = {key: str(fields.get(key, existing.get(key)) or "").strip() for key in hierarchy_fields}
+        if not all(required.values()):
+            raise ValueError("Complete Domain, Module, Knowledge, Document Type and Version are required.")
+        if required["document_type"] in DISALLOWED_NEW_DOCUMENT_TYPES and required["document_type"] != existing.get("document_type"):
+            raise ValueError("Automation asset types cannot be newly assigned as Knowledge Document Types.")
+        extra = {key: fields[key] for key in ("summary", "tags") if key in fields}
+        changed = any(required[key] != str(existing.get(key) or "") for key in hierarchy_fields)
+        if changed:
+            source_file_id = existing.get("source_file_id")
+            if not source_file_id:
+                raise ValueError("Legacy source identity is unresolved. Adopt its managed location before changing its hierarchy.")
+            context = {key: existing.get(key) for key in hierarchy_fields}
+            context.update(source_type=existing.get("source_type") or "Files", source_file_id=source_file_id)
+            destination = dict(required, source_type=context["source_type"])
+            self._hierarchy_administration().change(
+                {"type": "source_file", "name": source_file_id, "context": context},
+                destination=destination, item_updates={int(knowledge_id): extra},
             )
-
-        vector_updates = {
-            key: fields[key]
-            for key in (
-                "domain", "module", "knowledge_name", "version",
-                "document_type", "source_type", "source_file_id", "summary", "tags"
-            )
-            if key in fields
-        }
-
-        if isinstance(vector_updates.get("tags"), list):
-            vector_updates["tags"] = ", ".join(vector_updates["tags"])
-
-        store = VectorStore()
-        vector_ids = self._vector_ids_for_item(existing)
-        vector_snapshot = store.update_metadata(vector_ids, vector_updates)
-        old_source_folder = None
-        new_source_folder = None
-        managed_file = self._managed_file(
-            existing.get("repository_path"), existing.get("repository_relative_path")
-        )
-        source_file_id = str(existing.get("source_file_id") or "").strip()
-        hierarchy_changed = any(
-            key in fields for key in
-            ("domain", "module", "knowledge_name", "version", "document_type",
-             "source_type", "source_file_id")
-        )
-        try:
-            if managed_file and managed_file.is_file() and source_file_id and hierarchy_changed:
-                old_source_folder = managed_file.parent
-                new_source_folder = self.repository.central.build_source_path(
-                    domain=required["domain"], module=required["module"],
-                    knowledge_name=required["knowledge_name"], version=required["version"],
-                    document_type=required["document_type"],
-                    source_type=fields.get("source_type", existing.get("source_type")) or "Files",
-                    source_file_id=fields.get("source_file_id", source_file_id),
-                )
-                if new_source_folder != old_source_folder:
-                    if new_source_folder.exists():
-                        raise ValueError("The target managed hierarchy already exists.")
-                    new_source_folder.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        old_source_folder.replace(new_source_folder)
-                    except FileNotFoundError as error:
-                        raise ValueError(
-                            "Managed source location could not be resolved. "
-                            "The hierarchy was not changed."
-                        ) from error
-                    moved_file = new_source_folder / managed_file.name
-                    fields["repository_path"] = str(moved_file)
-                    fields["repository_relative_path"] = self.repository.central.relative(moved_file)
-        except Exception:
-            store.restore_metadata(vector_snapshot)
-            raise
-
-        # Tags arrive from the web as a list; the column stores JSON
-        # text, same encoding save_knowledge_item() already uses.
-        if "tags" in fields and isinstance(fields["tags"], list):
-
-            fields["tags"] = json.dumps(fields["tags"])
-
-        try:
-            updated = self.metadata.update_knowledge_item(knowledge_id, **fields)
-
-            if not updated:
-                raise ValueError("Knowledge item no longer exists.")
-            if old_source_folder and new_source_folder and old_source_folder != new_source_folder:
-                self._replace_descendant_paths(old_source_folder, new_source_folder)
-
-        except Exception:
-            store.restore_metadata(vector_snapshot)
-            if old_source_folder and new_source_folder:
-                try:
-                    self._replace_descendant_paths(new_source_folder, old_source_folder)
-                except Exception:
-                    pass
-            if new_source_folder and new_source_folder.exists() and old_source_folder:
-                old_source_folder.parent.mkdir(parents=True, exist_ok=True)
-                new_source_folder.replace(old_source_folder)
-                self._prune_empty_managed_folders(new_source_folder.parent)
+        elif extra:
+            store = VectorStore()
+            ids = self._vector_ids_for_item(existing)
+            snapshot = store.snapshot(ids)
             try:
-                restore = {key: existing.get(key) for key in (
-                    "domain", "module", "knowledge_name", "version", "document_type",
-                    "repository_path", "repository_relative_path")}
-                self.metadata.update_knowledge_item(knowledge_id, **restore)
+                vector_values = {key: ", ".join(value) if key == "tags" and isinstance(value, list) else value for key, value in extra.items()}
+                store.update_metadata(ids, vector_values)
+                stored = {key: json.dumps(value) if key == "tags" and isinstance(value, list) else value for key, value in extra.items()}
+                if not self.metadata.update_knowledge_item(knowledge_id, **stored):
+                    raise ValueError("Knowledge item no longer exists.")
             except Exception:
-                pass
-            raise
-
+                store.restore_metadata(snapshot)
+                raise
+            RetrievalCache().clear()
         result = self.get_item_details(knowledge_id)
-        result["vectors_updated"] = len(vector_ids)
-        result["storage_strategy"] = "immutable_managed_path"
-
+        result["storage_strategy"] = "canonical_managed_path"
         return result
-
-    def _replace_descendant_paths(self, old_root, new_root):
-        """Keep all persisted descendants aligned after a managed source move."""
-        old, new = str(Path(old_root)), str(Path(new_root))
-        connection = self.metadata.db.get_connection()
-        try:
-            cursor = connection.cursor()
-            for table, column in (
-                ("test_case_versions", "folder_path"), ("test_case_versions", "workbook_path"),
-                ("test_case_files", "workbook_path"), ("api_collections", "repository_path"),
-                ("sql_scripts", "repository_path"), ("test_cases", "sql_script_path"),
-            ):
-                cursor.execute(
-                    f"UPDATE {table} SET {column}=REPLACE({column}, ?, ?) "
-                    f"WHERE {column}=? OR {column} LIKE ?",
-                    (old, new, old, old + "%"),
-                )
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
     # --------------------------------------------------
     # Delete (one version, not the whole knowledge name)
@@ -595,86 +507,15 @@ class KnowledgeRepository:
 
     def delete_item(self, knowledge_id):
         from Core.vector_store import VectorStore
+        from Core.retrieval_cache import RetrievalCache
+        from Shared.source_administration import delete_source
 
         item = self.get_item(knowledge_id)
-
         if item is None:
-
             return None
-
-        connection = self.metadata.db.get_connection()
-        try:
-            dependent_cases = connection.execute(
-                "SELECT COUNT(*) FROM test_case_sources WHERE knowledge_source_id=?",
-                (knowledge_id,),
-            ).fetchone()[0]
-            dependent_versions = connection.execute(
-                "SELECT COUNT(*) FROM test_case_versions WHERE source_knowledge_id=?",
-                (knowledge_id,),
-            ).fetchone()[0]
-        except Exception:
-            dependent_cases = dependent_versions = 0
-        finally:
-            connection.close()
-        if dependent_cases or dependent_versions:
-            raise ValueError(
-                "This Source File has dependent Test Cases or automation artifacts and cannot be deleted."
-            )
-
-        managed_file = self._managed_file(
-            item.get("repository_path"), item.get("repository_relative_path")
-        )
-        other_references = [
-            row for row in self.list_items()
-            if row["id"] != knowledge_id
-            and row.get("repository_path") == item.get("repository_path")
-        ]
-        staged_file = None
-
-        if managed_file and managed_file.is_file() and not other_references:
-            staged_file = managed_file.with_name(
-                f".{managed_file.name}.deleting-{uuid.uuid4().hex}"
-            )
-            managed_file.replace(staged_file)
-
-        store = VectorStore()
-        vector_ids = [] if other_references else self._vector_ids_for_item(item)
-        vector_snapshot = None
-
-        try:
-            vector_snapshot = store.delete_with_snapshot(vector_ids)
-            db_summary = self.metadata.delete(knowledge_id)
-
-            if db_summary.get("knowledge") != 1:
-                raise RuntimeError("Metadata record was not deleted.")
-
-        except Exception:
-            if vector_snapshot:
-                store.restore_snapshot(vector_snapshot)
-            if staged_file and staged_file.exists():
-                staged_file.replace(managed_file)
-            raise
-
-        files_removed = 0
-        storage_cleanup_error = ""
-
-        if staged_file and staged_file.exists():
-            try:
-                staged_file.unlink()
-                files_removed = 1
-                self._prune_empty_managed_folders(managed_file.parent)
-            except OSError as error:
-                storage_cleanup_error = str(error)
-
-        vectors_removed = len(vector_ids)
-
-        return {
-            "item": item,
-            "files_removed": files_removed,
-            "vectors_removed": vectors_removed,
-            "storage_cleanup_error": storage_cleanup_error,
-            **db_summary,
-        }
+        result = delete_source(self.metadata.db, self.repository.central, VectorStore(), int(knowledge_id))
+        RetrievalCache().clear()
+        return {"item": item, **result}
 
     def _managed_file(self, path, relative_path=""):
 
@@ -705,7 +546,7 @@ class KnowledgeRepository:
 
         store = VectorStore()
 
-        data = store.get_all()
+        data = store.collection.get(include=['metadatas'])
 
         if not data:
 
@@ -735,7 +576,7 @@ class KnowledgeRepository:
 
     _ADMIN_LEVEL_FIELDS = {
         "domain": "domain", "module": "module", "knowledge": "knowledge_name",
-        "version": "version", "document_type": "document_type",
+        "document_type": "document_type", "version": "version",
         "source_type": "source_type", "source_file": "source_file_id",
     }
 
@@ -746,7 +587,7 @@ class KnowledgeRepository:
         for key in ("domain", "module", "knowledge_name", "version", "document_type",
                     "source_type", "source_file_id"):
             if context.get(key) not in (None, ""):
-                items = [row for row in items if str(row.get(key) or "") == str(context[key])]
+                items = [row for row in items if (canonical_source_type(row.get(key))==canonical_source_type(context[key]) if key=='source_type' else str(row.get(key) or "") == str(context[key]))]
         if node.get("knowledge_id") is not None:
             items = [row for row in items if int(row["id"]) == int(node["knowledge_id"])]
         return items
@@ -883,71 +724,7 @@ class KnowledgeRepository:
         if not value:
             raise ValueError("A non-empty value is required.")
         if node_type in self._ADMIN_LEVEL_FIELDS:
-            field = self._ADMIN_LEVEL_FIELDS[node_type]
-            items = self._admin_items(node)
-            if not items:
-                raise ValueError("Manage Knowledge node was not found.")
-            old_value = (node.get("context") or {}).get(field)
-            if value == old_value:
-                return {"updated": 0, "impact_count": len(items), "unchanged": True}
-            # Hierarchy admin — Section 18/26 guard (V4: widened from
-            # knowledge/version alone to every plain-string chain level
-            # that has no FK/master-table dedup of its own — domain/module
-            # resolve through real master tables and their own dedup, so
-            # they're excluded here on purpose). Without this check,
-            # renaming one of these levels to a value that already exists
-            # as a DIFFERENT sibling under the same immediate parent would
-            # silently reassign every owned item's string column onto the
-            # existing group — an uncontrolled, destructive merge the task
-            # explicitly forbids ("do NOT implement automatic destructive
-            # merge"). Blocked here, server-side, so this is enforced
-            # regardless of what the frontend does (Section 14/18: backend
-            # must enforce, not frontend-only) — the frontend's own
-            # pre-check (khHierFindDuplicateSibling in Frontend/index.html)
-            # mirrors this same rule for the same five node types.
-            _chain_guarded = ("knowledge", "version", "document_type", "source_type", "source_file")
-            if node_type in _chain_guarded:
-                _chain_types = list(self._ADMIN_LEVEL_FIELDS.keys())
-                _chain_fields = list(self._ADMIN_LEVEL_FIELDS.values())
-                _idx = _chain_types.index(node_type)
-                context = node.get("context") or {}
-                parent_scope = {_chain_fields[i]: context.get(_chain_fields[i]) for i in range(_idx)}
-                lowered_value = value.lower()
-                collision = any(
-                    str(row.get(field) or "").strip().lower() == lowered_value
-                    and str(row.get(field) or "") != old_value
-                    and all(str(row.get(key) or "") == str(scope_value or "") for key, scope_value in parent_scope.items())
-                    for row in self.list_items()
-                )
-                if collision:
-                    raise ValueError(
-                        f"'{value}' already exists as a different "
-                        f"{self._ADMIN_LEVEL_LABELS.get(node_type, node_type.title())} under this "
-                        "hierarchy. Renaming here would silently merge two different groups, which "
-                        "is not supported — choose a different value, or reuse the existing one "
-                        "at upload time instead of renaming into it."
-                    )
-            snapshots = [{key: row.get(key) for key in (
-                "id", "domain", "module", "knowledge_name", "version", "document_type",
-                "repository_path", "repository_relative_path")}
-                for row in items]
-            updated = []
-            try:
-                for row in items:
-                    self.update_item(row["id"], **{field: value})
-                    updated.append(row["id"])
-            except Exception:
-                for snapshot in reversed(snapshots[:len(updated)]):
-                    try:
-                        self.update_item(snapshot["id"], **{field: snapshot[field]})
-                    except Exception:
-                        pass
-                raise
-            # update_item resolves/creates the new master rows; this only
-            # cleans up domain/module masters nothing references any more
-            # (shared with move_admin_node below — V5).
-            self._prune_unused_domain_module_masters(node_type, old_value, (node.get("context") or {}).get("domain"))
-            return {"updated": len(updated), "impact_count": len(items), "test_case_ids_changed": False}
+            return self._hierarchy_administration().change(node,value=value)
         if node_type == "source_document":
             item = self.get_item(node.get("knowledge_id"))
             path = self._managed_file(item.get("repository_path"), item.get("repository_relative_path")) if item else None
@@ -1100,232 +877,8 @@ class KnowledgeRepository:
     _MOVE_ELIGIBLE_TYPES = ("module", "knowledge", "version", "document_type", "source_type", "source_file")
 
     def move_admin_node(self, source_node, target_node, validate_only=False):
-        source_type = str(source_node.get("type") or "")
-        target_type = str(target_node.get("type") or "")
-        if source_type != target_type:
-            raise ValueError("Move requires the source and target to be the same hierarchy level.")
-        if source_type not in self._MOVE_ELIGIBLE_TYPES:
-            raise ValueError(
-                "Move is only supported for Module, Knowledge, Version, "
-                "Document Type, Source Type and Source File levels in this release."
-            )
-        field = self._ADMIN_LEVEL_FIELDS[source_type]
-        chain_fields = list(self._ADMIN_LEVEL_FIELDS.values())
-        chain_types = list(self._ADMIN_LEVEL_FIELDS.keys())
-        idx = chain_fields.index(field)
-        # Every Move-eligible level has a real parent level above it (Domain
-        # is excluded above precisely because it doesn't) — idx is always
-        # >= 1 here, so idx-1 is always a valid parent index.
-        parent_field = chain_fields[idx - 1]
-        parent_type = chain_types[idx - 1]
-        parent_label = self._ADMIN_LEVEL_LABELS.get(parent_type, parent_type.replace("_", " ").title())
-        label = self._ADMIN_LEVEL_LABELS.get(source_type, source_type.replace("_", " ").title())
-
-        source_items = self._admin_items(source_node)
-        if not source_items:
-            raise ValueError("Move source was not found.")
-
-        # The real frontend convention (Frontend/index.html's branch():
-        # "context[fields[level]] = label") is that `context` carries every
-        # field from the root DOWN TO AND INCLUDING this node's own level,
-        # with `name` repeating that same own-level value. This code reads
-        # the own-level field (index idx) from `name` rather than trusting
-        # it to also be in `context`, so it stays correct even for a caller
-        # that only sends ancestor fields there — fields 0..idx-1 come from
-        # context (ancestors); field idx (this node's own level) comes from
-        # `name`, which is always present.
-        #
-        # THE CORE FIX: `new_values[field]` (the moved item's own-level
-        # value) is always `source_node.get("name")` — the selected node's
-        # OWN identity, preserved — never `target_node.get("name")`. Any
-        # own-level value the caller sends on `target_node` is ignored;
-        # `target_node.context` is only read for the ancestor fields
-        # (0..idx-1), i.e. the parent path to move under.
-        source_ctx = source_node.get("context") or {}
-        target_ctx = target_node.get("context") or {}
-        missing_target_levels = [chain_fields[i] for i in range(idx) if not target_ctx.get(chain_fields[i])]
-        if missing_target_levels:
-            raise ValueError("Move target is incomplete — choose a value for every level above this node.")
-        new_values = {chain_fields[i]: target_ctx.get(chain_fields[i]) for i in range(idx)}
-        new_values[field] = source_node.get("name")
-        old_values = {chain_fields[i]: source_ctx.get(chain_fields[i]) for i in range(idx)}
-        old_values[field] = source_node.get("name")
-        if new_values == old_values:
-            raise ValueError(f"Source and target already share the same {parent_label} — nothing to move.")
-
-        # ---- Target PARENT must be real, existing data — Move re-parents
-        # onto an existing ancestor path, it never accepts a free-text
-        # location. (This replaces the old release's check that the
-        # target's OWN-level node already existed, which was itself a
-        # symptom of the merge-not-move bug: Move's target is a parent to
-        # move under, not a same-level sibling to land on.)
-        target_parent_context = {chain_fields[i]: target_ctx.get(chain_fields[i]) for i in range(idx)}
-        if not self._admin_items({"context": target_parent_context}):
-            raise ValueError("Move target was not found. Choose an existing target.")
-
-        # ---- Section 14: a real existing SAME-NAME sibling already under
-        # the target parent blocks the move outright — Move must never
-        # silently merge two distinct existing groups just because they
-        # happen to share a name.
-        collision_context = dict(target_parent_context)
-        collision_context[field] = source_node.get("name")
-        if self._admin_items({"context": collision_context}):
-            parent_name = target_parent_context.get(parent_field)
-            raise ValueError(
-                f'Cannot move {label} "{source_node.get("name")}".\n'
-                f'Target {parent_label} "{parent_name}" already contains a {label} with this name.\n'
-                "No changes were applied."
-            )
-
-        # ---- Mutation-free validation pass: for every affected item,
-        # compute its real would-be destination managed folder and flag a
-        # genuine collision only when that destination is already occupied
-        # by a DIFFERENT existing item that is not itself part of this
-        # move. Section 9/10: a shared CONTAINER (e.g. both source and
-        # target already have a "Version V1") is fine to merge as long as
-        # nothing actually collides at the real leaf/file level; only a
-        # real occupied destination blocks, and it blocks rather than
-        # attempting to prove two different existing files are "the same"
-        # (Section 10: "If safe merge cannot be proven: BLOCK").
-        moving_ids = {row["id"] for row in source_items}
-        plan = []
-        conflicts = []
-        for row in source_items:
-            entry = {"row": row, "fields": dict(new_values), "old_folder": None, "new_folder": None}
-            managed_file = self._managed_file(row.get("repository_path"), row.get("repository_relative_path"))
-            if managed_file and managed_file.is_file() and row.get("source_file_id"):
-                entry["old_folder"] = managed_file.parent
-                new_folder = self.repository.central.build_source_path(
-                    domain=new_values.get("domain", row.get("domain")),
-                    module=new_values.get("module", row.get("module")),
-                    knowledge_name=new_values.get("knowledge_name", row.get("knowledge_name")),
-                    version=new_values.get("version", row.get("version")),
-                    document_type=new_values.get("document_type", row.get("document_type")),
-                    source_type=new_values.get("source_type", row.get("source_type")) or "Files",
-                    source_file_id=new_values.get("source_file_id", row.get("source_file_id")),
-                )
-                entry["new_folder"] = new_folder
-                if new_folder.exists() and new_folder.resolve() != managed_file.parent.resolve():
-                    occupant = next(
-                        (other for other in self.list_items()
-                         if other["id"] not in moving_ids
-                         and self._managed_file(other.get("repository_path"), other.get("repository_relative_path"))
-                         and self._managed_file(other.get("repository_path"), other.get("repository_relative_path")).parent.resolve() == new_folder.resolve()),
-                        None,
-                    )
-                    conflicts.append({
-                        "version": row.get("version"), "document_type": row.get("document_type"),
-                        "source_type": row.get("source_type"), "source_file": row.get("source_file_id"),
-                        "source_document": row.get("file_name") or row.get("source_location") or f"Knowledge #{row['id']}",
-                        "conflicting_with": occupant.get("file_name") if occupant else "an existing item",
-                    })
-            plan.append(entry)
-
-        if conflicts:
-            lines = [
-                f"Version: {c['version']}  Source Document: {c['source_document']}"
-                for c in conflicts
-            ]
-            parent_name = target_parent_context.get(parent_field)
-            raise ValueError(
-                f'Cannot move {label} "{source_node.get("name")}" to {parent_label} "{parent_name}".\n'
-                "Conflict found:\n" + "\n".join(lines) + "\n"
-                "The target hierarchy already contains an item with the same ownership/name "
-                "and cannot be safely merged.\nNo changes were applied."
-            )
-
-        # Section 12: the preview must count the selected source root
-        # itself (never implied only), plus a real per-kind breakdown of
-        # automation artifacts (Playwright/API/SQL) rather than one lumped
-        # sum, so "MOVE SET" reads exactly as specified.
-        playwright_count = sum(
-            len(group.get("artifacts") or [])
-            for row in source_items for folder in row.get("test_case_folders") or []
-            for group in folder.get("automation_folders") or [] if group.get("kind") == "Playwright"
-        )
-        api_count = sum(
-            len(group.get("artifacts") or [])
-            for row in source_items for folder in row.get("test_case_folders") or []
-            for group in folder.get("automation_folders") or [] if group.get("kind") == "API"
-        )
-        sql_count = sum(
-            len(group.get("artifacts") or [])
-            for row in source_items for folder in row.get("test_case_folders") or []
-            for group in folder.get("automation_folders") or [] if group.get("kind") == "SQL"
-        )
-        descendant_counts = {
-            "versions": len({row.get("version") for row in source_items if row.get("version")}),
-            "document_types": len({row.get("document_type") for row in source_items if row.get("document_type")}),
-            "source_types": len({row.get("source_type") for row in source_items if row.get("source_type")}),
-            "source_files": len({row.get("source_file_id") for row in source_items if row.get("source_file_id")}),
-            "source_documents": len(source_items),
-            "tc_folders": sum(len(row.get("test_case_folders") or []) for row in source_items),
-            "xlsx_files": sum(len(f.get("files") or []) for row in source_items for f in row.get("test_case_folders") or []),
-            "automation_artifacts": playwright_count + api_count + sql_count,
-            "playwright_artifacts": playwright_count,
-            "api_artifacts": api_count,
-            "sql_artifacts": sql_count,
-        }
-        # Section 12: SOURCE ROOT / CURRENT PARENT / TARGET PARENT, shown
-        # explicitly so the preview never implies only descendants moved.
-        source_summary = {"type": source_type, "label": label, "name": source_node.get("name")}
-        current_parent_summary = {"type": parent_type, "label": parent_label, "name": old_values.get(parent_field)}
-        target_parent_summary = {"type": parent_type, "label": parent_label, "name": target_parent_context.get(parent_field)}
-
-        if validate_only:
-            return {
-                "validated": True, "would_move": len(source_items), "descendant_counts": descendant_counts, "conflicts": [],
-                "source": source_summary, "current_parent": current_parent_summary, "target_parent": target_parent_summary,
-            }
-
-        # ---- Execute: one update_item() call per affected item (each
-        # already transactional/rollback-safe on its own — Section 20's
-        # reuse principle), with outer compensation if a later item fails
-        # after earlier ones already succeeded (Section 17/18).
-        succeeded = []
-        try:
-            for entry in plan:
-                row = entry["row"]
-                original = {key: row.get(key) for key in new_values}
-                self.update_item(row["id"], **entry["fields"])
-                succeeded.append((row["id"], original))
-        except Exception:
-            for item_id, original in reversed(succeeded):
-                try:
-                    self.update_item(item_id, **original)
-                except Exception:
-                    pass
-            raise
-
-        # Section 8: prune the now-empty source container(s) ONLY after
-        # the complete move has succeeded — never before, and never if
-        # any sibling content still remains under that same path (the
-        # existing _prune_empty_managed_folders() helper already walks
-        # upward only while each directory is genuinely empty).
-        for entry in plan:
-            if entry["old_folder"]:
-                try:
-                    self._prune_empty_managed_folders(entry["old_folder"])
-                except Exception:
-                    pass
-        # Prune whichever of the domain/module master rows actually changed
-        # identity as part of this move, bottom-up (module before domain) —
-        # not just when the move itself WAS a Domain/Module-type move.
-        # Moving a Knowledge (or anything deeper) across domains/modules can
-        # just as easily leave the OLD domain/module master row referenced
-        # by nothing any more, and Section 8's "safe cleanup" requirement is
-        # not scoped to Domain/Module-level moves only.
-        old_domain, new_domain = old_values.get("domain"), new_values.get("domain")
-        old_module, new_module = old_values.get("module"), new_values.get("module")
-        if idx >= 1 and (old_domain, old_module) != (new_domain, new_module):
-            self._prune_unused_domain_module_masters("module", old_module, old_domain)
-        if idx >= 0 and old_domain != new_domain:
-            self._prune_unused_domain_module_masters("domain", old_domain)
-
-        return {
-            "moved": len(succeeded), "moved_ids": [row_id for row_id, _ in succeeded], "descendant_counts": descendant_counts,
-            "source": source_summary, "current_parent": current_parent_summary, "target_parent": target_parent_summary,
-        }
+        """Reparent the complete canonical subtree without replacing its IDs."""
+        return self._hierarchy_administration().change(source_node,destination=target_node.get('context') or {},validate_only=validate_only)
 
     def _update_artifact_path(self, node, target):
         table = node.get("record_table")
@@ -1400,6 +953,8 @@ class KnowledgeRepository:
 
     def delete_admin_node(self, node):
         node_type = str(node.get("type") or "")
+        if node_type in ('domain','module','knowledge','document_type','version'):
+            return self._hierarchy_administration().delete_empty(node)
         if node_type == "domain":
             self.delete_domain((node.get("context") or {}).get("domain")); return {"deleted": 1}
         if node_type == "module":

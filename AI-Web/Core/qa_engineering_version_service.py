@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from Shared.central_repository import CentralRepository
+from Shared.document_hierarchy import DocumentHierarchy
 
 
 class QaEngineeringVersionService:
@@ -211,6 +212,8 @@ class QaEngineeringVersionService:
         cursor = conn.cursor(); staging = final_folder = None
         try:
             cursor.execute("BEGIN IMMEDIATE")
+            owner = DocumentHierarchy(conn).resolve_source(source_id)
+            source["document_version_id"] = owner["document_version_id"]
             for row in rows:
                 self.repository._validate_case(row, cursor)
             db_next_row = cursor.execute(
@@ -231,8 +234,8 @@ class QaEngineeringVersionService:
             self.central.validate_excel_path(final_workbook)
             now = datetime.now().isoformat()
             cursor.execute(
-                "INSERT INTO test_case_versions(source_knowledge_id,source_file_id,version_number,folder_path,workbook_path,created_date) VALUES(?,?,?,?,?,?)",
-                (int(source_id), source_file_id, version_number, str(final_folder), str(final_workbook), now),
+                "INSERT INTO test_case_versions(source_knowledge_id,source_file_id,version_number,folder_path,workbook_path,created_date,document_version_id) VALUES(?,?,?,?,?,?,?)",
+                (int(source_id), source_file_id, version_number, str(final_folder), str(final_workbook), now, owner["document_version_id"]),
             )
             version_id = cursor.lastrowid
             persisted = []
@@ -283,6 +286,8 @@ class QaEngineeringVersionService:
         now = datetime.now().isoformat()
         try:
             cursor.execute("BEGIN IMMEDIATE")
+            owner = DocumentHierarchy(conn).resolve_source(source["id"])
+            source["document_version_id"] = owner["document_version_id"]
             for operation in operations:
                 action = operation.get("action"); values = operation.get("values") or {}
                 if action == "insert":
@@ -353,7 +358,7 @@ class QaEngineeringVersionService:
             "last_result", "execution", "source_knowledge_ids",
             "test_case_document_name", "document_type", "source_type", "review_state",
             "created_date", "modified_date", "test_case_version_id", "reviewed_workbook_path",
-            "actual_result", "bug_id", "comments",
+            "actual_result", "bug_id", "comments", "document_version_id",
         )
         persisted_values = (
             tc_id, tc_id, scope["domain"], scope["module"], scope["knowledge_name"],
@@ -365,7 +370,7 @@ class QaEngineeringVersionService:
             normalize_execution(values),
             json.dumps([source["id"]]), workbook_name, source.get("document_type") or "",
             source.get("source_type") or "", "Reviewed/Saved", now, now, int(version_id), "",
-            values.get("actual_result", ""), values.get("bug_id", ""), values.get("comments", ""),
+            values.get("actual_result", ""), values.get("bug_id", ""), values.get("comments", ""), source["document_version_id"],
         )
         cursor.execute(
             f"INSERT INTO test_cases ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",

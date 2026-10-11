@@ -66,48 +66,9 @@ class RepositoryManager:
     # Repository Path
     # --------------------------------------------------
 
-    def get_repository_path(
-
-        self,
-
-        domain,
-
-        module,
-
-        knowledge_name,
-
-        version
-
-    ):
-
-        domain = self._safe_segment(domain, "domain")
-        module = self._safe_segment(module, "module")
-        knowledge_name = self._safe_segment(knowledge_name, "knowledge name")
-        version = self._safe_segment(version, "version")
-
-        path = (
-
-            self.repository_root
-
-            / domain
-
-            / module
-
-            / knowledge_name
-
-            / version
-
-        )
-
-        path.mkdir(
-
-            parents=True,
-
-            exist_ok=True
-
-        )
-
-        return path
+    def get_repository_path(self,domain,module,knowledge_name,version,document_type=None):
+        from Shared.legacy_repository_paths import repository_path
+        return repository_path(self,domain,module,knowledge_name,version,document_type)
 
     # --------------------------------------------------
     # Documents Folder

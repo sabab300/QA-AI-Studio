@@ -158,6 +158,12 @@ class SaveDiscoveryRequest(BaseModel):
     hierarchy: Dict[str, str]
 
 
+class CreateHierarchyRequest(BaseModel):
+    type: str
+    context: Dict[str,str]
+    name: str
+
+
 def _audit(current_user, action, detail):
 
     UserRepository().write_audit_log(
@@ -206,6 +212,25 @@ def _safe_endpoint(endpoint):
 def get_tree(current_user=Depends(require_permission("knowledge", "view"))):
 
     return {"tree": KnowledgeRepository().get_tree()}
+
+
+# Source-item endpoints omit managed nodes with no files. This catalog
+# exposes canonical Document Type/version IDs, including newly-added nodes.
+@router.get('/hierarchy-catalog')
+def hierarchy_catalog(domain: Optional[str]=None,module: Optional[str]=None,
+                      knowledge_name: Optional[str]=None,document_type: Optional[str]=None,
+                      current_user=Depends(require_permission('knowledge','view'))):
+    return {'items':KnowledgeRepository().hierarchy_catalog(domain=domain,module=module,knowledge_name=knowledge_name,document_type=document_type)}
+
+
+@router.post('/admin/create')
+def create_hierarchy(payload: CreateHierarchyRequest,current_user=Depends(require_permission('knowledge','create'))):
+    try:
+        result=KnowledgeRepository().create_hierarchy_node(payload.type,payload.context,payload.name)
+    except ValueError as error:
+        raise HTTPException(status_code=409,detail=str(error))
+    _audit(current_user,'CREATE_HIERARCHY_NODE',payload.type)
+    return result
 
 
 @router.get("/domains")

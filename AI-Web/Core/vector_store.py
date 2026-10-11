@@ -345,10 +345,10 @@ class VectorStore:
         ids = snapshot.get("ids", []) if snapshot else []
 
         if ids:
-            self.collection.update(
-                ids=ids,
-                metadatas=snapshot.get("metadatas", []),
-            )
+            # Chroma update merges metadata: it cannot remove keys introduced
+            # by the failed edit. Restore exact records including embeddings.
+            self.collection.delete(ids=ids)
+            self.restore_snapshot(snapshot)
 
         return len(ids)
 
@@ -477,13 +477,18 @@ class VectorStore:
 
             return 0
 
-    def has_source_vectors(self, *, domain, module, knowledge_name, version, file_name):
+    def has_source_vectors(self, *, domain, module, knowledge_name, version, file_name,
+                           document_type=None, document_version_id=None):
         """Verify at least one vector exists for one exact managed source."""
         clauses = [
             {"domain": str(domain or "")}, {"module": str(module or "")},
             {"knowledge_name": str(knowledge_name or "")},
             {"version": str(version or "")}, {"file_name": str(file_name or "")},
         ]
+        if document_type:
+            clauses.append({"document_type": str(document_type)})
+        if document_version_id is not None:
+            clauses.append({"document_version_id": int(document_version_id)})
         try:
             result = self.collection.get(where={"$and": clauses}, limit=1, include=[])
             return bool((result or {}).get("ids"))

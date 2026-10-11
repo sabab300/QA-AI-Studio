@@ -6,6 +6,7 @@ Version: 5.0
 """
 
 import time
+import json
 
 from Core.search import KnowledgeSearch
 from Core.embedding_engine import EmbeddingEngine
@@ -110,11 +111,13 @@ class RetrievalEngine:
 
         knowledge_name,
 
-        version
+        version,
+        document_type=None,
+        document_version_id=None,
 
     ):
 
-        return "|".join([
+        return json.dumps([
 
             str(question),
 
@@ -124,7 +127,7 @@ class RetrievalEngine:
 
             str(knowledge_name),
 
-            str(version)
+            str(version),str(document_type),document_version_id,
 
         ])
 
@@ -152,7 +155,9 @@ class RetrievalEngine:
 
         rerank_top=5,
 
-        min_score=None
+        min_score=None,
+        document_type=None,
+        document_version_id=None,
 
     ):
 
@@ -173,7 +178,7 @@ class RetrievalEngine:
 
                 knowledge_name,
 
-                version
+                version,document_type,document_version_id,
 
             )
 
@@ -211,7 +216,9 @@ class RetrievalEngine:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                document_type=document_type,
+                document_version_id=document_version_id,
 
             )
 
@@ -228,7 +235,9 @@ class RetrievalEngine:
 
                 knowledge_name=knowledge_name,
 
-                version=version
+                version=version,
+                document_type=document_type,
+                document_version_id=document_version_id,
 
             )
 
