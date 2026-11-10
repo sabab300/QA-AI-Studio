@@ -228,3 +228,11 @@ class ImpactAnalysisRepository:
             return None
 
         return json.loads(row[0])
+
+    def get_for_session(self, analysis_id, session_id):
+        """Read an owned result for export; never expose another user's history."""
+        row = self.database.fetch_one(
+            f"SELECT result_json FROM {self.TABLE_NAME} WHERE id=? AND session_id=?",
+            (analysis_id, session_id),
+        )
+        return json.loads(row[0]) if row and row[0] else None

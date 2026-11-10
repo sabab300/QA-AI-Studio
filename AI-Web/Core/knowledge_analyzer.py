@@ -267,13 +267,16 @@ class KnowledgeAnalyzer:
 
             for keyword in keywords:
 
-                if keyword in text:
-                    score += 1
-
+                # Whole-word occurrences, so a short keyword inside another word
+                # (for example "psw" in a longer word) does not count, and a
+                # system mentioned 20 times outranks one mentioned once.
+                score += len(re.findall(
+                    r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])",
+                    text
+                ))
 
             if score:
                 scores[platform] = score
-
 
         if scores:
             return max(
@@ -281,10 +284,23 @@ class KnowledgeAnalyzer:
                 key=scores.get
             )
 
-
         return "Unknown"
 
-
+    @staticmethod
+    def platform_from_domain(domain):
+        """The Domain the user selected names the system; it is more reliable than word counts."""
+        value = str(domain or "").lower()
+        if "weboc" in value and ("2.0" in value or "weboc2" in value or "weboc 2" in value):
+            return "WeBOC 2.0"
+        if "weboc" in value:
+            return "WeBOC"
+        if "psw" in value or "single window" in value:
+            return "PSW Core"
+        if re.search(r"(?<![a-z0-9])pcs(?![a-z0-9])", value):
+            return "PCS"
+        if re.search(r"(?<![a-z0-9])acs(?![a-z0-9])", value):
+            return "ACS"
+        return None
 
     # --------------------------------------------------
 
@@ -337,22 +353,22 @@ class KnowledgeAnalyzer:
 
     def find_business_process(self, text):
 
-        matches = []
-
+        # The process the document talks about MOST, counted as whole words.
+        # (It used to return the first process in a fixed list that appeared
+        # anywhere, so a single mention of "import" labelled an export CRF "Import".)
+        best, best_count = "", 0
 
         for process in self.business_processes:
 
-            if process.lower() in text:
-                matches.append(process)
+            count = len(re.findall(
+                r"(?<![a-z0-9])" + re.escape(process.lower()) + r"(?![a-z0-9])",
+                text
+            ))
 
+            if count > best_count:
+                best, best_count = process, count
 
-
-        if matches:
-
-            return matches[0]
-
-
-        return ""
+        return best
 
 
 

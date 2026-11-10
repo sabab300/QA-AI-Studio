@@ -9,3 +9,13 @@ requests
 chromadb
 sentence-transformers
 playwright
+GitPython
+beautifulsoup4
+# AI UI/UX Testing (visual comparison, report export, safe SVG handling)
+pillow>=10.0
+numpy>=1.26
+defusedxml>=0.7
+# Optional - only needed for SQL automation against that database type:
+# psycopg
+# mysql-connector-python
+# pyodbc

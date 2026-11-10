@@ -496,6 +496,43 @@ class VectorStore:
             self.logger.exception("Source vector preflight failed.")
             return False
 
+    def get_source_chunks(self, *, domain, module, knowledge_name, version, file_names,
+                          document_type=None, document_version_id=None):
+        """Every stored chunk of the selected source document(s), in document order.
+
+        Unlike a similarity search this never drops parts of the document: Test Case
+        generation needs to see ALL requirements, not the 5 chunks closest to a question.
+        Returns [{"text", "chunk_number", "file_name", "metadata"}].
+        """
+        chunks = []
+        for order, file_name in enumerate(file_names or []):
+            clauses = [
+                {"domain": str(domain or "")}, {"module": str(module or "")},
+                {"knowledge_name": str(knowledge_name or "")},
+                {"version": str(version or "")}, {"file_name": str(file_name or "")},
+            ]
+            if document_type:
+                clauses.append({"document_type": str(document_type)})
+            if document_version_id is not None:
+                clauses.append({"document_version_id": int(document_version_id)})
+            try:
+                result = self.collection.get(where={"$and": clauses}, include=["documents", "metadatas"])
+            except Exception:
+                self.logger.exception("Reading the source document chunks failed.")
+                continue
+            found = []
+            for text, metadata in zip((result or {}).get("documents") or [], (result or {}).get("metadatas") or []):
+                metadata = metadata or {}
+                try:
+                    number = int(metadata.get("chunk_number") or 0)
+                except (TypeError, ValueError):
+                    number = 0
+                found.append({"text": text or "", "chunk_number": number,
+                              "file_name": file_name, "metadata": metadata})
+            found.sort(key=lambda item: item["chunk_number"])
+            chunks.extend(found)
+        return chunks
+
     # QA-AI-STUDIO-IMPACT-ANALYSIS-V1: domain/module-level existence
     # check (as opposed to has_source_vectors' single-exact-source
     # check above) -- used to block Impact Analysis's Target validation

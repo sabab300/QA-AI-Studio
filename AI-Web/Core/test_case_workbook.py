@@ -24,9 +24,13 @@ COLUMNS = (
     ("actual_result", "Actual Result"),
     ("execution", "Execution Type"),
     ("status", "Status"),
-    ("bug_id", "Bug ID"),
     ("comments", "Comments"),
 )
+PUBLISH_COLUMNS = COLUMNS[:-1] + (
+    ("publishing_status", "Publish"),
+    ("clickup_id", "Clickup ID"),
+    ("testmanager_id", "TestManager ID"),
+) + COLUMNS[-1:]
 # One template-token contract for mapping UI, validation, preview and publish.
 TEMPLATE_TOKEN_ALIASES = {
     "requirement_scenario": "scenario",
@@ -77,7 +81,7 @@ HEADER_TO_FIELD.update({
     "result": "status",
 })
 REQUIRED_FIELDS = (
-    "tc_number", "scenario", "test_type", "pre_conditions", "test_case", "steps",
+    "scenario", "test_type", "pre_conditions", "test_case", "steps",
     "expected_result", "importance", "execution",
 )
 EXECUTION_VALUES = ("Manual", "Playwright", "API", "SQL")
@@ -127,14 +131,14 @@ def normalize_test_case(values) -> dict:
     return row
 
 
-def workbook_bytes(rows=()) -> bytes:
+def workbook_bytes(rows=(), *, columns=COLUMNS) -> bytes:
     book = Workbook()
     sheet = book.active
     sheet.title = SHEET_NAME
-    sheet.append(list(HEADERS))
+    sheet.append([label for _, label in columns])
     for row in rows:
         row = normalize_test_case(row)
-        sheet.append([row.get(field, "") for field, _ in COLUMNS])
+        sheet.append([row.get(field, "") for field, _ in columns])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     stream = BytesIO()

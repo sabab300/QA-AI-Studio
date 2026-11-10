@@ -64,6 +64,7 @@ from Core.git_service import GitService
 from Core.test_case_repository import TestCaseRepository
 from Core.test_execution_manager import TestExecutionManager
 from Core.test_environment_config import TestEnvironmentConfig
+from Core.token_configuration_repository import TokenConfigurationRepository
 from Core.qa_engineering_web_repository import QaEngineeringWeb
 from Core.api_automation_runner import ApiAutomationRunner
 from Core.secret_masking import mask_headers, is_sensitive_key, MASK
@@ -744,13 +745,52 @@ class EnvironmentConfigWeb:
         # variable is a plain credential value that Authorization
         # configuration elsewhere (Auth type = Bearer Token) adds the
         # scheme prefix to at request-build time, not storage time.
-        self.upsert_variable(save_to_variable, str(value), secret=True)
+        # Extraction updates the value without changing the operator's
+        # Environment Settings choice. New destinations are normal
+        # variables until the operator explicitly marks them Secret.
+        existing_environment = self.config.load()
+        secret_flags = existing_environment.get("api_variable_secrets") or {}
+        existing_secret_choice = bool(secret_flags.get(save_to_variable, False))
+        self.upsert_variable(
+            save_to_variable,
+            str(value),
+            secret=existing_secret_choice,
+        )
 
         response["success"] = True
 
         response["saved_to_variable"] = save_to_variable
 
         return response
+
+
+class TokenConfigurationsWeb:
+    """CRUD for reusable Add Token request templates (never runtime values)."""
+
+    def __init__(self):
+        self.repository = TokenConfigurationRepository()
+
+    def list_all(self):
+        return self.repository.list_all()
+
+    def create(self, payload):
+        return self.repository.create(
+            payload.get("token_name"), payload.get("request_config"),
+            payload.get("extract_type"), payload.get("extract_path"),
+            payload.get("save_to_variable"),
+        )
+
+    def update(self, config_id, payload):
+        return self.repository.update(
+            config_id, payload.get("token_name"), payload.get("request_config"),
+            payload.get("extract_type"), payload.get("extract_path"),
+            payload.get("save_to_variable"),
+        )
+
+    def delete(self, config_id):
+        if not self.repository.delete(config_id):
+            raise ValueError("Token configuration was not found.")
+        return {"deleted": True, "id": int(config_id)}
 
 
 # ============================================================
@@ -1286,6 +1326,15 @@ class TestCasesWeb:
                 "The selected script source is empty and cannot be activated."
             )
 
+        # Task-1 reliability fix: a recording that is missing user actions must not become Active.
+        from Core.recording_completeness import RecordingCompleteness
+
+        incomplete_reason = RecordingCompleteness(self.repository).block_reason(test_case, source)
+
+        if incomplete_reason:
+
+            raise ValueError(incomplete_reason)
+
         expected_tool = self.repository.execution_for_automation_type(
             test_case.get("automation_type")
         )
@@ -1449,13 +1498,36 @@ class TestCasesWeb:
             # active_script_approved check untouched.
             if automation_type == "API":
 
+                # API-BULK-EXECUTE-LIFECYCLE-FIX (2026-10-02): this check
+                # used to compare the WORKBOOK-NORMALIZED test_case["status"]
+                # (collapsed by TestCaseRepository._with_test_types() ->
+                # normalize_test_case() into "Not Executed"/"Pass"/"Fail" --
+                # the LAST RESULT, never the lifecycle state) against the
+                # literal string "Automated". That can never be true for any
+                # API test case that has ever been executed (status becomes
+                # "Pass"/"Fail" the moment last_result is set), which made
+                # Execute Selected's GET /validate preflight unconditionally
+                # block every previously-validated, currently-Active API
+                # test case with the exact "has not been validated yet, or
+                # it changed" message -- even though the individual Execute
+                # button (execute_api(), which already reads
+                # automation_lifecycle_status, see below) ran it successfully
+                # moments earlier. Same root-cause class already fixed for
+                # SQL single-execute / SQL bulk preflight (see
+                # SqlAutomationWeb.execute() and TestCaseRepository.
+                # list_all_test_cases()) and for the non-API branch directly
+                # below (active_script_approved) -- this was the one
+                # remaining branch still reading the raw "status" field.
                 request_validated = self.repository.is_script_source_validated(
                     test_case, "AUTO", env_fingerprint=env_fingerprint
                 )
+                lifecycle_status = test_case.get(
+                    "automation_lifecycle_status", test_case.get("status")
+                )
                 add(
                     "request_validated",
-                    test_case.get("status") == "Automated" and request_validated,
-                    "" if test_case.get("status") == "Automated" and request_validated
+                    lifecycle_status == "Automated" and request_validated,
+                    "" if lifecycle_status == "Automated" and request_validated
                     else "The saved Request Configuration has not been "
                     "validated yet, or it changed since the last successful "
                     "Validate — run Validate again.",
@@ -1594,6 +1666,43 @@ class TestCasesWeb:
             syntax_error = manager.check_script_syntax(script)
 
             add("syntax_valid", syntax_error is None, syntax_error or "")
+            # A recording saved after an explicit "save anyway" confirmation carries a status header.
+            # It stays a Draft: it must be reviewed/completed (and the header removed) before it can
+            # pass Validate and be made Active.
+            from Core.recording_drafts import is_marked_incomplete
+            recording_complete_reported = False
+            if is_marked_incomplete(script):
+                recording_complete_reported = True
+                add(
+                    "recording_complete", False,
+                    "This script was saved from an incomplete recording (timeout, crash, lost connection or "
+                    "no interactions captured). Review and complete it, then remove the "
+                    "'# QA_RECORDING_STATUS: INCOMPLETE' header lines to validate and activate it.",
+                )
+            # Task-1 reliability fix: skipped user actions are persisted with the recording and make it
+            # Not Ready until the missing steps are restored and the correction is confirmed.
+            from Core.recording_completeness import RecordingCompleteness
+            completeness_source = source if validating_selected_source else None
+            if completeness_source is None and (test_case.get("active_script_source") or "AUTO").upper() == "MANUAL":
+                completeness_source = "MANUAL"
+            if completeness_source == "MANUAL" and not recording_complete_reported:
+                try:
+                    completeness = RecordingCompleteness(self.repository).get_state(test_case_id, "MANUAL")
+                except Exception:
+                    completeness = {"incomplete": False, "current": None}
+                if completeness["incomplete"]:
+                    add(
+                        "recording_complete", False,
+                        RecordingCompleteness(self.repository).block_reason(test_case, "MANUAL")
+                        or "This recording is incomplete.",
+                    )
+                elif (completeness.get("current") or {}).get("status") == "CORRECTED":
+                    record = completeness["current"]
+                    add(
+                        "recording_complete", True,
+                        f"{record['original_skipped_count']} skipped action(s) were recorded originally; "
+                        "the missing steps were restored and the correction was confirmed.",
+                    )
             locator_quality = manager.assess_playwright_script_quality(script)
             invalid_locators = [item for item in locator_quality if item["classification"] == "Invalid"]
             quality_summary = ", ".join(
@@ -2095,6 +2204,70 @@ class TestCasesWeb:
                 test_case, test_case.get("active_script_source") or "AUTO"
             )
             and bool(TestExecutionManager.get_active_script(test_case))
+            and not self._incomplete_recording_reason(test_case)
+        )
+
+    def _incomplete_recording_reason(self, test_case):
+        """Task-1 reliability fix: why the script Execute would run is an incomplete recording (or None)."""
+        from Core.recording_completeness import RecordingCompleteness
+
+        return RecordingCompleteness(self.repository).block_reason(test_case, None)
+
+    _SOURCE_LABELS = {
+        "AUTO": "AI-generated", "MANUAL": "Recorded", "UPLOADED": "Uploaded",
+    }
+
+    def execute_block_reason(self, test_case):
+        """
+        Task-1 closure: say WHY Execute is refused. The old single message
+        ("has no Playwright automation script available yet") was misleading
+        when a script exists but is Draft / not validated / not the active
+        source -- the operator then looked for a script that was already there.
+        """
+        if test_case.get("automation_type") != "Playwright":
+            return (
+                "Execute runs Playwright automation only - this test case's Automation "
+                "Type isn't Playwright. Use Execute Against Real Server for an API test case."
+            )
+        if test_case.get("execution") != "Playwright":
+            return (
+                f"This test case's Execution is set to '{test_case.get('execution') or 'not set'}', "
+                "not Playwright. Change Execution to Playwright, then Validate and Set Active the script."
+            )
+        scripts = {
+            "AUTO": test_case.get("automation_script"),
+            "MANUAL": test_case.get("recorded_script"),
+            "UPLOADED": test_case.get("uploaded_script"),
+        }
+        present = [self._SOURCE_LABELS[k] for k, v in scripts.items() if (v or "").strip()]
+        if not present:
+            return (
+                "This test case has no Playwright script yet - use Add Automation (AI), "
+                "Record Script or Import Script first."
+            )
+        active = str(test_case.get("active_script_source") or "AUTO").upper()
+        active_label = self._SOURCE_LABELS.get(active, active)
+        lifecycle = test_case.get("automation_lifecycle_status", test_case.get("status"))
+        found = " and ".join(present)
+        if not (scripts.get(active) or "").strip():
+            return (
+                f"A Playwright script exists ({found}) but the active source ({active_label}) "
+                "has no script. Open View Script, choose the script to run, Validate it and "
+                "click Set Active."
+            )
+        incomplete_reason = self._incomplete_recording_reason(test_case)
+        if incomplete_reason:
+            return incomplete_reason
+        if not self.repository.is_script_source_validated(test_case, active):
+            return (
+                f"A {active_label} Playwright script exists but it has not been validated "
+                f"(status: {lifecycle or 'Draft'}). Open View Script, click Validate, then "
+                "Set Active - Execute is enabled once the script is validated and active."
+            )
+        return (
+            f"A {active_label} Playwright script exists but the test case is not activated "
+            f"(status: {lifecycle or 'Draft'}). Open View Script and click Set Active - "
+            "Execute is enabled once the validated script is active."
         )
 
     def start_execution(
@@ -2110,12 +2283,7 @@ class TestCasesWeb:
 
         if not self.can_auto_execute(test_case):
 
-            raise ValueError(
-                "This test case has no Playwright automation script "
-                "available yet (or its Automation Type isn't "
-                "Playwright) — use Add Automation first, or use "
-                "Execute Against Real Server for an API test case."
-            )
+            raise ValueError(self.execute_block_reason(test_case))
 
         run = self.runs.create_run(
             test_case, executed_by_user_id, executed_by_username, re_run_of,
@@ -2794,20 +2962,12 @@ class TestCasesWeb:
 
                     is_secret = is_sensitive_key(name)
 
-                # The fingerprint hashes the value rather than
-                # embedding it directly — auto_script_validated_hash
-                # is never returned to any client (unlike
-                # get_api_request_config()/execute_api()'s results),
-                # but this keeps that guarantee intact even so, and
-                # keeps a real secret out of anywhere this fingerprint
-                # might ever end up logged.
-                value_hash = (
-                    hashlib.sha256(str(value).encode("utf-8")).hexdigest()
-                    if value else ""
-                )
-
+                # Runtime token values are deliberately excluded: the
+                # request definition references the variable name, not the
+                # current secret behind it. Presence and secret classification
+                # still belong to environment readiness.
                 parts.append(
-                    f"var:{name}={value_hash}:secret={bool(is_secret)}"
+                    f"var:{name}:defined={bool(value)}:secret={bool(is_secret)}"
                 )
 
             return "|".join(parts)
@@ -2854,10 +3014,14 @@ class TestCasesWeb:
                 "This Test Case is not eligible for API Automation."
             )
 
-        if test_case.get("status") != "Automated":
+        lifecycle_status = test_case.get(
+            "automation_lifecycle_status", test_case.get("status")
+        )
+
+        if lifecycle_status != "Automated":
 
             # REQUEST-CENTRIC-LIFECYCLE-FINAL EXECUTE section: exact
-            # required wording — status != "Automated" here means
+            # required wording — lifecycle_status != "Automated" means
             # either this Request Configuration has never been
             # validated, or it changed (any executable-field edit
             # demotes status back to Draft and clears the validated
@@ -3079,6 +3243,7 @@ class TestCasesWeb:
             "endpoint": endpoint_summary,
             "status_code": result.get("status_code"),
             "expected_status": result.get("expected_status"),
+            "status_check": result.get("status_check"),
             "assertions": result.get("assertions") or [],
             "extracted_variables": masked_extracted_variables,
             "request": result.get("request") or {},
@@ -3118,13 +3283,28 @@ class TestCasesWeb:
                 if not item.get("passed")
             ]
 
-            if failed_assertions:
+            # The main Expected HTTP Status is validated independently
+            # of the additional assertions; either one failing is FAIL,
+            # and both are named in the failure text.
+            status_check = result.get("status_check") or {}
 
-                failure_detail = "; ".join(
-                    f"{item.get('label') or item.get('type')}: "
-                    f"{item.get('message')}"
-                    for item in failed_assertions
+            failure_parts = []
+
+            if status_check.get("enforced") and status_check.get("passed") is False:
+
+                failure_parts.append(
+                    f"Expected HTTP Status: {status_check.get('message')}"
                 )
+
+            failure_parts.extend(
+                f"{item.get('label') or item.get('type')}: "
+                f"{item.get('message')}"
+                for item in failed_assertions
+            )
+
+            if failure_parts:
+
+                failure_detail = "; ".join(failure_parts)
 
             else:
 
@@ -3219,6 +3399,25 @@ class SqlAutomationWeb:
 
     @staticmethod
     def _pack_script(sql, assertion_type, assertion_value, assertion_column):
+
+        # SQL-AUTOMATION-LIFECYCLE root-cause fix: an unset assertion
+        # field arrives here as None from a backend caller (e.g.
+        # generate_sql()) but as "" from the frontend's Save Script
+        # payload (reading an empty <input>.value is always "", never
+        # null) — semantically identical ("no value configured"), but
+        # textually different once serialized. TestCaseRepository.
+        # update_automation() — shared with Playwright/API — decides
+        # "script changed" via a plain text comparison of the
+        # persisted automation_script JSON, so that textual difference
+        # alone made a completely no-op Save Script (right after Set
+        # Active) look like a real content change and silently
+        # demoted Active back to Draft, which is what then made
+        # Execute wrongly report "still Draft". Normalizing both to
+        # None here, at the one place the envelope is built, fixes it
+        # at the source without touching the shared text-diff logic
+        # Playwright/API also rely on.
+        assertion_value = assertion_value if assertion_value not in (None, "") else None
+        assertion_column = assertion_column if assertion_column not in (None, "") else None
 
         return json.dumps({
             "sql": sql or "",
@@ -3703,7 +3902,29 @@ class SqlAutomationWeb:
                 "This Test Case is not eligible for SQL Automation."
             )
 
-        if test_case.get("status") != "Automated":
+        # SQL-AUTOMATION-LIFECYCLE root-cause fix #2: TestCaseRepository.
+        # get_test_case() runs normalize_test_case() -> normalize_status(),
+        # which OVERWRITES "status" with the workbook-export execution-
+        # result status (Pass/Fail/Not Executed) and explicitly collapses
+        # the raw lifecycle value "Automated" itself into "Not Executed"
+        # whenever last_result isn't Pass/Fail yet (i.e. every test case
+        # that hasn't been executed even once). get_test_case() already
+        # preserves the real pre-normalization value under
+        # automation_lifecycle_status for exactly this reason (see its
+        # own docstring/comment) — validate_for_execution()'s API-side
+        # Execute check already reads it correctly via
+        # test_case.get("automation_lifecycle_status", test_case.get("status")).
+        # This SQL-side check was reading the plain, normalized "status"
+        # directly, so it was UNCONDITIONALLY false ("Not Executed" !=
+        # "Automated") immediately after a real, successful Set Active —
+        # which is exactly why PATCH .../sql-active returned 200 while the
+        # very next POST .../execute-sql still reported "still Draft",
+        # regardless of Save Script order. Mirroring the already-correct
+        # API pattern here fixes it without touching what "status" means
+        # for any other consumer (dashboards, workbook export, etc.).
+        lifecycle_status = test_case.get("automation_lifecycle_status", test_case.get("status"))
+
+        if lifecycle_status != "Automated":
 
             raise ValueError(
                 "The SQL script is still Draft. Validate and activate it first."

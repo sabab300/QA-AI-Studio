@@ -42,6 +42,12 @@ from Core.knowledge_discovery_sessions import KnowledgeDiscoverySessions
 from Core.user_repository import UserRepository
 from Web.deps import require_permission
 
+try:  # QA-AI-STUDIO-UIUX-KH: optional AI UI/UX Testing design service (Source Type Figma)
+    from Core.uiux.kh_bridge import DesignServiceUnavailable
+except Exception:  # noqa: BLE001 - Knowledge Hub keeps working without the module
+    class DesignServiceUnavailable(Exception):
+        pass
+
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 logger = logging.getLogger(__name__)
 
@@ -545,7 +551,19 @@ def upload(
             document_type=document_type,
             source_type=source_type,
             reviewed_analysis=reviewed_analysis,
+            created_by=(current_user or {}).get("username", "") if isinstance(current_user, dict) else "",
         )
+
+    except FileExistsError as error:
+
+        raise HTTPException(
+            status_code=409,
+            detail=str(error) + " Upload it with a different Version or file name, or delete the existing one first.",
+        )
+
+    except DesignServiceUnavailable as error:
+
+        raise HTTPException(status_code=503, detail=str(error))
 
     except ValueError as error:
 

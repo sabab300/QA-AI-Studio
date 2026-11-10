@@ -92,29 +92,40 @@ class LLMEngine:
 
     def _provider(self):
 
-        mode = settings.AI_MODE.lower()
+        # QA-AI-STUDIO-TASK4: every answer-LLM call goes through the AI
+        # platform gateway (Settings -> LLM). Provider/model switching and
+        # the cloud-permission / fallback policy live there. The legacy
+        # Ollama provider is kept only as a safety net if the platform
+        # package cannot be imported.
+        try:
 
+            from Core.ai_platform.compat import GatewayLLMProvider
 
-        if mode == "local":
+            return GatewayLLMProvider()
+
+        except Exception:
+
+            self.logger.exception(
+                "AI platform gateway unavailable; using legacy Ollama provider."
+            )
 
             return self.local_provider
 
 
-        if mode == "cloud":
 
-            return self.cloud_provider
+    def _cache_enabled(self):
 
+        try:
 
-        if mode == "hybrid":
+            from Core.ai_platform import runtime
 
-            if self.local_provider.is_available():
+            tokens = runtime.get_store().get_section("tokens")
 
-                return self.local_provider
+            return bool((tokens.get("exact_cache") or {}).get("enabled", True))
 
-            return self.cloud_provider
+        except Exception:
 
-
-        return None
+            return True
 
 
 
@@ -172,8 +183,32 @@ class LLMEngine:
 
     def _cache_key(self, prompt):
 
+        # QA-AI-STUDIO-TASK4: the key used to be the prompt alone, so after
+        # switching provider/model (or user) a stale answer from the previous
+        # model could be returned. It now also covers the resolved
+        # provider/model, the requesting user and the knowledge token.
+        scope = ""
+
+        try:
+
+            from Core.ai_platform import runtime
+
+            ctx = runtime.get_context()
+            gw = runtime.get_gateway()
+            pid, model, source = gw.resolve_primary(
+                ctx.get("task") or "answer", ctx.get("selection")
+            )
+            scope = "|".join([
+                str(pid), str(model), str(ctx.get("username", "")),
+                str(ctx.get("data_class", "")),
+            ])
+
+        except Exception:
+
+            scope = "legacy"
+
         return hashlib.md5(
-            prompt.encode("utf-8")
+            (scope + "\x00" + prompt).encode("utf-8")
         ).hexdigest()
 
 
@@ -278,7 +313,7 @@ class LLMEngine:
             )
 
 
-            cached = self.cache.get(cache_key)
+            cached = self.cache.get(cache_key) if self._cache_enabled() else None
 
 
             if cached:
@@ -410,13 +445,12 @@ class LLMEngine:
             )
 
 
-            self.memory.save(
-
-                optimized_prompt,
-
-                response
-
-            )
+            # QA-AI-STUDIO-TASK4: this used to write the full optimized
+            # prompt (including retrieved knowledge text) into ai_memory
+            # under the shared session "default". The orchestrator already
+            # stores the user's question and the answer under the user's own
+            # session, so the duplicate (and the knowledge leak into a shared
+            # table) is removed.
 
             # [AI-DIAG] temporary diagnostic — final generated answer
             # length after validator + guard + formatter, i.e. exactly
@@ -447,13 +481,15 @@ class LLMEngine:
             }
 
 
-            self.cache.save(
+            if self._cache_enabled():
 
-                cache_key,
+                self.cache.save(
 
-                final
+                    cache_key,
 
-            )
+                    final
+
+                )
 
 
             return final

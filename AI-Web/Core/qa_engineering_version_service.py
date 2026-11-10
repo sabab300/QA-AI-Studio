@@ -20,6 +20,16 @@ from Shared.central_repository import CentralRepository
 from Shared.document_hierarchy import DocumentHierarchy
 
 
+
+# A generated case that failed an automatic quality gate (assumption, approximate evidence, weak expected result ...)
+# is stored as "Needs Review" so QA Automation does not pick it up until a person has reviewed and saved it.
+REVIEW_STATES = {"Reviewed/Saved", "Needs Review"}
+
+
+def review_state_of(values) -> str:
+    state = str((values or {}).get("review_state") or "").strip()
+    return state if state in REVIEW_STATES else "Reviewed/Saved"
+
 class QaEngineeringVersionService:
     def __init__(self):
         self.repository = TestCaseRepository()
@@ -174,6 +184,7 @@ class QaEngineeringVersionService:
         for operation in operations:
             action = operation.get("action")
             values = dict(operation.get("values") or {})
+            values["review_state"] = "Reviewed/Saved"  # a person reviewed this row in this revision
             if action == "insert":
                 rows.append(values)
             elif action in {"update", "delete"}:
@@ -230,6 +241,11 @@ class QaEngineeringVersionService:
             folder_base = final_folder.name
             sequence = 1
             workbook_name = f"{folder_base}-TC{sequence}.xlsx"
+            if origin == "Reviewed Revision" and requested_name:
+                name = str(requested_name).strip()
+                if name.lower().endswith(".xlsx"):
+                    name = name[:-5]
+                workbook_name = self.central.sanitize_segment(name, "Test Cases filename") + ".xlsx"
             final_workbook = final_folder / workbook_name
             self.central.validate_excel_path(final_workbook)
             now = datetime.now().isoformat()
@@ -301,8 +317,8 @@ class QaEngineeringVersionService:
                     ).fetchone()
                     if not current: raise ValueError(f"Test Case id={test_case_id} is outside the selected version.")
                     self.repository._validate_case(values, cursor)
-                    cursor.execute("""UPDATE test_cases SET scenario=?,importance=?,test_type=?,test_case=?,pre_conditions=?,steps=?,expected_result=?,actual_result=?,execution=?,status=?,bug_id=?,comments=?,review_state='Reviewed/Saved',modified_date=? WHERE id=?""",
-                                   (values.get("scenario", ""), values.get("importance", ""), self.repository._serialize_test_types(values), values.get("test_case", ""), values.get("pre_conditions", ""), values.get("steps", ""), values.get("expected_result", ""), values.get("actual_result", ""), normalize_execution(values), values.get("status", ""), values.get("bug_id", ""), values.get("comments", ""), now, test_case_id))
+                    cursor.execute("""UPDATE test_cases SET scenario=?,importance=?,test_type=?,test_case=?,pre_conditions=?,steps=?,expected_result=?,actual_result=?,execution=?,status=CASE WHEN automation_type IN ('API','SQL','Playwright') THEN status ELSE ? END,last_result=?,comments=?,review_state='Reviewed/Saved',modified_date=? WHERE id=?""",
+                                   (values.get("scenario", ""), values.get("importance", ""), self.repository._serialize_test_types(values), values.get("test_case", ""), values.get("pre_conditions", ""), values.get("steps", ""), values.get("expected_result", ""), values.get("actual_result", ""), normalize_execution(values), values.get("status", ""), values.get("status", ""), values.get("comments", ""), now, test_case_id))
                 elif action == "delete":
                     test_case_id = int(operation.get("id") or 0)
                     deleted = cursor.execute(
@@ -369,7 +385,7 @@ class QaEngineeringVersionService:
             values.get("expected_result", ""), values.get("status", ""), "None", "Not Run",
             normalize_execution(values),
             json.dumps([source["id"]]), workbook_name, source.get("document_type") or "",
-            source.get("source_type") or "", "Reviewed/Saved", now, now, int(version_id), "",
+            source.get("source_type") or "", review_state_of(values), now, now, int(version_id), "",
             values.get("actual_result", ""), values.get("bug_id", ""), values.get("comments", ""), source["document_version_id"],
         )
         cursor.execute(

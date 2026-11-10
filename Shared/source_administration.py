@@ -27,7 +27,7 @@ def delete_source(database,central,store,source_id):
             columns={row[1] for row in connection.execute('PRAGMA table_info('+table+')')}
             if item.get('document_version_id') and {'status','document_version_id'}<=columns and connection.execute('SELECT 1 FROM '+table+" WHERE document_version_id=? AND lower(status) IN ('queued','running') LIMIT 1",(item['document_version_id'],)).fetchone():
                 raise ValueError('An active generation or automation run owns this source hierarchy. Wait for it to finish before deleting the source.')
-        for table,column in [('test_case_versions','source_knowledge_id'),('test_case_sources','knowledge_source_id'),('api_collections','linked_knowledge_item_id')]:
+        for table,column in [('test_case_versions','source_knowledge_id'),('test_case_sources','knowledge_source_id'),('api_collections','linked_knowledge_item_id'),('api_discovery_collections','source_id')]:
             columns={row[1] for row in connection.execute('PRAGMA table_info('+table+')')}
             if column in columns and connection.execute('SELECT 1 FROM '+table+' WHERE '+column+'=? LIMIT 1',(source_id,)).fetchone():
                 raise ValueError('Cannot delete source while dependent '+table+' records exist. Delete its dependents first.')

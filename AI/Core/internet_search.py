@@ -111,11 +111,15 @@ class InternetSearch:
 
     ):
 
-        return self.duckduckgo.search(
-
-        question
-
-    )
+        primary = self.duckduckgo.search(question)
+        if primary.get('success'):
+            return primary
+        from Shared.encyclopedia_search import search_encyclopedia
+        fallback = search_encyclopedia(question)
+        if fallback.get('success'):
+            return fallback
+        return dict(primary, error=str(primary.get('error') or 'DuckDuckGo search failed.')
+                    + ' Fallback: ' + str(fallback.get('error') or 'unavailable'))
 
     # --------------------------------------------------
     # Tavily

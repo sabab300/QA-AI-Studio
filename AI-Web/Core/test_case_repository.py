@@ -6,7 +6,7 @@ Test Case Repository
 
 Version: 1.0
 
-Persists individual generated test cases (TC001, TC002...) so they
+Persists individual generated test cases so they
 can be listed, statused, and executed from QA Automation — instead
 of only ever existing inside an exported Excel/Word/PDF file.
 
@@ -312,6 +312,10 @@ class TestCaseRepository:
             "CREATE INDEX IF NOT EXISTS idx_playwright_assets_source_tc "
             "ON playwright_automation_assets(source_knowledge_id,tc_id)"
         )
+        # Task 1 / Phase 7: immutable per-slot script revision history
+        # (additive table; see Core/playwright_script_lifecycle.py).
+        from Core import playwright_script_lifecycle
+        playwright_script_lifecycle.ensure_schema(cursor)
         for migration in (
             "ALTER TABLE playwright_automation_assets ADD COLUMN uploaded_script TEXT",
             "ALTER TABLE playwright_automation_assets ADD COLUMN uploaded_script_validated_hash TEXT NOT NULL DEFAULT ''",
@@ -574,12 +578,7 @@ class TestCaseRepository:
 
         now = datetime.now().isoformat()
 
-        next_number = self._next_tc_number(
-            cursor,
-            domain,
-            module,
-            knowledge_name
-        )
+        cursor.execute("BEGIN IMMEDIATE")
 
         saved_ids = []
 
@@ -611,7 +610,20 @@ class TestCaseRepository:
 
         for row in rows:
 
-            tc_number = f"TC{next_number:03d}"
+            try:
+                tc_number = self._allocate_tc_id(
+                cursor,
+                {
+                    "domain": domain,
+                    "module": module,
+                    "knowledge_name": knowledge_name,
+                    "domain_id": domain_id,
+                    "module_id": module_id,
+                },
+                direct_sources,
+                )
+            except Exception:
+                conn.rollback();conn.close();raise
 
             try:
 
@@ -662,8 +674,6 @@ class TestCaseRepository:
                     self._replace_sources(cursor,test_case_id,direct_sources)
                 saved_ids.append(test_case_id)
 
-                next_number += 1
-
             except Exception:
 
                 # Extremely unlikely UNIQUE collision (concurrent
@@ -692,33 +702,6 @@ class TestCaseRepository:
 
         return saved_ids
 
-
-    def _next_tc_number(self, cursor, domain, module, knowledge_name):
-
-        cursor.execute(
-            """
-            SELECT tc_number
-            FROM test_cases
-            WHERE domain=? AND module=? AND knowledge_name=?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (domain, module, knowledge_name)
-        )
-
-        row = cursor.fetchone()
-
-        if not row:
-
-            return 1
-
-        try:
-
-            return int(row[0].replace("TC", "")) + 1
-
-        except (ValueError, AttributeError):
-
-            return 1
 
     def review_save(self, scope, operations):
         """Apply only selected changes in one DB transaction with canonical artifacts."""
@@ -976,39 +959,66 @@ class TestCaseRepository:
         cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "NA")).strip("._")
         return cleaned[:100] or "NA"
 
+    @staticmethod
+    def _hierarchy_initial(value, label):
+        match = re.search(r"[A-Za-z0-9]", str(value or ""))
+        if not match:
+            raise ValueError(f"{label} must contain at least one letter or number.")
+        return match.group(0).upper()
+
     def _allocate_tc_id(self, cursor, scope, sources):
-        domain_id = sources[0].get("domain_id") or "0"; module_id = sources[0].get("module_id") or "0"
-        knowledge_id = min(item["id"] for item in sources)
-        version_row = cursor.execute("SELECT id FROM knowledge_versions WHERE knowledge_item_id=? AND version=? ORDER BY id LIMIT 1", (knowledge_id, scope.get("version") or "")).fetchone()
-        version_id = (version_row or {}).get("id") if isinstance(version_row, dict) else (version_row[0] if version_row else "0")
-        prefix = "TC_" + "_".join((f"D{domain_id}", f"M{module_id}", f"KN{knowledge_id}", f"V{version_id}",
-                                      self._segment(scope.get("document_type") or "DOC").upper(), self._source_code(self._combined_source_type(sources))))
-        row = cursor.execute("SELECT next_value FROM test_case_id_sequences WHERE prefix=?", (prefix,)).fetchone()
+        """Allocate one short display ID from a stable hierarchy-owned sequence."""
+        sources = sources or []
+        domain_id = (sources[0].get("domain_id") if sources else None) or scope.get("domain_id")
+        module_id = (sources[0].get("module_id") if sources else None) or scope.get("module_id")
+        if not domain_id or not module_id:
+            raise ValueError("Domain and Module identities are required to allocate a Test Case ID.")
+
+        knowledge_name = str(scope.get("knowledge_name") or "").strip()
+        knowledge_row = cursor.execute(
+            """SELECT MIN(id) FROM knowledge_items
+               WHERE domain_id=? AND module_id=? AND knowledge_name=?""",
+            (int(domain_id), int(module_id), knowledge_name),
+        ).fetchone()
+        knowledge_id = (
+            next(iter(knowledge_row.values())) if isinstance(knowledge_row, dict) and knowledge_row
+            else (knowledge_row[0] if knowledge_row else None)
+        )
+        if not knowledge_id and sources:
+            knowledge_id = min(int(item["id"]) for item in sources)
+        if not knowledge_id:
+            raise ValueError("Knowledge identity is required to allocate a Test Case ID.")
+
+        initials = "".join((
+            self._hierarchy_initial(scope.get("domain"), "Domain"),
+            self._hierarchy_initial(scope.get("module"), "Module"),
+            self._hierarchy_initial(knowledge_name, "Knowledge Name"),
+        ))
+        visible_prefix = f"TC_{initials}"
+        # The sequence owner deliberately uses stable hierarchy IDs rather than
+        # the visible initials, which can collide across unrelated hierarchies.
+        ownership_key = f"TCSEQ:D{int(domain_id)}:M{int(module_id)}:KN{int(knowledge_id)}"
+        row = cursor.execute(
+            "SELECT next_value FROM test_case_id_sequences WHERE prefix=?",
+            (ownership_key,),
+        ).fetchone()
         sequence = int((row or {}).get("next_value", 1) if isinstance(row, dict) else (row[0] if row else 1))
-        # ROOT CAUSE 4 (confirmed 2026-09-09 by reproducing an actual
-        # POST /api/automation/test-cases/import against the real
-        # downloaded sample template): test_case_id_sequences is a
-        # SEPARATELY tracked counter, not derived from test_cases
-        # itself -- so any tc_id that ever entered test_cases WITHOUT
-        # going through this method (a legacy/Desktop migration row,
-        # a restored/partial backup, a manual data fix) leaves the
-        # counter behind reality. The next legitimate call here then
-        # proposes a tc_id that's already taken, and INSERT raises a
-        # raw sqlite3 "UNIQUE constraint failed: test_cases.tc_id" --
-        # which review_save()'s caller surfaces verbatim as the
-        # Import 400 body, not a useful, row-specific reason. Since
-        # this method is the ONLY place a tc_id for a given prefix is
-        # minted, self-heal here: skip forward past any value that's
-        # already actually in use before handing one out, and persist
-        # the counter one past whatever was actually allocated -- so
-        # a drifted counter recovers silently on the very next call
-        # instead of failing the whole import/generate.
+        # Initials are presentation only and are not globally unique. Skip any
+        # visible collision, including legacy/manual rows that bypassed this
+        # sequence table, before reserving the number transactionally.
         while cursor.execute(
-            "SELECT 1 FROM test_cases WHERE tc_id=? LIMIT 1", (f"{prefix}_{sequence:04d}",)
+            "SELECT 1 FROM test_cases WHERE tc_id=? OR tc_number=? LIMIT 1",
+            (f"{visible_prefix}_{sequence:04d}", f"{visible_prefix}_{sequence:04d}"),
         ).fetchone():
             sequence += 1
-        cursor.execute("INSERT INTO test_case_id_sequences(prefix,next_value) VALUES(?,?) ON CONFLICT(prefix) DO UPDATE SET next_value=excluded.next_value", (prefix, sequence + 1))
-        return f"{prefix}_{sequence:04d}"
+        if sequence > 9999:
+            raise ValueError("The Test Case ID sequence has reached its 9999 limit for this hierarchy.")
+        cursor.execute(
+            """INSERT INTO test_case_id_sequences(prefix,next_value) VALUES(?,?)
+               ON CONFLICT(prefix) DO UPDATE SET next_value=excluded.next_value""",
+            (ownership_key, sequence + 1),
+        )
+        return f"{visible_prefix}_{sequence:04d}"
 
     def _backfill_canonical_ids(self, cursor):
         rows = cursor.execute("SELECT * FROM test_cases WHERE tc_id IS NULL OR tc_id='' ORDER BY id").fetchall()
@@ -1269,7 +1279,27 @@ class TestCaseRepository:
 
         conn.close()
 
-        return {"test_cases": [self._with_sources(self._with_test_types(self._with_stable_playwright(row))) for row in rows], "total": total}
+        # SQL-AUTOMATION-LIFECYCLE root-cause fix #3: this is the
+        # same normalize_status() collapse documented in
+        # get_test_case() above ("status" gets overwritten with the
+        # workbook-export Pass/Fail/Not Executed value, which also
+        # collapses the raw "Automated" lifecycle value itself) --
+        # but this listing method (used by the Automation Workspace
+        # grid / GET /workspace, which Execute Selected's SQL
+        # preflight reads tc.status directly from) never preserved
+        # automation_lifecycle_status the way get_test_case() does,
+        # so every row returned here was MISSING that field entirely
+        # -- not just reading the wrong one. Mirrored here so every
+        # consumer of this listing (not only SQL) can tell execution
+        # result and automation lifecycle apart. Purely additive:
+        # "status" itself keeps meaning exactly what it always has
+        # for every existing consumer (dashboards, workbook export).
+        items = []
+        for row in rows:
+            item = self._with_stable_playwright(row)
+            item["automation_lifecycle_status"] = item.get("status")
+            items.append(self._with_sources(self._with_test_types(item)))
+        return {"test_cases": items, "total": total}
 
     def list_distinct_scopes(self):
         """
@@ -1546,6 +1576,35 @@ class TestCaseRepository:
             self._restore_playwright_files(changes)
             raise
 
+    def _active_source_after_emptying(self, emptied, slots, lifecycle):
+        """
+        Where the active-script reference must point once the ACTIVE script slot has been
+        emptied (removed, or saved blank).  Never at the empty slot itself:
+
+        1. another slot whose script is present AND still validated -> that slot becomes active
+           (it is exactly as executable as it was before; lifecycle stays/returns Automated);
+        2. else another slot that has a script (not validated) -> point at it, lifecycle Draft,
+           so it must be validated and Set Active before it can run;
+        3. else the neutral default 'AUTO' (what a test case with no script at all has), Draft.
+
+        `slots` maps source -> (script_text, validated_hash) AFTER the change.
+        """
+        order = ("UPLOADED", "MANUAL", "AUTO")
+
+        def present(name):
+            return bool((slots[name][0] or "").strip())
+
+        def validated(name):
+            return present(name) and (slots[name][1] or "") == self.script_fingerprint(slots[name][0])
+
+        for name in order:
+            if name != emptied and validated(name):
+                return name, "Automated"
+        for name in order:
+            if name != emptied and present(name):
+                return name, "Draft"
+        return "AUTO", "Draft"
+
     def _update_stable_playwright_script(
         self, test_case_id, script, source="AUTO", conn=None, all_changes=None,
     ):
@@ -1598,6 +1657,21 @@ class TestCaseRepository:
             else:
                 auto_script = script
                 if changed: auto_hash = ""
+            if not (script or "").strip() and active_source.upper() == source:
+                # The ACTIVE script is being emptied/removed: never leave the active-source
+                # reference pointing at an empty slot (see _active_source_after_emptying).
+                active_source, lifecycle = self._active_source_after_emptying(
+                    source,
+                    {"AUTO": (auto_script, auto_hash), "UPLOADED": (uploaded_script, uploaded_hash),
+                     "MANUAL": (manual_script, manual_hash)},
+                    lifecycle,
+                )
+            # Task 1 / Phase 7: record the revision in THIS transaction so
+            # DB, files and script history are saved (or rolled back) together.
+            from Core import playwright_script_lifecycle
+            playwright_script_lifecycle.capture(
+                self, conn, scope_key, tc_id, source, previous_script, script, changed
+            )
             changes = self._materialize_playwright_script(
                 conn, source_id, tc_id, script, source=source
             )

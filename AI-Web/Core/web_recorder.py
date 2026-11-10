@@ -173,6 +173,7 @@ from pathlib import Path
 from Core.logger import Logger
 from Core.test_case_repository import TestCaseRepository
 from Core.playwright_step_metadata import metadata_comment
+from Core import recorder_window
 from Core.test_environment_config import TestEnvironmentConfig
 
 logger = Logger.get_logger()
@@ -249,8 +250,36 @@ class _DedicatedLoopThread:
 # See that function's own docstring for the reasoning.
 RECORDER_JS = r"""
 (function () {
-  if (window.__qaRecorderInstalled) return;
-  window.__qaRecorderInstalled = true;
+  // POPUP-SELECTION-CAPTURE: the guard is keyed on the DOCUMENT, not the
+  // window. A window.open() popup starts as the initial about:blank document
+  // and, for a same-origin target, Chromium keeps the SAME window object when
+  // it navigates to the real page. Init scripts do not run again for that new
+  // document, so a window-level boolean left the recorder installed on a
+  // document that no longer existed and the popup's real page was never
+  // observed. The Python side re-runs this script on every committed document
+  // (see _ensure_recorder_attached); this guard makes that safe and idempotent.
+  if (window.__qaRecorderInstalled === document) return;
+  window.__qaRecorderInstalled = document;
+  var PENDING_RECORDER_TASKS = new Set();
+  function trackRecorderTask(task) {
+    task = Promise.resolve(task);
+    PENDING_RECORDER_TASKS.add(task);
+    task.then(function(){PENDING_RECORDER_TASKS.delete(task);}, function(){window.__qaRecorderDeliveryFailed=true;PENDING_RECORDER_TASKS.delete(task);});
+    return task;
+  }
+  window.__qaRecorderFlush = async function() {
+    // Task-1: commit a value typed into a still-focused text field exactly the
+    // way tabbing out would (blur() fires the native change event), BEFORE the
+    // finishing flag silences the listeners -- otherwise the last typed value
+    // of a recording is silently lost.
+    try {
+      var activeEl = document.activeElement;
+      if (activeEl && activeEl !== document.body && isTextEntry(activeEl)) activeEl.blur();
+    } catch (e) {}
+    window.__qaRecorderFinishing = true;
+    while (PENDING_RECORDER_TASKS.size) await Promise.all(Array.from(PENDING_RECORDER_TASKS));
+    if (window.__qaRecorderDeliveryFailed) throw new Error('Recorder action delivery failed; recording was not saved.');
+  };
 
   var UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
   var LONG_HEX_RE = /[0-9a-fA-F]{8,}/;
@@ -553,7 +582,32 @@ RECORDER_JS = r"""
     } catch (e) { return 0; }
   }
 
-  function computeLocator(el) {
+  // Playwright's get_by_role(name=...) matches case-insensitively by SUBSTRING unless exact=True,
+  // while locatorMatchCount() above proves uniqueness by EXACT equality. A name that is contained in
+  // another same-role control's name (a calendar day "5" vs "15"/"25", "Save" vs "Save and close")
+  // therefore resolved to several elements at replay. Such role locators are flagged so the generated
+  // code uses exact=True. Short numeric names are always flagged: they collide as soon as the page
+  // content changes.
+  function roleNameIsSubstringAmbiguous(role, name, root) {
+    if (/^\d{1,3}$/.test(name)) return true;
+    try {
+      var needle = String(name).toLowerCase(), count = 0;
+      Array.prototype.forEach.call((root || document).querySelectorAll('button,a,input,select,textarea,[role]'), function(node) {
+        if ((attr(node, 'role') || implicitRole(node)) !== role) return;
+        var candidate = accessibleName(node);
+        if (candidate && String(candidate).toLowerCase().indexOf(needle) !== -1) count++;
+      });
+      return count > 1;
+    } catch (e) { return false; }
+  }
+
+  function roleLocatorFor(role, name, root) {
+    var locator = { strategy: 'role', role: role, name: name };
+    if (roleNameIsSubstringAmbiguous(role, name, root)) locator.exact = true;
+    return locator;
+  }
+
+  function computeLocator(el, allowDisambiguation) {
     var known = knownLocatorFor(el);
     if (known && locatorMatchCount(known) === 1) return known;
     for (var i = 0; i < 4; i++) {
@@ -579,7 +633,7 @@ RECORDER_JS = r"""
     var role = attr(el, 'role') || implicitRole(el);
     var name = accessibleName(el);
     if (role && name) {
-      var roleLocator = { strategy: 'role', role: role, name: name };
+      var roleLocator = roleLocatorFor(role, name);
       if (locatorMatchCount(roleLocator) === 1) return roleLocator;
     }
     var placeholder = attr(el, 'placeholder');
@@ -616,7 +670,7 @@ RECORDER_JS = r"""
     if (cssInfo.fragileCount > 0 || isLayoutDependentCss(cssInfo.path)) {
       var xp = xpathFor(el);
       if (xp && locatorMatchCount({strategy:'xpath', value:xp}) === 1) return { strategy: 'xpath', value: xp };
-      return null;
+      return allowDisambiguation ? disambiguatedLocatorFor(el) : null;
     }
     var cssLocator = { strategy: 'css', value: cssInfo.path };
     if (cssInfo.path && locatorMatchCount(cssLocator) === 1) return cssLocator;
@@ -626,6 +680,94 @@ RECORDER_JS = r"""
     }
     // A recorder event without a unique locator is diagnostic only. Never
     // serialize an ambiguous generic selector such as .k-icon or //span.
+    // TASK-1-CLOSURE: a REAL user click on one of several identical controls
+    // (a product grid's "ADD TO CART" buttons, the same link in a menu and a
+    // sidebar) has no globally unique locator, but it IS the one element the
+    // user clicked. For primary step locators only (allowDisambiguation) a
+    // locator is composed that is PROVEN to resolve to exactly that element.
+    return allowDisambiguation ? disambiguatedLocatorFor(el) : null;
+  }
+
+  // TASK-1-CLOSURE: locator for a control that has identical siblings.
+  //  1. scoped  -- the control inside its nearest ancestor that also holds a
+  //     distinguishing text of its own (product name, row label, card title):
+  //       //*[text()[normalize-space()='Paracetamol']]/ancestor::*[2]//button[...]
+  //  2. positional -- the n-th match of the control's own description.
+  //     Order dependent, so flagged (disambiguation:'positional') and rated
+  //     High Risk by the script quality check.
+  // Both are verified by evaluating them on the live page: they must resolve
+  // to exactly one node, and that node must be the clicked element itself.
+  function xpathNodes(xp) {
+    try {
+      var snap = document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      var nodes = [];
+      for (var i = 0; i < snap.snapshotLength && i < 500; i++) nodes.push(snap.snapshotItem(i));
+      return nodes;
+    } catch (e) { return []; }
+  }
+
+  function xpathResolvesTo(xp, el) {
+    var nodes = xpathNodes(xp);
+    return nodes.length === 1 && nodes[0] === el;
+  }
+
+  function disambiguationBaseXpath(el) {
+    var tag = el.tagName.toLowerCase();
+    var ariaLabel = attr(el, 'aria-label');
+    if (ariaLabel) return tag + '[@aria-label=' + xpathLiteral(ariaLabel) + ']';
+    var text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (text && text.length <= 60) return tag + '[normalize-space(.)=' + xpathLiteral(text) + ']';
+    var href = attr(el, 'href');
+    if (href && !/^javascript:/i.test(href) && href.length <= 120) return tag + '[@href=' + xpathLiteral(href) + ']';
+    var stableClasses = Array.prototype.filter.call(
+      el.classList || [], function(c) { return !looksDynamic(c) && !isGenericFrameworkClass(c); }
+    );
+    if (stableClasses.length) return tag + '[contains(@class,' + xpathLiteral(stableClasses[0]) + ')]';
+    return null;
+  }
+
+  function disambiguatedLocatorFor(el) {
+    try {
+      if (!el || el.nodeType !== 1 || !document.documentElement.contains(el)) return null;
+      var base = disambiguationBaseXpath(el);
+      if (!base) return null;
+      var ownText = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      var ancestor = el.parentElement, level = 0;
+      while (ancestor && ancestor !== document.body && ancestor !== document.documentElement && level < 8) {
+        var candidates = [], preferred = [];
+        var inside = ancestor.querySelectorAll('*');
+        for (var i = 0; i < inside.length && i < 400 && candidates.length + preferred.length < 24; i++) {
+          var node = inside[i];
+          if (node === el || el.contains(node) || node.contains(el)) continue;
+          var tn = node.tagName;
+          if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT') continue;
+          for (var c = node.firstChild; c; c = c.nextSibling) {
+            if (c.nodeType !== 3) continue;
+            var t = (c.nodeValue || '').replace(/\s+/g, ' ').trim();
+            if (t.length < 3 || t.length > 80 || t === ownText || !/[A-Za-z\u0600-\u06FF]/.test(t)) continue;
+            var steps = 0, up = node;
+            while (up && up !== ancestor) { up = up.parentElement; steps++; }
+            if (!up) continue;
+            var entry = {text: t, k: steps};
+            if (/^H[1-6]$/.test(tn) || /title|heading|name/i.test(safeClassName(node))) preferred.push(entry); else candidates.push(entry);
+          }
+        }
+        var ordered = preferred.concat(candidates);
+        for (var j = 0; j < ordered.length; j++) {
+          var xp = '//*[text()[normalize-space()=' + xpathLiteral(ordered[j].text) + ']]/ancestor::*[' + ordered[j].k + ']//' + base;
+          if (xpathResolvesTo(xp, el)) return {strategy: 'xpath', value: xp, disambiguation: 'scoped'};
+        }
+        ancestor = ancestor.parentElement; level++;
+      }
+      if (base.indexOf('[') !== -1) {
+        var all = xpathNodes('//' + base);
+        var index = all.indexOf(el);
+        if (index !== -1 && all.length <= 200) {
+          var positional = '(//' + base + ')[' + (index + 1) + ']';
+          if (xpathResolvesTo(positional, el)) return {strategy: 'xpath', value: positional, disambiguation: 'positional'};
+        }
+      }
+    } catch (e) { /* fall through: no locator, the step is reported as skipped */ }
     return null;
   }
 
@@ -701,19 +843,44 @@ RECORDER_JS = r"""
     }
     var type = 'text';
     if (inputType === 'password') type = 'password';
-    else if (role !== 'gridcell' && (inputType === 'date' || /date|calendar/i.test((control.className || '') + ' ' + widgetClass + ' ' + name))) type = /calendar/i.test(widgetClass) ? 'calendar' : 'date';
+    else if (role !== 'gridcell' && (inputType === 'date'
+        || /datepicker|datetimepicker|calendar|(?:^|[\s_-])date(?:$|[\s_-])/i.test((control.className || '') + ' ' + widgetClass)
+        || /\b(?:date|dates|datepicker|calendar)\b/i.test(name))) {
+      // Task-1: matched as WORDS, never as a substring -- "Update", "Validate" and
+      // "Candidate" are ordinary buttons. A button/link that merely opens a date
+      // picker is the picker's OPENER ('calendar'), not a date cell, so it must not
+      // demand calendar-cell ownership evidence before the recording can be saved.
+      var buttonLike = inputType !== 'date' && (/^(BUTTON|A)$/.test(control.tagName) || role === 'button');
+      type = (/calendar/i.test(widgetClass) || buttonLike) ? 'calendar' : 'date';
+    }
     else if (inputType === 'file') type = 'file';
+    else if (inputType === 'checkbox' || (control.tagName !== 'INPUT' && (role === 'checkbox' || role === 'switch'))) type = 'checkbox';
+    else if (inputType === 'radio' || (control.tagName !== 'INPUT' && role === 'radio')) type = 'radio';
     else if (role === 'option' || /(?:k-list-item|k-item|option)/i.test(control.className || '')) type = 'option';
     else if (role === 'gridcell' || /(?:calendar|date-cell|k-calendar)/i.test(control.className || '')) type = 'date';
     else if (control.tagName === 'SELECT' || role === 'combobox' || control.getAttribute('aria-haspopup') === 'listbox' || /dropdown|combobox|autocomplete|k-select/i.test((control.className || '') + ' ' + widgetClass)) type = /autocomplete/i.test((control.className || '') + ' ' + widgetClass) ? 'autocomplete' : 'dropdown';
     else if (/accordion|expansion-panel/i.test(control.className || '')) type = 'accordion';
     else if (role === 'dialog' || /modal|dialog/i.test(control.className || '')) type = 'modal';
     else if (control.tagName === 'BUTTON' || role === 'button' || kind === 'click') type = 'button';
-    return { field_name: name.slice(0, 120), field_type: type, tag: control.tagName.toLowerCase(), section: sectionFor(control).name };
+    // Date cells often show only a day number while their title carries
+    // the full date used by the unique locator. Preserve that identity.
+    if (type === 'date' && attr(control, 'title')) name = attr(control, 'title');
+    // Repeated calendar descriptions identify the action, not the field.
+    // Retain the real form-control identity when the description is shared.
+    var description = name;
+    if (/calendar/i.test(name) && /calendar/i.test(attr(control, 'name') || control.id || '')) {
+      if (['button', 'submit', 'image'].indexOf(inputType) !== -1 || role === 'button') type = 'calendar';
+      var identity = attr(control, 'name') || control.id;
+      var sameDescription = Array.prototype.filter.call(document.querySelectorAll('[title],[alt],[aria-label]'), function(node) {
+        return accessibleName(node) === description;
+      });
+      if (sameDescription.length > 1) name = identity;
+    }
+    return { field_name: name.slice(0, 120), accessible_description: description.slice(0, 120), field_type: type, tag: control.tagName.toLowerCase(), section: sectionFor(control).name };
   }
 
   function locatorMetadata(el) {
-    var primary = computeLocator(el);
+    var primary = computeLocator(el, true);
     var fallbacks = [];
     var seen = {};
     function add(locator) {
@@ -724,7 +891,7 @@ RECORDER_JS = r"""
       fallbacks.push(locator);
     }
     var role = attr(el, 'role') || implicitRole(el), name = accessibleName(el), label = labelFor(el);
-    if (role && name) add({strategy:'role', role:role, name:name});
+    if (role && name) add(roleLocatorFor(role, name));
     if (label) add({strategy:'label', value:label});
     if (el.name && !looksDynamic(el.name)) add({strategy:'name', value:el.name});
     var placeholder = attr(el, 'placeholder'), title = attr(el, 'title');
@@ -790,12 +957,76 @@ RECORDER_JS = r"""
     } catch (e) { return false; }
   }
 
+  // GENERIC-ACTIONABLE-OWNER-RESOLUTION ---------------------------------
+  // Added after live DevTools forensic evidence from a recorded test case
+  // (see the project's forensic docs for the full reproduction) proved a
+  // generic architecture gap: a physically-clicked leaf (a <strong>/
+  // <span>/text node/icon) can report cursor:pointer purely because it
+  // INHERITS that CSS property from an ancestor's stylesheet rule, with
+  // ZERO click listener of its own anywhere on the leaf -- while the REAL
+  // actionable owner (the element an app actually binds its click handler
+  // to) sits several ancestors up and is the only node in the whole chain
+  // carrying any independent, deliberate authoring signal (a stable id,
+  // an explicit onclick, a tabindex, a test-id attribute, an interactive
+  // ARIA state). The live evidence showed cursor:pointer alone is never
+  // sufficient to tell those two apart -- it was present on every one of
+  // six ancestor levels in that reproduction, five of which had no
+  // listener at all. Nothing in this fix is specific to that application,
+  // page, or test case -- every rule below is evaluated purely from
+  // generic DOM/ARIA signals already available to any page.
+  //
+  // These two helpers name the independent, production-safe (no
+  // DevTools-only introspection), framework-agnostic static signals used
+  // below as corroboration for a non-semantic ancestor. Neither is tied
+  // to any application, organization, or literal field/page name.
+  var TEST_ID_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
+  function hasStableTestId(node) {
+    for (var i = 0; i < TEST_ID_ATTRS.length; i++) {
+      if (attr(node, TEST_ID_ATTRS[i])) return true;
+    }
+    return false;
+  }
+  var INTERACTIVE_ARIA_STATE_ATTRS = ['aria-pressed', 'aria-expanded', 'aria-selected', 'aria-checked', 'aria-haspopup'];
+  function hasInteractiveAriaState(node) {
+    for (var i = 0; i < INTERACTIVE_ARIA_STATE_ATTRS.length; i++) {
+      if (node.hasAttribute && node.hasAttribute(INTERACTIVE_ARIA_STATE_ATTRS[i])) return true;
+    }
+    return false;
+  }
+  // GENERIC-ACTIONABLE-OWNER-RESOLUTION (end helpers) --------------------
+
   function closestCustomClickable(el) {
     // Many SPAs implement side-menu/cards as DIV/LI/SPAN nodes with a
     // framework click handler instead of a native <a>/<button>.  Those are
     // real user actions and must not disappear from the recorded journey.
     // Keep this bounded and require visible click affordance/evidence; the
     // locator layer below still requires a UNIQUE stable/relative locator.
+    //
+    // GENERIC-ACTIONABLE-OWNER-RESOLUTION: this walk now tracks TWO
+    // independent results instead of returning on the first match:
+    //   - legacyNode: the EXACT node this function has always returned
+    //     (unmodified rule below, cursor:pointer alone still counts) --
+    //     computed identically to before, so any case that already
+    //     resolves correctly today keeps resolving to the exact same
+    //     element. This function can only ever UPGRADE a resolution, never
+    //     remove or change one that legacy evidence alone already supports
+    //     at the same or a shallower depth than any new match.
+    //   - preferredNode: the first (closest) ancestor that ALSO carries
+    //     independent static corroboration beyond cursor:pointer (its own
+    //     onclick, explicit tabindex, stable id, test-id attribute, or an
+    //     interactive ARIA state) -- i.e. real evidence the element was
+    //     deliberately built as an addressable interactive unit, not just
+    //     styled like one. Per the live evidence above, cursor:pointer is
+    //     NEVER by itself treated as that corroboration. The search for a
+    //     preferred match stops at a large structural surface (a dialog/
+    //     overlay/backdrop boundary -- a different logical component) so
+    //     it can never widen past the owning widget; legacyNode's own walk
+    //     is completely unaffected by that boundary, exactly as before.
+    // preferredNode wins when found; otherwise legacyNode is returned,
+    // reproducing today's behavior exactly.
+    var preferredNode = null;
+    var legacyNode = null;
+    var corroborationSearchOpen = true;
     var node = el, depth = 0;
     while (node && node !== document.body && depth < 7) {
       var role = attr(node, 'role') || '';
@@ -816,34 +1047,67 @@ RECORDER_JS = r"""
       var strongEvidence = ['button','link','menuitem','tab','treeitem'].indexOf(role) !== -1
         || navigationClass
         || !!navigationSurface;
-      // Weak evidence: an incidental affordance (delegated onclick, a
-      // focus-trap/roving tabindex, a backdrop-dismiss cursor) that
-      // structural framework containers -- dialog wrappers, overlays,
-      // backdrops -- very commonly carry for reasons that have nothing to
-      // do with the user having targeted THAT container specifically.
+      var hasCursorPointer = getComputedStyle(node).cursor === 'pointer';
+      // Weak evidence (UNCHANGED from before this change): an incidental
+      // affordance (delegated onclick, a focus-trap/roving tabindex,
+      // cursor:pointer) that structural framework containers -- dialog
+      // wrappers, overlays, backdrops -- very commonly carry for reasons
+      // that have nothing to do with the user having targeted THAT
+      // container specifically. Used only to compute legacyNode.
       var weakEvidence = !!node.onclick
         || (tabIndex !== null && tabIndex !== '-1')
-        || getComputedStyle(node).cursor === 'pointer';
-      var clickEvidence = strongEvidence || weakEvidence;
+        || hasCursorPointer;
+      var legacyClickEvidence = strongEvidence || weakEvidence;
       if (weakEvidence && !strongEvidence && (isLargeStructuralSurface(node) || !pointerdownCorroborates(node))) {
-        // Weak-only evidence on a large structural surface, or evidence not
-        // corroborated by the gesture that actually produced this click,
-        // never promotes the container itself into the clickable target.
-        // It may still be a real click ON one of its actual children --
-        // that child is discovered on an earlier/later iteration of this
-        // same ancestor walk, or via the semantic-leaf path elsewhere.
-        clickEvidence = false;
+        legacyClickEvidence = false;
+      }
+      // GENERIC-ACTIONABLE-OWNER-RESOLUTION: independent corroboration for
+      // THIS node, split into two tiers so a stable id/test-id can never
+      // promote a node BY ITSELF:
+      //   - ownInteractivitySignal: a deliberate, standalone interactivity
+      //     marker -- this node's own onclick, its own explicit tabindex,
+      //     or an interactive ARIA state attribute. Each of these alone
+      //     already means "the author built this to be operated," with or
+      //     without cursor styling, so each is sufficient on its own.
+      //   - ownAddressability: a stable id or test-id attribute. These mark
+      //     a node as deliberately IDENTIFIABLE, not as deliberately
+      //     CLICKABLE -- ids and test-ids sit on purely structural wrappers
+      //     constantly (page/content roots, layout regions, anchor
+      //     targets, analytics hooks). Addressability alone must NEVER
+      //     promote a node; it only COUNTS alongside this exact node's own
+      //     cursor:pointer -- i.e. it only ever STRENGTHENS a node that
+      //     already shows some affordance of its own, never substitutes
+      //     for one. (cursor:pointer still never contributes on its own,
+      //     per the block comment above this function -- unaffected.)
+      var ownInteractivitySignal = !!node.onclick
+        || (tabIndex !== null && tabIndex !== '-1')
+        || hasInteractiveAriaState(node);
+      var ownAddressability = (node.id && !looksDynamic(node.id)) || hasStableTestId(node);
+      var ownCorroboration = ownInteractivitySignal || (hasCursorPointer && ownAddressability);
+      var preferredEvidence = strongEvidence || ownCorroboration;
+      if (preferredEvidence && !strongEvidence && (isLargeStructuralSurface(node) || !pointerdownCorroborates(node))) {
+        preferredEvidence = false;
       }
       var text = (node.innerText || '').replace(/\s+/g, ' ').trim();
       // A navigation container can contain many labels. Never record that
       // container as one action; require a compact leaf/item-like candidate.
       var compactNavigationItem = !navigationSurface || navigationClass || role || node.tagName === 'LI' || node.tagName === 'SPAN' || text.length <= 60;
-      if (clickEvidence && compactNavigationItem && text && text.length <= 120) return node;
+      var qualifies = compactNavigationItem && text && text.length <= 120;
+      if (corroborationSearchOpen && !preferredNode && preferredEvidence && qualifies) {
+        preferredNode = node;
+      }
+      if (!legacyNode && legacyClickEvidence && qualifies) {
+        legacyNode = node;
+      }
+      if (corroborationSearchOpen && isLargeStructuralSurface(node) && node !== el) {
+        corroborationSearchOpen = false;
+      }
       node = node.parentElement;
       depth++;
     }
-    return null;
+    return preferredNode || legacyNode;
   }
+  // GENERIC-ACTIONABLE-OWNER-RESOLUTION (end closestCustomClickable) -----
 
   // ROUND-6-SVG-SAFE-CLASS: Element.className is a plain string on an
   // HTMLElement but an SVGAnimatedString object on an SVGElement --
@@ -989,7 +1253,7 @@ RECORDER_JS = r"""
     var role = attr(el, 'role') || implicitRole(el);
     var name = accessibleName(el);
     if (role && name) {
-      var roleLocator = { strategy: 'role', role: role, name: name };
+      var roleLocator = roleLocatorFor(role, name, scope);
       if (locatorMatchCount(roleLocator, scope) === 1) return roleLocator;
     }
     var placeholder = attr(el, 'placeholder');
@@ -1232,7 +1496,7 @@ RECORDER_JS = r"""
     var __diagRaw = (kind === 'click') ? diagRawTargetSnapshot(el) : null;
     var __diagPath = (kind === 'click') ? diagComposedPathSnapshot(el, DIAG_ANCESTOR_DEPTH) : null;
     var option = el.closest('[role="option"],option,.k-list-item,.k-item');
-    var dateCell = el.closest('[role="gridcell"],.k-calendar-td,.k-calendar td');
+    var dateCell = el.closest('[role="gridcell"],.k-calendar-td,.k-calendar td,.ajax__calendar_day,.ui-datepicker-calendar td,.flatpickr-day');
     if (option) target = option;
     else if (dateCell) target = dateCell;
     else if (TRIGGER_SIGNATURE_CLASS.test(safeClassName(el))) {
@@ -1283,7 +1547,7 @@ RECORDER_JS = r"""
     }
     if (kind === 'click') {
       var __diagLogicalLocator = null;
-      try { __diagLogicalLocator = computeLocator(target); } catch (e) { __diagLogicalLocator = null; }
+      try { __diagLogicalLocator = computeLocator(target, true); } catch (e) { __diagLogicalLocator = null; }
       var __diagDecision = diagInteractionTargetDecision(el, target, !!(option || dateCell));
       emitRecorderDiagnostic({
         raw: __diagRaw, composed_path: __diagPath,
@@ -1298,6 +1562,10 @@ RECORDER_JS = r"""
     if (!semanticLeaf && !customClickable && (/^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(target.tagName) ||
         /(?:k-header|k-dialog|k-popup|wrapper|container|(?:^|\s)(?:row|col(?:-|\s)))/i.test(safeClassName(target)))) return null;
     var result = Object.assign({kind:kind}, locatorMetadata(target), fieldMetadata(target, kind), extra || {});
+    if (dateCell) {
+      result.field_type = 'date';
+      result.field_name = attr(el, 'data-date') || attr(el, 'datetime') || attr(el, 'title') || attr(el, 'aria-label') || attr(dateCell, 'title') || result.field_name;
+    }
     if (kind === 'click' && /(?:k-icon|k-svg-icon|k-input-button)/i.test(safeClassName(el)) && el.closest('.k-datepicker,.k-picker')) {
       result.field_type = 'calendar';
       var dateInput = el.closest('.k-datepicker,.k-picker').querySelector('input');
@@ -1353,9 +1621,51 @@ RECORDER_JS = r"""
 
   var LAST_REPORTED = null;
 
+  function reportSkippedAction(action) {
+    if (!action) return;
+    emitRecorderDiagnostic({
+      event: 'skipped_action', kind: action.kind || '', field_name: action.field_name || '',
+      field_type: action.field_type || '', control_role: action.control_role || '',
+      reason: 'no_unique_locator',
+    });
+  }
+
+  // POPUP-SELECTION-CAPTURE: the chain of <iframe> elements that hosts this
+  // document, computed IN the page at click time. A lookup dialog commonly
+  // removes its own frame (or closes its own window) in the very click that
+  // selects an item, so by the time the recorder process asks Playwright for
+  // the frame element it is already gone. Same-origin only (cross-origin
+  // parents are not readable); the Python side uses it only as a fallback.
+  function frameChainFromWindow() {
+    var chain = [];
+    try {
+      var w = window;
+      var guard = 0;
+      while (w !== w.top && guard++ < 8) {
+        var host = w.frameElement;
+        if (!host) return null;
+        var parentDoc = w.parent.document;
+        var located = null;
+        try { located = typeof w.parent.__qaLocatorFor === 'function' ? w.parent.__qaLocatorFor(host) : null; } catch (e) { located = null; }
+        var index = Array.prototype.indexOf.call(parentDoc.querySelectorAll('iframe,frame'), host);
+        chain.unshift({locator: located, index: index});
+        w = w.parent;
+      }
+    } catch (e) { return null; }
+    return chain;
+  }
+
   function report(action) {
+    if (action && action.locator && window.top !== window) {
+      var frameChain = frameChainFromWindow();
+      if (frameChain) action.frame_chain = frameChain;
+    }
     if (!action || !action.locator) {
       console.warn('QA AI Studio Recorder skipped an action without a unique locator.');
+      // TASK-1-CLOSURE: a real user action (not a deliberately ignored layout
+      // wrapper, which never reaches here as an action object) that could not
+      // be given any locator must be VISIBLE, never silently absent.
+      reportSkippedAction(action);
       return false;
     }
     var signature = JSON.stringify({
@@ -1366,7 +1676,7 @@ RECORDER_JS = r"""
     if (LAST_REPORTED && LAST_REPORTED.signature === signature && now - LAST_REPORTED.at < 750) return true;
     LAST_REPORTED = {signature: signature, at: now};
     if (window.__qa_record_action) {
-      window.__qa_record_action(JSON.stringify(action));
+      trackRecorderTask(window.__qa_record_action(JSON.stringify(action)));
       return true;
     }
     return false;
@@ -1375,7 +1685,32 @@ RECORDER_JS = r"""
   var POPUP_TRANSACTION = null;
   var POPUP_SEQUENCE = 0;
   var PENDING_DYNAMIC_FILL = null;
-  var POPUP_SELECTOR = '[role="listbox"],[role="grid"],.k-list-container,.k-popup,.k-calendar,.k-calendar-container';
+  var POPUP_SELECTOR = '[role="listbox"],[role="grid"],.k-list-container,.k-popup,.k-calendar,.k-calendar-container,.ajax__calendar_container,.ui-datepicker,.flatpickr-calendar,[data-calendar-input]';
+
+  function calendarInputFor(opener, popup) {
+    var inputId = popup && attr(popup, 'data-calendar-input');
+    if (inputId) {
+      var explicit = document.getElementById(inputId);
+      if (explicit && explicit.matches('input,textarea')) return explicit;
+      return null;
+    }
+    if (opener && opener.matches('input[type="date"],input[type="text"],input:not([type]),textarea')) return opener;
+    var scope = opener && opener.parentElement;
+    for (var depth=0; scope && depth<4; depth++,scope=scope.parentElement) {
+      var inputs = Array.prototype.filter.call(scope.querySelectorAll('input,textarea'), function(n) {
+        return visibleElement(n) && !n.closest(POPUP_SELECTOR) && !/^(hidden|button|submit|reset|image|checkbox|radio)$/.test((n.type || '').toLowerCase());
+      });
+      if (inputs.length === 1) return inputs[0];
+      if (inputs.length > 1) return null;
+    }
+    return null;
+  }
+
+  function calendarDescriptors(node) {
+    if (!node) return [];
+    var meta = locatorMetadata(node);
+    return [meta.locator].concat(meta.fallback_locators || []).filter(Boolean);
+  }
 
   function visibleElement(el) {
     if (!el || !el.isConnected) return false;
@@ -1471,6 +1806,13 @@ RECORDER_JS = r"""
     if (tx && tx.state !== 'CLOSED' && elementBelongsToTransaction(el, tx)) {
       tx.state = 'SELECTING';
       return {owner:tx.action, transaction:tx, popup:popup || tx.popup_element, evidence:tx.evidence || 'active control transaction'};
+    }
+    // Inline calendars require an explicit input relationship, not a
+    // nearby matching day number or another calendar's focused input.
+    var inlineInput = popup && calendarInputFor(null, popup);
+    if (inlineInput) {
+      var inlineAction = {locator:computeLocator(inlineInput), field_type:'calendar'};
+      return {owner:inlineAction, transaction:{id:'inline-' + (++POPUP_SEQUENCE),opener_element:inlineInput}, popup:popup, evidence:'calendar data-calendar-input'};
     }
     var labelledBy = popup && attr(popup, 'aria-labelledby');
     var opener = labelledBy ? document.getElementById(labelledBy.split(/\s+/)[0]) : null;
@@ -1776,6 +2118,11 @@ RECORDER_JS = r"""
   // armed.
 
   document.addEventListener('click', function (e) {
+    if (window.__qaRecorderFinishing) return;
+    // Application callbacks may click hidden submit controls after a user
+    // gesture. Replay of the trusted gesture already triggers those effects;
+    // recording them again creates stale actions after navigation.
+    if (!e.isTrusted) return;
     var el = e.target;
     if (!el || el.nodeType !== 1) return;
     var notification = notificationContainerFor(el);
@@ -1784,6 +2131,9 @@ RECORDER_JS = r"""
       if (!el) return;
     }
     if (isTextEntry(el) && !isDynamicTextControl(el)) return;
+    // A file input is recorded from its change event (the chosen file names);
+    // recording the click would make replay open a native chooser dialog.
+    if (el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'file') return;
     var beforeUrl = String(location.href);
     var beforeHistoryVersion = HISTORY_ROUTE_VERSION;
     var routeFallback = routeSnapshotAction(e);
@@ -1808,8 +2158,22 @@ RECORDER_JS = r"""
     var navGesture = createPendingNavGesture(routeFallback, beforeUrl, beforeHistoryVersion);
     if (!action || !action.locator) {
       if (navGesture) navGestureDiag('normal_action_rejected', navGesture, {});
+      reportSkippedAction(action);
       return;
     }
+    var boxEl = el.tagName === 'INPUT' ? el : null;
+    if (boxEl) {
+      var boxType = (boxEl.getAttribute('type') || '').toLowerCase();
+      if (boxType === 'checkbox' || boxType === 'radio') {
+        // The browser toggles checkedness in its pre-activation step, BEFORE
+        // the click event is dispatched: boxEl.checked is already the state
+        // the user's click produced.
+        action.field_type = boxType;
+        action.kind = (boxType === 'checkbox' && !boxEl.checked) ? 'uncheck' : 'check';
+        action.expected_post_state = action.kind === 'uncheck' ? 'unchecked' : 'checked';
+      }
+    }
+    reportRevealingHover(el);
     if (action.field_type === 'dropdown' || action.field_type === 'autocomplete') { action.kind = 'open_dropdown'; action.expected_post_state = 'owning popup visible or aria-expanded=true'; }
     else if (action.field_type === 'calendar') { action.kind = 'open_calendar'; action.expected_post_state = 'owning calendar visible'; }
     else if (action.field_type === 'option') { action.kind = 'select_option'; action.expected_value = action.field_name; action.expected_post_state = 'owning field reflects value or popup closes'; }
@@ -1837,13 +2201,47 @@ RECORDER_JS = r"""
       );
       action.ownership_evidence = ownership.evidence;
       action.ownership_accepted = !!owner;
+      if (action.kind === 'select_date') {
+        var calendarOpener = ownership.transaction && ownership.transaction.opener_element;
+        var calendarPopup = ownership.transaction && ownership.transaction.popup_element && ownership.transaction.popup_element.contains(el) ? ownership.transaction.popup_element : ownership.popup;
+        var calendarInput = calendarInputFor(calendarOpener, calendarPopup);
+        action.calendar = {
+          target: attr(el, 'data-date') || attr(el, 'datetime') || attr(el, 'title') || attr(el, 'aria-label') || action.field_name,
+          input: calendarDescriptors(calendarInput),
+          popup: calendarDescriptors(calendarPopup),
+          opener: ownership.evidence === 'calendar data-calendar-input' ? [] : calendarDescriptors(calendarOpener),
+          format: calendarInput ? (attr(calendarInput, 'data-date-format') || (calendarInput.type === 'date' ? '%Y-%m-%d' : '')) : '',
+          selected_value: ''
+        };
+        if (calendarPopup) {
+          var calendarHeading = calendarPopup.querySelector('[data-calendar-heading],.ui-datepicker-title,.flatpickr-current-month,.k-calendar-title,.ajax__calendar_title');
+          action.calendar.recorded_month = calendarHeading ? String(calendarHeading.innerText || calendarHeading.textContent || '').slice(0,100) : '';
+        }
+        // The capture-phase click precedes the application's value update.
+        // Keep the captured identity, then read only its owning input once.
+        var priorCalendarValue = calendarInput ? calendarInput.value : '';
+        trackRecorderTask(new Promise(function(resolve) {
+          var snapshotStarted = Date.now();
+          function snapshotDate() {
+            var currentValue = calendarInput ? calendarInput.value : '';
+            if (calendarInput && currentValue === priorCalendarValue && Date.now() - snapshotStarted < 1500) {
+              setTimeout(snapshotDate, 20);
+              return;
+            }
+            action.calendar.selected_value = currentValue;
+            report(action);
+            resolve();
+          }
+          setTimeout(snapshotDate, 0);
+        }));
+      }
       finishSelectionTransaction(ownership.transaction);
     }
     if (['dropdown','calendar','autocomplete','accordion'].indexOf(action.field_type) !== -1) {
       if (!beginPopupTransaction(action, el.closest('button,input,select,[role="combobox"]') || el)) return;
     }
     else if (['option','date'].indexOf(action.field_type) === -1 && !elementBelongsToTransaction(el, POPUP_TRANSACTION)) closePopupTransaction('unrelated actionable interaction');
-    var reportedNormally = report(action);
+      var reportedNormally = action.kind === 'select_date' ? true : report(action);
     if (navGesture) {
       navGestureDiag(reportedNormally ? 'normal_action_reported' : 'normal_action_rejected', navGesture, {});
       // Only a SUCCESSFUL normal report completes/clears the gesture. A
@@ -1857,7 +2255,71 @@ RECORDER_JS = r"""
     }
   }, true);
 
+  // ---- Task-1: hover-revealed menus ---------------------------------------
+  // A hover is recorded ONLY when it is evidenced as needed: the next click
+  // lands inside a menu/flyout container that the pointer reached through a
+  // trigger OUTSIDE that container. Plain mouse movement is never recorded.
+  var HOVER_HISTORY = [];
+  var MENU_CONTAINER_SELECTOR = '[role="menu"],[role="menubar"],[class*="dropdown-menu"],[class*="submenu"],[class*="sub-menu"],[class*="flyout"],[class*="mega-menu"]';
+  document.addEventListener('mouseover', function (e) {
+    if (window.__qaRecorderFinishing || !e.isTrusted) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    var candidate = el.closest('a,button,[role="menuitem"],[role="button"],[role="tab"],[aria-haspopup],[aria-expanded]');
+    if (!candidate) return;
+    if (HOVER_HISTORY.length && HOVER_HISTORY[HOVER_HISTORY.length - 1].el === candidate) return;
+    HOVER_HISTORY.push({el: candidate, at: Date.now()});
+    if (HOVER_HISTORY.length > 6) HOVER_HISTORY.shift();
+  }, true);
+
+  function reportRevealingHover(clicked) {
+    try {
+      var menu = clicked.closest(MENU_CONTAINER_SELECTOR);
+      if (!menu) return;
+      var now = Date.now();
+      for (var i = 0; i < HOVER_HISTORY.length; i++) {
+        var item = HOVER_HISTORY[i];
+        if (now - item.at > 10000 || !document.contains(item.el)) continue;
+        if (menu.contains(item.el) || item.el.contains(clicked)) continue;
+        var shared = menu.parentElement, depth = 0;
+        while (shared && depth < 4 && !shared.contains(item.el)) { shared = shared.parentElement; depth++; }
+        if (!shared || depth >= 4) continue;
+        var hoverAction = capturedAction(item.el, 'click');
+        if (hoverAction && hoverAction.locator) {
+          hoverAction.kind = 'hover';
+          hoverAction.expected_post_state = 'hover-revealed content visible';
+          report(hoverAction);
+        }
+        HOVER_HISTORY.length = 0;
+        return;
+      }
+    } catch (e) {}
+  }
+
+  document.addEventListener('dblclick', function (e) {
+    if (window.__qaRecorderFinishing || !e.isTrusted) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1 || (isTextEntry(el) && !isDynamicTextControl(el))) return;
+    var action = capturedAction(el, 'click');
+    if (!action || !action.locator) return;
+    action.kind = 'dblclick';
+    action.expected_post_state = '-';
+    report(action);
+  }, true);
+
+  document.addEventListener('contextmenu', function (e) {
+    if (window.__qaRecorderFinishing || !e.isTrusted) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    var action = capturedAction(el, 'click');
+    if (!action || !action.locator) return;
+    action.kind = 'rightclick';
+    action.expected_post_state = '-';
+    report(action);
+  }, true);
+
   document.addEventListener('input', function (e) {
+    if (window.__qaRecorderFinishing) return;
     var el = e.target;
     if (!el || el.nodeType !== 1 || !isTextEntry(el) || !isDynamicTextControl(el)) return;
     var tx = POPUP_TRANSACTION;
@@ -1874,6 +2336,7 @@ RECORDER_JS = r"""
   }, true);
 
   document.addEventListener('change', function (e) {
+    if (window.__qaRecorderFinishing) return;
     var el = e.target;
     if (!el || el.nodeType !== 1) return;
     if (el.tagName === 'SELECT') {
@@ -1883,6 +2346,18 @@ RECORDER_JS = r"""
         expected_value: selected ? selected.text : el.value,
         expected_post_state: 'owning field reflects selected value',
       }));
+      return;
+    }
+    if (el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'file') {
+      // Browsers never expose the real path of a chosen file -- only its name.
+      // Replay resolves the name against the configured upload folders.
+      var chosen = Array.prototype.map.call(el.files || [], function (file) { return file.name; });
+      if (chosen.length) {
+        report(capturedAction(el, 'upload', {
+          value: chosen.join('|'), files: chosen, expected_value: chosen.join(', '),
+          expected_post_state: 'chosen file name(s) attached to the input'
+        }));
+      }
       return;
     }
     if (el.tagName === 'INPUT' && ['checkbox', 'radio'].indexOf((el.getAttribute('type') || '').toLowerCase()) !== -1) {
@@ -1909,6 +2384,54 @@ RECORDER_JS = r"""
       report(fillAction);
     }
   }, true);
+
+  // Lets the recorder describe an <iframe> element from its PARENT document.
+  window.__qaLocatorFor = function (el) {
+    try { return computeLocator(el); } catch (e) { return null; }
+  };
+
+  // POPUP-SELECTION-CAPTURE: value snapshot of the visible user-editable form
+  // controls of this document. The recorder takes one of the OPENER page when a
+  // popup / lookup window opens and one when it closes; a control whose value
+  // changed in between received a value from the popup (the "return value"),
+  // whether the popup used window.opener, postMessage or anything else. Only
+  // reads state: never dispatches events, never writes to the page.
+  window.__qaFormSnapshot = function () {
+    var out = [];
+    try {
+      var nodes = document.querySelectorAll('input,select,textarea');
+      for (var i = 0; i < nodes.length && out.length < 200; i++) {
+        var el = nodes[i];
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || (tag === 'input' ? 'text' : tag)).toLowerCase();
+        if (['hidden', 'password', 'file', 'submit', 'button', 'reset', 'image'].indexOf(type) !== -1) continue;
+        if (!visibleElement(el)) continue;
+        var value = '';
+        if (tag === 'select') {
+          var chosen = el.selectedOptions && el.selectedOptions[0];
+          value = chosen ? (chosen.text || chosen.value || '') : '';
+        } else if (type === 'checkbox' || type === 'radio') {
+          value = el.checked ? 'checked' : 'unchecked';
+        } else {
+          value = el.value == null ? '' : String(el.value);
+        }
+        var meta = null;
+        try { meta = locatorMetadata(el); } catch (e) { meta = null; }
+        var locator = meta && meta.locator ? meta.locator : null;
+        var xpath = meta && meta.xpath ? meta.xpath : '';
+        if (!locator && !xpath) continue;
+        out.push({
+          key: locator ? JSON.stringify(locator) : 'xpath:' + xpath,
+          locator: locator,
+          fallback_locators: meta && meta.fallback_locators ? meta.fallback_locators : [],
+          xpath: xpath, tag: tag, type: type,
+          field_name: String(accessibleName(el) || el.name || el.id || '').slice(0, 120),
+          value: value.slice(0, 300)
+        });
+      }
+    } catch (e) {}
+    return out;
+  };
 })();
 """
 
@@ -1960,11 +2483,27 @@ class WebRecordingSession:
         # persisted into recorded_script — a separate channel from
         # self.actions.
         self.diagnostics = []
+        self.skipped_actions = []
         self._diagnostics_log_path = None
         self._playwright = None
         self._browser = None
         self._context = None
         self._page = None
+        # Task-1: tab/popup + iframe ownership of recorded actions.
+        self._page_labels = {}
+        self._popup_counter = 0
+        self._action_lock = None
+        # POPUP-SELECTION-CAPTURE: per-popup opener snapshots (return value
+        # detection), in-flight close handlers, and the recorder script text
+        # that is re-attached to every committed document.
+        self._popup_watch = {}
+        self._popup_tasks = set()
+        self._recorder_js = None
+        self._reattach_count = 0
+        self._unattached_reported = set()
+        self._attach_in_progress = set()
+        self._attach_rerun = set()
+        self._announce_activity = None
         self._stopped = False
         self._start_time = None
         # Captured on whichever loop first calls into this session
@@ -1974,6 +2513,15 @@ class WebRecordingSession:
         # safely marshalled back to it via call_soon_threadsafe()
         # instead of being invoked directly from the wrong thread.
         self._caller_loop = None
+        # Incomplete-recording protection: why the recording ended, whether
+        # the recorder page crashed / the browser went away, and the
+        # outcome of finish() (see assess_completeness()).
+        self.stop_reason = None
+        self._crashed = False
+        self._browser_closed = False
+        self.outcome = None
+        self._window = None
+        self.window_report = None
 
     # Only these locator_strategy values (see url_discovery_engine.py's
     # _generate_locator()) produce a `locator` string that is also a
@@ -2073,6 +2621,28 @@ class WebRecordingSession:
             return True
 
     @staticmethod
+    def is_active():
+        with _SESSION_LOCK:
+            return _ACTIVE_SESSION["session"] is not None
+
+    @staticmethod
+    async def run_window_probe(hold_seconds=8.0):
+        """
+        Open a labelled test window with the recorder's exact launch options (no recording) so a
+        person can confirm the window is visible on this machine.  Uses the single recording slot,
+        so it can never overlap a real recording.  Returns None when the slot is busy.
+        """
+        if not WebRecordingSession.try_acquire(-1):
+            return None
+        try:
+            future = _DedicatedLoopThread.get().run_coroutine(
+                recorder_window.run_launch_probe(hold_seconds=hold_seconds)
+            )
+            return await asyncio.wrap_future(future)
+        finally:
+            WebRecordingSession.release()
+
+    @staticmethod
     def release():
 
         with _SESSION_LOCK:
@@ -2118,10 +2688,26 @@ class WebRecordingSession:
 
         return await asyncio.wrap_future(future)
 
-    async def finish(self, save=True):
+    async def show_window(self):
+        """Bring the recorder's browser window to the front and report its on-screen state."""
+        future = _DedicatedLoopThread.get().run_coroutine(self._show_window_impl())
+        return await asyncio.wrap_future(future)
+
+    async def finish(self, save=True, reason="user", preserve_draft=False):
+        """
+        save=True      -> persist a COMPLETE recording as the Manually Recorded
+                          Script; an incomplete one (timeout / crash / dropped
+                          connection / no interaction beyond the first page
+                          load) is preserved as a draft instead and is NOT
+                          written to the test case (see outcome).
+        save=False     -> discard (explicit Cancel).  With preserve_draft=True
+                          any captured interactions are kept as a draft so an
+                          unexpected disconnect/crash does not lose them.
+        reason         -> user | timeout | client_disconnected | error
+        """
 
         future = _DedicatedLoopThread.get().run_coroutine(
-            self._finish_impl(save)
+            self._finish_impl(save, reason, preserve_draft)
         )
 
         return await asyncio.wrap_future(future)
@@ -2148,6 +2734,11 @@ class WebRecordingSession:
         # change from the prior CDP-screencast-in-modal version; see
         # the module docstring for why this replaced streaming rather
         # than porting Desktop's codegen subprocess verbatim.
+        # Window-visibility support (Core/recorder_window.py): remember which browser
+        # processes already exist so the window opened by THIS launch can be located,
+        # checked and brought to the front afterwards.
+        self._window = recorder_window.RecorderWindowController()
+        self._window.mark_before()
         self._browser = await self._playwright.chromium.launch(
             headless=False,
             args=["--start-maximized"],
@@ -2157,6 +2748,7 @@ class WebRecordingSession:
                  "on this machine — perform your test steps there.")
 
         def on_disconnected(_browser=None):
+            self._browser_closed = True
             # Fires if the operator closes the real browser window
             # themselves (exactly how Desktop's codegen recording
             # normally finishes) instead of clicking Stop Recording
@@ -2181,10 +2773,20 @@ class WebRecordingSession:
 
         self._page = await self._context.new_page()
 
+        def _on_crash(_page=None):
+            self._crashed = True
+            activity("The recorder browser page crashed. Captured actions are kept as an incomplete recording.")
+
+        self._page.on("crash", _on_crash)
+        self._on_page_crash = _on_crash
+
         await self._context.expose_binding(
             "__qa_record_action",
-            lambda source, raw: self._on_action(raw, activity),
+            lambda source, raw: self._on_binding_action(source, raw, activity),
         )
+        # Task-1: every additional tab/popup gets a stable label so recorded
+        # actions can be attributed to the page that produced them.
+        self._context.on("page", lambda new_page: asyncio.ensure_future(self._on_new_page(new_page)))
 
         # ROUND-7-DIAGNOSTIC-ONLY: a second, separate bridge for the
         # read-only click-resolution trace RECORDER_JS's
@@ -2195,7 +2797,7 @@ class WebRecordingSession:
         # untouched by this binding's presence.
         await self._context.expose_binding(
             "__qa_record_diagnostic",
-            lambda source, raw: self._on_diagnostic(raw),
+            lambda source, raw: self._on_diagnostic(raw, activity),
         )
 
         known_locators = self._known_locators_for_scope(
@@ -2214,6 +2816,9 @@ class WebRecordingSession:
         )
 
         await self._context.add_init_script(recorder_js)
+        self._recorder_js = recorder_js
+        self._announce_activity = activity
+        self._watch_page(self._page)
 
         url = (self.start_url or "").strip()
 
@@ -2240,14 +2845,411 @@ class WebRecordingSession:
 
         self.actions.append({"kind": "goto", "url": url})
 
+        # Make sure the person can actually SEE the window: raise it, then report what the
+        # operating system says about it (never fails the recording — informational only).
+        self.window_report = await self._raise_window()
+        self._announce_window(self.window_report, activity)
+
         activity("Recording...")
 
-    def _on_action(self, raw, activity):
+    async def _raise_window(self):
+        controller = getattr(self, "_window", None)
+        if controller is None or self._page is None:
+            return None
+        try:
+            await self._page.bring_to_front()
+        except Exception:
+            logger.debug("[web-recorder] page.bring_to_front failed", exc_info=True)
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, controller.focus)
+        except Exception:
+            logger.debug("[web-recorder] window focus check failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _announce_window(report, activity):
+        if not report:
+            return
+        status = report.get("status")
+        if status in ("visible", "unknown"):
+            if report.get("supported") and report.get("focused") is False:
+                activity("The recorder window is open, but Windows kept another application in front. "
+                         "Click 'Show recorder window' below, or the flashing browser icon on the taskbar.")
+            return
+        activity("WARNING: " + (report.get("message") or "The recorder window could not be confirmed on screen."))
+        if report.get("remedy"):
+            activity("What to do: " + report["remedy"])
+
+    async def _show_window_impl(self):
+        if self._stopped or self._page is None or self._browser_closed:
+            return {"status": "not_found", "supported": True, "focused": False,
+                    "message": "The recorder window is no longer open.", "remedy": "", "windows": []}
+        report = await self._raise_window()
+        return report or {"status": "unknown", "supported": False, "focused": False,
+                          "message": "Window control is unavailable.", "remedy": "", "windows": []}
+
+    def _page_label(self, page):
+        """'main' for the recording's first tab, 'pageN' for later tabs/popups."""
+        if page is None or page is self._page:
+            return "main"
+        label = self._page_labels.get(page)
+        if label is None:
+            self._popup_counter += 1
+            label = f"page{self._popup_counter}"
+            self._page_labels[page] = label
+        return label
+
+    async def _on_new_page(self, new_page):
+        """A tab/popup opened: label it and attribute it to the action that opened it."""
+        try:
+            if self._action_lock is None:
+                self._action_lock = asyncio.Lock()
+            label = self._page_label(new_page)
+            try:
+                new_page.on("crash", self._on_page_crash)
+            except Exception:
+                pass
+            opener = None
+            try:
+                opener = await new_page.opener()
+            except Exception:
+                opener = None
+            opener_label = self._page_label(opener) if opener is not None else "main"
+            self._watch_page(new_page)
+            self._track_popup_task(self._ensure_recorder_attached(new_page.main_frame))
+            await self._begin_popup_watch(new_page, opener, label, opener_label)
+            async with self._action_lock:
+                now = time.monotonic()
+                for action in reversed(self.actions):
+                    if action.get("opens_page"):
+                        continue
+                    if now - action.get("_at", 0) > 15:
+                        break
+                    if (action.get("_page") or "main") == opener_label and action.get("kind") in {
+                        "click", "dblclick", "rightclick", "open_dropdown", "check", "uncheck",
+                    }:
+                        action["opens_page"] = label
+                        break
+        except Exception:
+            logger.exception("[web-recorder] could not attribute a new page to its opener (non-fatal).")
+
+    # ------------------------------------------------------------------
+    # POPUP-SELECTION-CAPTURE
+    #
+    # 1. The recorder script must be live on EVERY committed document of EVERY
+    #    window and frame. A window.open() popup is created as the initial
+    #    about:blank document; for a same-origin target Chromium keeps the same
+    #    window object when it navigates, and the context init script is not
+    #    run for that new document. _ensure_recorder_attached() verifies the
+    #    script is installed on the current document and installs it when not.
+    # 2. The value a popup / lookup window returns to its opener is observed
+    #    independently of what the popup's own page does: a snapshot of the
+    #    opener's visible form controls is taken when the popup opens and
+    #    compared when it closes. The changed control is attached to the last
+    #    recorded popup step (replay verifies it); a change with no recorded
+    #    popup step at all is saved as a skipped action, so the recording is
+    #    reported incomplete instead of silently dropping the business action.
+    # ------------------------------------------------------------------
+
+    def _track_popup_task(self, coroutine):
+        task = asyncio.ensure_future(coroutine)
+        self._popup_tasks.add(task)
+        task.add_done_callback(self._popup_tasks.discard)
+        return task
+
+    def _watch_page(self, page):
+        """Keep the recorder attached to every document this page (and its frames) commits."""
+        if page is None:
+            return
+
+        def on_frame(frame):
+            self._track_popup_task(self._ensure_recorder_attached(frame))
+
+        def on_loaded(loaded_page):
+            for frame in list(loaded_page.frames)[:20]:
+                on_frame(frame)
+
+        try:
+            page.on("framenavigated", on_frame)
+            page.on("domcontentloaded", on_loaded)
+            page.on("load", on_loaded)
+        except Exception:
+            logger.exception("[web-recorder] could not watch a page for document changes (non-fatal).")
+
+    async def _ensure_recorder_attached(self, frame, attempts=4):
+        """True when the recorder is live on the frame's CURRENT document (installing it when it is not)."""
+        script = self._recorder_js
+        if not script or self._stopped:
+            return True
+        # One install attempt per frame at a time: navigation events arrive in bursts.
+        # An event that arrives while an attempt is running asks for one more
+        # check afterwards (the new document may have committed mid-attempt).
+        if frame in self._attach_in_progress:
+            self._attach_rerun.add(frame)
+            return True
+        self._attach_in_progress.add(frame)
+        try:
+            while True:
+                self._attach_rerun.discard(frame)
+                attached = await self._attach_recorder_now(frame, script, attempts)
+                if frame not in self._attach_rerun:
+                    return attached
+        finally:
+            self._attach_in_progress.discard(frame)
+            self._attach_rerun.discard(frame)
+
+    async def _attach_recorder_now(self, frame, script, attempts):
+        for _ in range(attempts):
+            try:
+                if frame.is_detached() or frame.page.is_closed():
+                    return True
+                if await frame.evaluate("() => window.__qaRecorderInstalled === document"):
+                    return True
+                await frame.evaluate("() => {\n" + script + "\n}")
+                self._reattach_count += 1
+                logger.info("[web-recorder] recorder re-attached to a new document: %s", str(frame.url)[:160])
+                return True
+            except Exception:
+                await asyncio.sleep(0.15)
+        try:
+            url = str(frame.url or "")
+            if url and url != "about:blank" and not frame.is_detached() and not frame.page.is_closed() \
+                    and url not in self._unattached_reported:
+                self._unattached_reported.add(url)
+                self.skipped_actions.append({
+                    "kind": "window interaction", "field_name": "a window that could not be monitored",
+                    "field_type": "window", "url": url[:300], "after_step": len(self.actions),
+                    "reason": "recorder_not_attached",
+                })
+                self._announce(
+                    "WARNING: the recorder could not attach to a browser window or frame (" + url[:100] + "). "
+                    "Actions inside it are NOT recorded; the recording will be marked incomplete."
+                )
+        except Exception:
+            pass
+        return False
+
+    def _announce(self, message):
+        callback = self._announce_activity
+        if callback is None:
+            return
+        try:
+            callback(message)
+        except Exception:
+            pass
+
+    async def _snapshot_page(self, page):
+        """Visible form-control values of a page's main document, keyed for before/after comparison."""
+        rows = {}
+        try:
+            raw = await asyncio.wait_for(
+                page.main_frame.evaluate("() => window.__qaFormSnapshot ? window.__qaFormSnapshot() : []"), timeout=3
+            )
+        except Exception:
+            return rows
+        for row in raw or []:
+            locator = row.get("locator") or {}
+            key = json.dumps(locator, sort_keys=True) if locator else "xpath:" + str(row.get("xpath") or "")
+            rows[key] = row
+        return rows
+
+    async def _begin_popup_watch(self, new_page, opener, label, opener_label):
+        try:
+            before = await self._snapshot_page(opener) if opener is not None and not opener.is_closed() else {}
+        except Exception:
+            before = {}
+        state = {
+            "label": label, "opener": opener, "opener_label": opener_label, "before": before,
+            "start_index": len(self.actions), "done": False, "closed_at": None, "closed": False,
+            "candidates": [], "resolved": False,
+        }
+        self._popup_watch[new_page] = state
+
+        def on_close(_page=None):
+            state["closed_at"] = time.monotonic()
+            self._track_popup_task(self._finish_popup_watch(new_page, closed=True))
+
+        try:
+            new_page.on("close", on_close)
+            if new_page.is_closed():
+                on_close()
+        except Exception:
+            pass
+
+    async def _finish_popup_watch(self, page, closed):
+        """Observe what the popup changed on its opener. Attribution happens later (_resolve_popup_returns)."""
+        state = self._popup_watch.get(page)
+        if not state or state["done"]:
+            return
+        state["done"] = True
+        state["closed"] = bool(closed)
+        opener = state["opener"]
+        if closed:
+            # Binding deliveries and the opener's own update settle after the popup goes away.
+            await asyncio.sleep(0.4)
+        if opener is None or opener.is_closed():
+            return
+        after = await self._snapshot_page(opener)
+        for key, row in after.items():
+            previous = state["before"].get(key)
+            if previous is None or previous.get("value") == row.get("value"):
+                continue
+            state["candidates"].append({
+                "key": key, "locator": row.get("locator"), "fallback_locators": row.get("fallback_locators") or [],
+                "xpath": row.get("xpath") or "", "field_name": row.get("field_name") or "",
+                "field_type": row.get("type") or "", "tag": row.get("tag") or "",
+                "before": previous.get("value") or "", "expected_value": row.get("value") or "",
+            })
+
+    def _resolve_popup_returns(self):
+        """Turn each popup's observed opener changes into replay-verifiable metadata, or a skipped action.
+
+        Runs at the end of the recording, after pending typed values were committed: a field the
+        operator typed into on the opener while the popup was open is recorded by its own fill step
+        (typed text is committed on blur, after the popup closed) and is not the popup's return value.
+        """
+        for page, state in list(self._popup_watch.items()):
+            if not state["done"] or state.get("resolved"):
+                continue
+            state["resolved"] = True
+            opener_label = state["opener_label"]
+            explained_keys, explained_xpaths = set(), set()
+            for action in self.actions[state["start_index"]:]:
+                if (action.get("_page") or "main") != opener_label or not action.get("locator"):
+                    continue
+                explained_keys.add(json.dumps(action.get("locator"), sort_keys=True))
+                if action.get("xpath"):
+                    explained_xpaths.add(str(action.get("xpath")))
+            changes = [
+                {k: v for k, v in change.items() if k != "key"} for change in state["candidates"]
+                if change["key"] not in explained_keys
+                and not (change.get("xpath") and str(change["xpath"]) in explained_xpaths)
+            ]
+            popup_actions = [a for a in self.actions if a.get("_page") == state["label"] and a.get("kind") != "goto"]
+            last = popup_actions[-1] if popup_actions else None
+            closed_at = state.get("closed_at")
+            closed_by_action = bool(
+                state.get("closed") and last is not None and closed_at is not None
+                and 0 <= closed_at - last.get("_at", 0) <= 2.5
+            )
+            if last is not None and (changes or closed_by_action):
+                last["popup_return"] = {"popup_closed": closed_by_action, "changes": changes}
+            elif changes:
+                names = ", ".join(c["field_name"] or "a field" for c in changes[:3])
+                self.skipped_actions.append({
+                    "kind": "popup selection", "field_name": names, "field_type": "popup",
+                    "url": str(getattr(page, "url", "") or "")[:300], "after_step": len(self.actions),
+                    "reason": "popup_returned_value_without_recorded_step",
+                    "returned": [{"field": c["field_name"], "value": c["expected_value"]} for c in changes[:5]],
+                })
+                self._announce(
+                    "WARNING: a popup window changed " + names + " on the page that opened it, but no step inside the "
+                    "popup was recorded. The selection is NOT in the script; the recording will be marked incomplete."
+                )
+
+    async def _settle_popups(self):
+        """Before the recording is assessed: finish every popup observation still in flight."""
+        for page, state in list(self._popup_watch.items()):
+            if not state["done"]:
+                try:
+                    await self._finish_popup_watch(page, closed=page.is_closed())
+                except Exception:
+                    logger.exception("[web-recorder] could not finish a popup observation (non-fatal).")
+        pending = [task for task in list(self._popup_tasks) if not task.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    @staticmethod
+    def _frame_selector_from_locator(locator, index):
+        """Selector for an <iframe> element from its locator (and its index among the parent's frames)."""
+        locator = locator or {}
+        strategy, value = locator.get("strategy"), locator.get("value")
+        if strategy == "id" and value:
+            return "#" + str(value)
+        if strategy in {"css", "knowledge_hub"} and value:
+            return str(value)
+        if strategy == "name" and value:
+            return '[name="' + str(value) + '"]'
+        if strategy == "testid" and value:
+            return '[data-testid="' + str(value) + '"]'
+        if strategy == "title" and value:
+            return '[title="' + str(value) + '"]'
+        if strategy == "xpath" and value:
+            return "xpath=" + str(value)
+        return f"iframe >> nth={max(int(index), 0)}"
+
+    async def _frame_selector(self, frame):
+        """Selector of the <iframe> element that hosts `frame`, relative to its parent document."""
+        parent = frame.parent_frame
+        handle = await frame.frame_element()
+        locator = await parent.evaluate(
+            "el => (window.__qaLocatorFor ? window.__qaLocatorFor(el) : null)", handle
+        )
+        index = await parent.evaluate(
+            "el => Array.prototype.indexOf.call(document.querySelectorAll('iframe,frame'), el)", handle
+        )
+        return self._frame_selector_from_locator(locator, index)
+
+    @classmethod
+    def _frames_from_reported_chain(cls, raw):
+        """Frame selectors computed in the page at click time (used when the frame is already gone)."""
+        try:
+            chain = json.loads(raw).get("frame_chain")
+        except Exception:
+            return None
+        if not chain:
+            return None
+        try:
+            return [cls._frame_selector_from_locator(item.get("locator"), item.get("index", 0)) for item in chain]
+        except Exception:
+            return None
+
+    async def _on_binding_action(self, source, raw, activity):
+        """Binding entry point: attach page/iframe ownership, then record in arrival order."""
+        if self._action_lock is None:
+            self._action_lock = asyncio.Lock()
+        async with self._action_lock:
+            origin = {"_page": "main", "_frames": []}
+            try:
+                origin["_page"] = self._page_label((source or {}).get("page"))
+                frames = []
+                frame = (source or {}).get("frame")
+                while frame is not None and frame.parent_frame is not None:
+                    frames.append(await self._frame_selector(frame))
+                    frame = frame.parent_frame
+                frames.reverse()
+                origin["_frames"] = frames
+            except Exception:
+                # The frame can already be gone (a lookup dialog removes its own frame in the
+                # very click that selects an item): use the chain the page reported itself.
+                reported = self._frames_from_reported_chain(raw)
+                if reported is not None:
+                    origin["_frames"] = reported
+                    logger.info("[web-recorder] frame ownership taken from the page-reported chain (the frame was already closed).")
+                else:
+                    logger.exception("[web-recorder] could not resolve page/frame ownership of an action.")
+            self._on_action(raw, activity, origin=origin)
+
+    def _on_action(self, raw, activity, origin=None):
 
         try:
             action = json.loads(raw)
         except Exception:
             return
+
+        action["_at"] = time.monotonic()
+        if origin:
+            action.update(origin)
+
+        if action.get("kind") == "dblclick":
+            # A double-click arrives as click, click, dblclick: keep ONE action.
+            for _ in range(2):
+                last = self.actions[-1] if self.actions else None
+                if (last and last.get("kind") == "click" and last.get("locator") == action.get("locator")
+                        and last.get("_page") == action.get("_page") and last.get("_frames") == action.get("_frames")):
+                    self.actions.pop()
+                else:
+                    break
 
         diagnostic = action.get("ownership_diagnostic") or {}
         if diagnostic:
@@ -2264,7 +3266,7 @@ class WebRecordingSession:
 
         activity(self._describe_action(action))
 
-    def _on_diagnostic(self, raw):
+    def _on_diagnostic(self, raw, activity=None):
         """
         ROUND-7-DIAGNOSTIC-ONLY: receives the read-only click-resolution
         trace RECORDER_JS's emitRecorderDiagnostic() sends over the
@@ -2290,6 +3292,26 @@ class WebRecordingSession:
         entry["_received_at"] = datetime.datetime.utcnow().isoformat() + "Z"
 
         self.diagnostics.append(entry)
+
+        if entry.get("event") == "skipped_action":
+            # TASK-1-CLOSURE: a user action the recorder could not give any
+            # locator. It is NOT in the script, so tell the operator now and
+            # carry it into the recording outcome instead of dropping it silently.
+            self.skipped_actions.append({
+                "kind": entry.get("kind") or "", "field_name": entry.get("field_name") or "",
+                "field_type": entry.get("field_type") or "", "url": entry.get("url") or "",
+                # Approximate position (actions captured so far) so the operator knows where to restore it.
+                "after_step": len(self.actions),
+            })
+            if activity:
+                try:
+                    activity(
+                        f"WARNING: your {entry.get('kind') or 'action'} on "
+                        f"'{entry.get('field_name') or 'an element'}' was NOT recorded - the page has no "
+                        "unique, stable way to identify it. Add this step manually after recording."
+                    )
+                except Exception:
+                    pass
 
         try:
             if self._diagnostics_log_path is None:
@@ -2333,6 +3355,10 @@ class WebRecordingSession:
             return f"Captured: fill ({loc.get('strategy')}: {loc_desc})"
         if kind == "select_option":
             return f"Captured: select ({loc_desc}) = {action.get('label')}"
+        if kind in {"dblclick", "rightclick", "hover", "check", "uncheck"}:
+            return f"Captured: {kind} ({loc.get('strategy')}: {loc_desc})"
+        if kind == "upload":
+            return f"Captured: upload ({loc_desc}) = {', '.join(action.get('files') or [])}"
         if kind == "goto":
             return f"Captured: navigate to {action.get('url')}"
 
@@ -2351,6 +3377,10 @@ class WebRecordingSession:
 
         lines = []
         step_number = 1
+        # Tab/popup bookkeeping: `page` is always the CURRENT tab, exactly as
+        # in a hand-written Playwright script; a switch is its own step.
+        current_page = "main"
+        main_alias_defined = False
 
         for action in self.actions:
 
@@ -2365,13 +3395,28 @@ class WebRecordingSession:
                 step_number += 1
                 continue
 
-            locator_src = self._locator_source(action.get("locator") or {})
+            frames = action.get("_frames") or []
+            locator_src = self._locator_source(action.get("locator") or {}, frames)
 
             if locator_src is None:
                 continue
 
             if kind in {"click", "open_dropdown", "open_calendar", "select_date"}:
                 statement = f"{locator_src}.click()"
+                if kind == 'select_date' and action.get('calendar'):
+                    from Core.calendar_engine import parse_date, infer_format
+                    calendar = action['calendar']
+                    if not calendar.get('input') or not calendar.get('popup'):
+                        raise RecordingError('Calendar ownership is ambiguous. Confirm its input and popup before saving.')
+                    target = parse_date(calendar.get('target'), calendar.get('target_format', ''))
+                    observed = calendar.get('selected_value') or ''
+                    if not observed:
+                        raise RecordingError('Selected calendar date was not observed in its owning input. Recording was not saved.')
+                    if not calendar.get('format'):
+                        calendar['format'] = infer_format(observed, target)
+                    if parse_date(observed, calendar['format']) != target:
+                        raise RecordingError('Calendar selection does not match its owning input. Recording was not saved.')
+                    statement = f"CalendarAction(page, {calendar!r}).click()"
             elif kind == "fill":
                 statement = f"{locator_src}.fill({action.get('value', '')!r})"
             elif kind == "select_option":
@@ -2380,8 +3425,45 @@ class WebRecordingSession:
                     if action.get("tag") == "select"
                     else f"{locator_src}.click()"
                 )
+            elif kind == "dblclick":
+                statement = f"{locator_src}.dblclick()"
+            elif kind == "rightclick":
+                statement = f"{locator_src}.click(button=\"right\")"
+            elif kind == "hover":
+                statement = f"{locator_src}.hover()"
+            elif kind == "check":
+                statement = f"{locator_src}.check()"
+            elif kind == "uncheck":
+                statement = f"{locator_src}.uncheck()"
+            elif kind == "upload":
+                names = [name for name in (action.get("files") or []) if name]
+                if not names:
+                    continue
+                statement = (
+                    f"{locator_src}.set_input_files({names[0]!r})" if len(names) == 1
+                    else f"{locator_src}.set_input_files({names!r})"
+                )
             else:
                 continue
+
+            origin = action.get("_page") or "main"
+            if origin != current_page:
+                switch = "page = page0" if origin == "main" else f"page = {origin}_info.value"
+                lines.extend(self._structured_step_lines(
+                    step_number, {"kind": "execute"}, switch,
+                    field_type="navigation", field_name="Browser tab",
+                    description="Switch to the " + ("original" if origin == "main" else "opened") + " browser tab",
+                ))
+                step_number += 1
+                current_page = origin
+
+            opened = action.get("opens_page")
+            if opened:
+                inner = [statement]
+                if current_page == "main" and not main_alias_defined:
+                    inner.insert(0, "page0 = page")
+                    main_alias_defined = True
+                statement = f"with page.expect_popup() as {opened}_info:\n" + "\n".join("    " + item for item in inner)
             lines.extend(self._structured_step_lines(step_number, action, statement))
             step_number += 1
 
@@ -2393,7 +3475,8 @@ class WebRecordingSession:
         body = "\n".join(lines)
 
         return (
-            "from playwright.sync_api import Playwright, sync_playwright, expect\n\n\n"
+            "from playwright.sync_api import Playwright, sync_playwright, expect\n"
+            "from Core.calendar_engine import CalendarAction\n\n\n"
             "def run(playwright: Playwright) -> None:\n"
             "    browser = playwright.chromium.launch(headless=False)\n"
             "    context = browser.new_context()\n"
@@ -2407,7 +3490,7 @@ class WebRecordingSession:
 
     @classmethod
     def _structured_step_lines(
-        cls, number, action, statement, field_type=None, field_name=None,
+        cls, number, action, statement, field_type=None, field_name=None, description=None,
     ):
         kind = action.get("kind") or "execute"
         field_type = field_type or action.get("field_type") or (
@@ -2417,18 +3500,36 @@ class WebRecordingSession:
         sensitive = field_type == "password" or bool(
             any(token in field_name.lower() for token in ("password", "passwd", "secret", "token"))
         )
+        frames = action.get("_frames") or []
+
+        def display(locator):
+            # Elements inside an <iframe> are persisted as FULL Playwright
+            # locator code (frame_locator chain) -- the replay cascade accepts
+            # any "page." expression, so frame-scoped locators need no new format.
+            if frames and locator:
+                code = cls._locator_source(locator, frames)
+                if code:
+                    return code
+            return cls._locator_display(locator)
+
         primary = (
             str(action.get("url") or "") if kind == "goto"
-            else cls._locator_display(action.get("locator") or {})
+            else display(action.get("locator") or {})
         ) or "-"
         fallbacks = [
-            cls._locator_display(locator) for locator in action.get("fallback_locators") or []
+            display(locator) for locator in action.get("fallback_locators") or []
         ]
         fallbacks = [locator for locator in fallbacks if locator and locator != primary]
         xpath = action.get("xpath") or "-"
-        description = (
+        description = description or (
             "Open application" if kind == "goto" else
             f"Enter {field_name}" if kind == "fill" else
+            f"Double-click {field_name}" if kind == "dblclick" else
+            f"Right-click {field_name}" if kind == "rightclick" else
+            f"Hover over {field_name}" if kind == "hover" else
+            f"Check {field_name}" if kind == "check" else
+            f"Uncheck {field_name}" if kind == "uncheck" else
+            f"Upload file to {field_name}" if kind == "upload" else
             f"Select {field_name}" if kind == "select_option" else
             f"Select date {field_name}" if kind == "select_date" else
             f"Open {field_name}" if kind in {"open_dropdown", "open_calendar"} else
@@ -2439,6 +3540,8 @@ class WebRecordingSession:
             metadata_comment("DESCRIPTION", description),
             metadata_comment("FIELD_TYPE", field_type),
             metadata_comment("FIELD_NAME", field_name),
+            metadata_comment("CALENDAR_METADATA", json.dumps(action.get('calendar') or {}, ensure_ascii=True)),
+            metadata_comment("ACCESSIBLE_DESCRIPTION", action.get("accessible_description")),
             metadata_comment("SECTION", action.get("section")),
             metadata_comment("ACTION_TYPE", kind),
             metadata_comment("CONTROL_ROLE", action.get("control_role")),
@@ -2483,11 +3586,32 @@ class WebRecordingSession:
                 action.get("interaction_target_scope") or "-",
             ),
             metadata_comment("XPATH", xpath),
+            *(
+                [metadata_comment("POPUP_RETURN", json.dumps(cls._popup_return_for_script(action), ensure_ascii=True, separators=(",", ":")))]
+                if action.get("popup_return") else []
+            ),
             metadata_comment("SENSITIVE", "true" if sensitive else "false"),
             metadata_comment("SOURCE", "recorded"),
             statement,
         ]
-        return ["    " + line for line in metadata]
+        return ["    " + line for item in metadata for line in str(item).split("\n")]
+
+    @classmethod
+    def _popup_return_for_script(cls, action):
+        """Compact, replayable form of what a popup returned to its opener (one comment line)."""
+        data = action.get("popup_return") or {}
+        changes = []
+        for change in (data.get("changes") or [])[:5]:
+            locator = change.get("locator") or {}
+            changes.append({
+                "field": change.get("field_name") or "",
+                "locator": cls._locator_display(locator) if locator else "",
+                "xpath": change.get("xpath") or "",
+                "expected": change.get("expected_value") or "",
+                "before": change.get("before") or "",
+                "type": change.get("field_type") or "",
+            })
+        return {"popup_closed": bool(data.get("popup_closed")), "changes": changes}
 
     @staticmethod
     def _locator_display(locator):
@@ -2504,8 +3628,18 @@ class WebRecordingSession:
             return "xpath=" + str(locator.get("value") or "")
         return str(locator.get("value") or "")
 
+    @classmethod
+    def _locator_source(cls, locator, frames=None):
+        """Playwright code for a recorded locator; `frames` is the outer-to-inner
+        list of <iframe> selectors hosting it (empty for the top document)."""
+        source = cls._locator_source_in_document(locator)
+        if source is None or not frames:
+            return source
+        chain = "".join(f".frame_locator({selector!r})" for selector in frames)
+        return "page" + chain + source[len("page"):]
+
     @staticmethod
-    def _locator_source(locator):
+    def _locator_source_in_document(locator):
 
         strategy = locator.get("strategy")
 
@@ -2514,7 +3648,8 @@ class WebRecordingSession:
         if strategy == "id":
             return f"page.locator({'#' + locator['value']!r})"
         if strategy == "role":
-            return f"page.get_by_role({locator['role']!r}, name={locator['name']!r})"
+            exact = ", exact=True" if locator.get("exact") else ""
+            return f"page.get_by_role({locator['role']!r}, name={locator['name']!r}{exact})"
         if strategy == "name":
             name_selector = '[name="' + locator["value"] + '"]'
             return f"page.locator({name_selector!r})"
@@ -2544,51 +3679,209 @@ class WebRecordingSession:
 
         return None
 
-    async def _finish_impl(self, save=True):
+    # ----------------------------------------------------------------
+    # Incomplete-recording protection
+    # ----------------------------------------------------------------
+
+    def meaningful_actions(self):
+        """Captured interactions other than the initial page load."""
+        return [a for a in self.actions if a.get("kind") != "goto"]
+
+    def assess_completeness(self):
+        reasons = []
+        code = None
+        if self.stop_reason == "timeout":
+            code = "timeout"
+            reasons.append(
+                f"The recording reached the {MAX_RECORDING_SECONDS // 60}-minute limit and was stopped automatically."
+            )
+        elif self.stop_reason == "client_disconnected":
+            code = "client_disconnected"
+            reasons.append("The QA AI Studio connection was lost before Stop Recording was confirmed.")
+        elif self.stop_reason == "error":
+            code = "error"
+            reasons.append("The recorder stopped because of an error.")
+        if self._crashed:
+            code = code or "crashed"
+            reasons.append("The recorder browser page crashed during the recording.")
+        meaningful = self.meaningful_actions()
+        if not meaningful:
+            code = code or "no_interactions"
+            reasons.append(
+                "Only the initial page navigation was captured; no clicks, entries or selections were recorded."
+            )
+        warnings = []
+        if self.skipped_actions:
+            warnings.append(
+                f"{len(self.skipped_actions)} user action(s) could not be recorded because the page offers no "
+                "unique locator for them (first: "
+                + "; ".join(f"{a['kind'] or 'action'} on '{a['field_name'] or 'element'}'" for a in self.skipped_actions[:3])
+                + "). The saved script is missing these steps - review it and add them manually."
+            )
+        return {
+            "complete": not reasons,
+            "reason_code": code,
+            "reasons": reasons,
+            "meaningful_actions": len(meaningful),
+            "total_actions": len(self.actions),
+            "skipped_actions": len(self.skipped_actions),
+            "warnings": warnings,
+        }
+
+    def _persist_recorded_script(self, script, assessment):
+        """Save the recording and, when user actions were skipped, persist that fact with it.
+
+        Task-1 reliability fix: a script that omits steps must never be validatable / activatable /
+        executable as complete.  The skipped-action record (original count, details, audit history) is
+        written BEFORE the script so the block exists from the instant the script does.  If that record
+        cannot be written, the script is saved with the existing INCOMPLETE status header instead
+        (Validate's recording_complete check refuses such a script), so failing to record never
+        fails open.  A complete recording supersedes any earlier incomplete record.
+        Returns the script text that was saved.
+        """
+
+        from Core.recording_completeness import RecordingCompleteness
+
+        actor = getattr(self, "recorded_by", "") or ""
+        repository = TestCaseRepository()
+        if not self.skipped_actions:
+            repository.update_recorded_script(self.test_case_id, script)
+            try:
+                RecordingCompleteness(repository).supersede_open(self.test_case_id, actor=actor)
+            except Exception:
+                logger.exception("[web-recorder] could not close the earlier incomplete-recording record (non-fatal; the script stays blocked until corrected)")
+            return script
+
+        record_id = None
+        try:
+            record_id = RecordingCompleteness(repository).record_skipped(
+                self.test_case_id, script, self.skipped_actions, actor=actor
+            )
+        except Exception:
+            logger.exception("[web-recorder] could not persist skipped-action metadata; saving with the INCOMPLETE header instead")
+            from Core.recording_drafts import mark_incomplete_script
+            script = mark_incomplete_script(
+                script, assessment.get("warnings") or ["user actions were skipped"], saved_by=actor
+            )
+        try:
+            repository.update_recorded_script(self.test_case_id, script)
+        except Exception:
+            if record_id:
+                RecordingCompleteness(repository).discard_record(record_id, "The recorded script could not be saved.")
+            raise
+        assessment["recording_incomplete"] = True
+        assessment["completeness_record_id"] = record_id
+        return script
+
+    async def _flush_pending(self, tolerant):
+        if not self._context:
+            return
+        try:
+            for page in list(self._context.pages)[:20]:
+                if not page.is_closed():
+                    for frame in list(page.frames)[:20]:
+                        await asyncio.wait_for(frame.evaluate("async () => { if (window.__qaRecorderFlush) await window.__qaRecorderFlush(); }"), timeout=3)
+        except Exception:
+            if not tolerant:
+                raise
+
+    async def _finish_impl(self, save=True, reason="user", preserve_draft=False):
 
         script = None
+        self.stop_reason = reason
+        self.outcome = {"status": "discarded", "saved": False}
 
         try:
 
-            if save:
-                script = self.build_script()
-                try:
-                    ast.parse(script)
-                except SyntaxError as ex:
-                    raise RecordingError(
-                        "Recorder generated invalid Python and did not save it: "
-                        f"line {ex.lineno or '?'}: {ex.msg}. Captured actions remain in this recorder session."
-                    ) from ex
-                # The in-page recorder has already ranked/normalized candidates.
-                # Refuse persistence if an executable step still crosses the same
-                # structural/semantic gate used by Validate and replay repair.
-                from Core.test_execution_manager import TestExecutionManager
-                quality = TestExecutionManager.assess_playwright_script_quality(script)
-                invalid = [
-                    item for item in quality
-                    if item.get("classification") == "Invalid"
-                    or not item.get("semantic_valid", True)
-                    or not item.get("parent_valid", True)
-                    or not item.get("action_valid", True)
-                ]
-                if invalid:
-                    details = "; ".join(
-                        f"Step {item['step']}: " + next(
-                            reason for reason in (
-                                item.get("reason") if item.get("classification") == "Invalid" else "",
-                                item.get("semantic_reason") if not item.get("semantic_valid", True) else "",
-                                item.get("parent_reason") if not item.get("parent_valid", True) else "",
-                                item.get("action_reason") if not item.get("action_valid", True) else "",
-                            ) if reason
+            if save or preserve_draft:
+                # Await pending date-value snapshots and recorder bindings
+                # before building the authoritative script. Stop must not
+                # race the final captured click.  When the recording is
+                # already known to be unhealthy (timeout / crash / dropped
+                # connection) a failing flush must not lose the captured
+                # actions, so it is tolerated and the draft is still kept.
+                # POPUP-SELECTION-CAPTURE: finish popup return-value observations
+                # BEFORE the recording is assessed, so a popup selection that
+                # was not recorded marks the recording incomplete.
+                await self._settle_popups()
+                assessment = self.assess_completeness()
+                await self._flush_pending(tolerant=not (save and assessment["complete"]))
+                # Typed values were committed by the flush: now attribute what each
+                # popup returned (or report a selection that was never recorded).
+                self._resolve_popup_returns()
+                assessment = self.assess_completeness()
+
+                if save and assessment["complete"]:
+                    script = self.build_script()
+                    try:
+                        ast.parse(script)
+                    except SyntaxError as ex:
+                        raise RecordingError(
+                            "Recorder generated invalid Python and did not save it: "
+                            f"line {ex.lineno or '?'}: {ex.msg}. Captured actions remain in this recorder session."
+                        ) from ex
+                    # The in-page recorder has already ranked/normalized candidates.
+                    # Refuse persistence if an executable step still crosses the same
+                    # structural/semantic gate used by Validate and replay repair.
+                    from Core.test_execution_manager import TestExecutionManager
+                    quality = TestExecutionManager.assess_playwright_script_quality(script)
+                    invalid = [
+                        item for item in quality
+                        if item.get("classification") == "Invalid"
+                        or not item.get("semantic_valid", True)
+                        or not item.get("parent_valid", True)
+                        or not item.get("action_valid", True)
+                    ]
+                    if invalid:
+                        details = "; ".join(
+                            f"Step {item['step']}: " + next(
+                                reason_text for reason_text in (
+                                    item.get("reason") if item.get("classification") == "Invalid" else "",
+                                    item.get("semantic_reason") if not item.get("semantic_valid", True) else "",
+                                    item.get("parent_reason") if not item.get("parent_valid", True) else "",
+                                    item.get("action_reason") if not item.get("action_valid", True) else "",
+                                ) if reason_text
+                            )
+                            for item in invalid[:8]
                         )
-                        for item in invalid[:8]
-                    )
-                    raise RecordingError(
-                        "Recorder did not save unsafe executable steps. " + details
-                    )
-                TestCaseRepository().update_recorded_script(
-                    self.test_case_id, script
-                )
+                        raise RecordingError(
+                            "Recorder did not save unsafe executable steps. " + details
+                        )
+                    script = self._persist_recorded_script(script, assessment)
+                    self.outcome = {"status": "complete", "saved": True, **assessment}
+                else:
+                    # INCOMPLETE: never written to the test case.  Keep what was
+                    # captured as a recoverable draft the operator must confirm.
+                    draft = None
+                    if save or assessment["meaningful_actions"] > 0:
+                        issues = []
+                        try:
+                            script = self.build_script()
+                            ast.parse(script)
+                        except Exception as ex:   # keep the step list even when the script cannot be built
+                            issues.append(f"Script could not be generated cleanly: {ex}")
+                            script = ""
+                        steps = []
+                        for action in self.actions:
+                            if action.get("kind") == "goto":
+                                steps.append(f"Open {action.get('url')}")
+                            else:
+                                try:
+                                    steps.append(self._describe_action(action))
+                                except Exception:
+                                    steps.append(str(action.get("kind")))
+                        from Core.recording_drafts import save_draft
+                        draft = save_draft(
+                            self.test_case_id, script, steps, assessment["reasons"],
+                            assessment["reason_code"], assessment["meaningful_actions"],
+                            assessment["total_actions"], issues,
+                        )
+                    self.outcome = {
+                        "status": "incomplete", "saved": False,
+                        "draft_id": draft["draft_id"] if draft else None,
+                        "steps": draft["steps"] if draft else [],
+                        **assessment,
+                    }
 
         finally:
 

@@ -126,6 +126,11 @@ class UploadPipeline:
                 pass
             raise
 
+        if reviewed_analysis is None:
+            hinted_platform = KnowledgeAnalyzer.platform_from_domain(domain)
+            if hinted_platform:
+                analysis["platform"] = hinted_platform
+
         def rollback_persisted_upload():
             try:
                 self.metadata.delete(metadata_status)

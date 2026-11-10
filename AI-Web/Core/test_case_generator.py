@@ -45,13 +45,17 @@ ALL_TEST_TYPES = [
     "Security",
     "Performance",
     "Compatibility",
-    "Regression",
-    "Impact Analysis",
 ]
+# "Regression" and "Impact Analysis" are no longer selectable or generated: regression selection now belongs to Change Impact Analysis.
+# Test cases that already carry those values stay readable, editable and importable; nothing rewrites them.
 
 
 def normalize_test_types(row, requested_types):
-    """Keep AI output canonical, using the requested types as fallback."""
+    """Keep AI output canonical and inside the types the user selected.
+
+    A row keeps only the selected types it already carries. If it carries none, the single
+    best-fitting selected type is chosen from its wording (never "all selected types").
+    """
     requested = [value for value in (requested_types or []) if value in ALL_TEST_TYPES]
     raw = row.get("test_types") or row.get("test_type") or []
     if isinstance(raw, str):
@@ -59,11 +63,14 @@ def normalize_test_types(row, requested_types):
     valid = []
     for value in raw:
         value = str(value).strip()
-        if value in ALL_TEST_TYPES and value not in valid:
+        if value in ALL_TEST_TYPES and value not in valid and (not requested or value in requested):
             valid.append(value)
-    normalized = valid or requested
-    row["test_types"] = normalized
-    row["test_type"] = ", ".join(normalized)
+    if not valid and requested:
+        from Core.test_case_engine import classify
+        guess = classify(row, requested)
+        valid = [guess] if guess else requested[:1]
+    row["test_types"] = valid
+    row["test_type"] = ", ".join(valid)
     return row
 
 
@@ -120,6 +127,7 @@ class TestCaseGenerator:
         output_folder="Output/TestCases",
         document_type=None,
         document_version_id=None,
+        progress=None,
 
     ):
 
@@ -129,39 +137,27 @@ class TestCaseGenerator:
                 "Generating test cases..."
             )
 
-            if not test_types:
+            selected_types = [value for value in (test_types or ALL_TEST_TYPES) if value in ALL_TEST_TYPES]
 
-                test_types = ALL_TEST_TYPES
+            if not selected_types:
+
+                return {
+                    "success": False,
+                    "error": "Select at least one supported Test Type."
+                }
+
+            test_types = selected_types
 
             if not output_formats:
 
                 output_formats = ["Excel"]
 
-            rag = self.rag.get_context(
-
-                question=requirement,
-
-                top_k=top_k,
-
-                domain=domain,
-
-                module=module,
-
-                knowledge_name=knowledge_name,
-
-                version=version,
-                source_file_names=source_file_names,
-                document_type=document_type,
-                document_version_id=document_version_id,
-
+            chunks, references = self._load_chunks(
+                requirement, top_k, domain, module, knowledge_name, version,
+                source_file_names, document_type, document_version_id,
             )
 
-            context = rag.get(
-                "context",
-                ""
-            )
-
-            if not context:
+            if not chunks:
 
                 return {
 
@@ -171,58 +167,42 @@ class TestCaseGenerator:
 
                 }
 
-            prompt = self.prompt.build_test_case_prompt(
+            state = {"provider": None, "model": None, "error": None}
+            llm_call = self._llm_call(state)
+            focus = None if source_file_names else requirement
 
-                context=context,
+            from Core.test_case_engine import generate_cases
 
-                test_types=test_types,
-
-                number_of_cases=number_of_cases
-
+            outcome = generate_cases(
+                chunks, test_types, number_of_cases, llm_call,
+                label=(knowledge_name or "Selected knowledge"),
+                progress=progress, focus=focus,
             )
 
-            result = self.llm.generate(
-
-                prompt=prompt,
-
-                system_prompt=self.prompt.system_prompt(),
-
-                temperature=0.1,
-
-                max_tokens=4096
-
-            )
-
-            if not result.get("success"):
-
-                return result
-
-            output_text = result.get(
-
-                "response",
-
-                ""
-
-            )
-
-            rows = self.excel_exporter.parse_llm_output(
-
-                output_text
-
-            )
+            rows = outcome.get("rows") or []
+            quality_report = outcome.get("report") or {}
 
             if not rows:
+
+                if quality_report.get("model_calls") and quality_report.get("model_failures") == quality_report.get("model_calls") and state["error"]:
+
+                    return {"success": False, "error": state["error"]}
 
                 return {
 
                     "success": False,
 
-                    "error": "AI did not return any recognizable test cases. "
-                              "Try again or select fewer test types."
+                    "error": outcome.get("error") or (
+                        "No test case passed the quality checks for the selected test types. "
+                        + " ".join((quality_report.get("summary") or [])[:3])
+                    ),
+
+                    "quality_report": quality_report,
 
                 }
 
             for row in rows:
+                row.pop("_grounding", None)
                 normalize_test_types(row, test_types)
                 self._add_execution_metadata(row)
 
@@ -324,25 +304,13 @@ class TestCaseGenerator:
 
                 **output_files,
 
-                "references": rag.get(
+                "references": references,
 
-                    "references",
+                "quality_report": quality_report,
 
-                    []
+                "provider": state["provider"],
 
-                ),
-
-                "provider": result.get(
-
-                    "provider"
-
-                ),
-
-                "model": result.get(
-
-                    "model"
-
-                )
+                "model": state["model"]
 
             }
 
@@ -362,21 +330,79 @@ class TestCaseGenerator:
 
             }
 
+    def _load_chunks(self, requirement, top_k, domain, module, knowledge_name, version,
+                     source_file_names, document_type, document_version_id):
+        """Return (chunks, references).
+
+        With a selected source document the WHOLE document is read, in order. Without one
+        (AI Assistant request) the most relevant chunks for the request are used.
+        """
+        if source_file_names:
+            try:
+                from Core.vector_store import VectorStore
+                chunks = VectorStore().get_source_chunks(
+                    domain=domain, module=module, knowledge_name=knowledge_name, version=version,
+                    file_names=list(source_file_names), document_type=document_type,
+                    document_version_id=document_version_id,
+                )
+            except Exception:
+                self.logger.exception("Could not read the selected source document; using search instead.")
+                chunks = []
+            if chunks:
+                seen, references = set(), []
+                for chunk in chunks:
+                    name = chunk.get("file_name")
+                    if name not in seen:
+                        seen.add(name)
+                        references.append(dict(chunk.get("metadata") or {"file_name": name}))
+                return chunks, references
+
+        rag = self.rag.get_context(
+            question=requirement, top_k=max(int(top_k or 5), 8),
+            domain=domain, module=module, knowledge_name=knowledge_name, version=version,
+            source_file_names=source_file_names, document_type=document_type,
+            document_version_id=document_version_id,
+        )
+        documents = rag.get("documents") or []
+        return [{"text": text, "chunk_number": index} for index, text in enumerate(documents)], rag.get("references", [])
+
+    def _llm_call(self, state):
+        """A direct model call for generation.
+
+        It deliberately bypasses the chat pipeline (prompt optimizer, conversation history, answer
+        cache, line de-duplication and formatting), which cut the prompt and rewrote the answer.
+        """
+        provider = None
+        try:
+            from Core.ai_platform.compat import GatewayLLMProvider
+            provider = GatewayLLMProvider()
+        except Exception:
+            self.logger.exception("AI platform gateway unavailable; using the standard engine.")
+
+        def call(prompt, system_prompt):
+            if provider is not None:
+                result = provider.generate(prompt=prompt, system_prompt=system_prompt,
+                                           temperature=0.2, max_tokens=3000)
+            else:
+                result = self.llm.generate(prompt=prompt, system_prompt=system_prompt,
+                                           temperature=0.2, max_tokens=3000)
+            if not result.get("success"):
+                state["error"] = result.get("error") or "The AI model call failed."
+                raise RuntimeError(state["error"])
+            state["provider"] = result.get("provider") or state["provider"]
+            state["model"] = result.get("model") or state["model"]
+            return result.get("response")
+
+        return call
+
     def _add_execution_metadata(self, row):
         """Normalize the model suggestion without equating it with script state."""
         execution = str(row.get("execution") or "").strip()
         aliases = {"API Automation": "API", "SQL Automation": "SQL"}
         execution = aliases.get(execution, execution)
         if execution not in {"Manual", "Playwright", "API", "SQL"}:
-            types = {
-                value.strip() for value in str(row.get("test_type") or "").split(",")
-            }
-            if "API" in types:
-                execution = "API"
-            elif "Database" in types:
-                execution = "SQL"
-            elif types.intersection({"UI", "Functional", "Regression", "Validation"}):
-                execution = "Playwright"
-            else:
-                execution = "Manual"
+            # Decide from what the steps actually do. A test TYPE (Functional, Positive ...) says nothing
+            # about how a case can be automated, so it must not default every case to Playwright.
+            from Core.test_case_engine import classify_execution
+            execution, _note = classify_execution(row)
         row["execution"] = execution

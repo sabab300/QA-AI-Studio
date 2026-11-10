@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "status": "ILLUSTRATIVE",
+  "note": "Placeholder manual-effort assumptions. Replace them with PSW's agreed figures and set status to AGREED; until then every saving is labelled illustrative.",
+  "manual_minutes": {
+    "requirements_assessed": 6,
+    "changes_compared": 12,
+    "systems_identified": 10,
+    "regression_items": 8,
+    "test_search": 30,
+    "report": 45
+  },
+  "review_minutes_per_finding": 2,
+  "hourly_cost": null,
+  "currency": null
+}

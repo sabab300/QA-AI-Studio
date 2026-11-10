@@ -23,7 +23,12 @@ class SQLGenerator:
 
     def __init__(self):
 
-        self.llm = OllamaProvider()
+        # QA-AI-STUDIO-TASK4: answer-LLM calls go through the gateway.
+        try:
+            from Core.ai_platform.compat import GatewayLLMProvider
+            self.llm = GatewayLLMProvider(task="sql")
+        except Exception:
+            self.llm = OllamaProvider()
 
         self.prompt_builder = PromptBuilder()
 

@@ -72,6 +72,7 @@ class ReviewSaveRequest(BaseModel):
     source_knowledge_ids: list[int] = Field(min_length=1)
     test_case_document_name: str = ""
     reviewed_file_name: str = Field(min_length=1, max_length=220)
+    save_mode: Literal["update", "new"] = "new"
     test_case_version_id: int | None = None
     test_case_file_id: int | None = None
     operations: list[ReviewOperation] = Field(min_length=1)
@@ -278,13 +279,21 @@ def review_save(payload: ReviewSaveRequest,
         if payload.test_case_version_id:
             if not payload.test_case_file_id:
                 raise ValueError("Select the Test Cases XLSX before saving changes.")
-            created = service.create_revision(
-                payload.test_case_version_id, payload.test_case_file_id, operations,
-                payload.reviewed_file_name,
-            )
-            result = service.load_version(created["test_case_version_id"], created["test_case_file_id"])
+            if payload.save_mode == "update":
+                result = service.apply_operations(payload.test_case_version_id, payload.test_case_file_id, operations)
+                created = {"test_case_version_id": payload.test_case_version_id,
+                           "test_case_file_id": payload.test_case_file_id,
+                           "file_name": result["file"]["file_name"]}
+            else:
+                created = service.create_revision(
+                    payload.test_case_version_id, payload.test_case_file_id, operations,
+                    payload.reviewed_file_name,
+                )
+                result = service.load_version(created["test_case_version_id"], created["test_case_file_id"])
             result["created"] = created
         else:
+            if payload.save_mode == "update":
+                raise ValueError("Select an existing Test Cases XLSX to update.")
             if len(payload.source_knowledge_ids) != 1:
                 raise ValueError("Select one Source File/Source Doc when creating a Test Cases version.")
             if any(item["action"] != "insert" for item in operations):

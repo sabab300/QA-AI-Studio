@@ -327,7 +327,15 @@ import time
 from pathlib import Path
 
 from Core.playwright_semantics import semantic_name_compatible
-from playwright.sync_api import sync_playwright
+# Task-1 audit D5: `expect` must exist in the harness namespace -- recorded /
+# imported assertion steps (expect(...).to_be_visible(), ...) are executed by
+# _qa_run_step() via exec(code, globals()) and previously failed with
+# "name 'expect' is not defined" on the flat (non-generic) extraction path.
+from playwright.sync_api import sync_playwright, expect
+from Core.calendar_engine import CalendarAction, CalendarError, CalendarVerificationError, verify_selection
+# DATE-ENTRY-ENGINE: generic, application-independent date entry + verification
+# (masked / native / plain text date inputs). See Core/date_entry_engine.py.
+from Core import date_entry_engine as _qa_date_engine
 
 # --------------------------------------------------------------------
 # RUNTIME IDENTITY PROOF (2026-09-25) — child side.
@@ -499,9 +507,24 @@ def _qa_send_event(event):
 
 
 def _qa_active_page():
-    """Return the newest live page from the executing browser context."""
+    """Preserve the script's page ownership rather than stealing it for popups."""
     candidates = []
     current = globals().get("page")
+    if current is not None:
+        try:
+            if not current.is_closed():
+                return current
+            # A closed explicitly owned popup can return to its live opener.
+            opener = current.opener()
+            seen_openers = set()
+            while opener is not None and id(opener) not in seen_openers:
+                seen_openers.add(id(opener))
+                if not opener.is_closed():
+                    globals()["page"] = opener
+                    return opener
+                opener = opener.opener()
+        except Exception:
+            pass
     current_context = globals().get("context")
     if current_context is not None:
         try:
@@ -518,15 +541,21 @@ def _qa_active_page():
     if current is not None:
         candidates.append(current)
     seen = set()
+    live = []
     for candidate in candidates:
         if id(candidate) in seen:
             continue
         seen.add(id(candidate))
         try:
             if not candidate.is_closed():
-                return candidate
+                live.append(candidate)
         except Exception:
             continue
+    if len(live) == 1:
+        globals()["page"] = live[0]
+        return live[0]
+    if live:
+        raise RuntimeError("Ambiguous Playwright page ownership: no live script-bound page.")
     raise RuntimeError("No active Playwright page is available for locator repair.")
 
 
@@ -670,6 +699,7 @@ def _qa_capture_context(raw_locator=""):
         "accessibility": [],
         "dom_candidates": [],
         "failure_matches": [],
+        "frames": [],
     }
     try:
         context["url"] = _qa_active_page().url
@@ -690,6 +720,30 @@ def _qa_capture_context(raw_locator=""):
         pass
     try:
         context["failure_matches"] = _qa_capture_failure_matches(raw_locator)
+    except Exception:
+        pass
+    # One bounded snapshot at failure, never a whole-DOM polling loop.
+    # Frame probes are diagnostic only: they do not dispatch actions or
+    # silently change the executing page/frame.
+    try:
+        active = _qa_active_page()
+        for frame in list(active.frames)[:20]:
+            from urllib.parse import urlsplit, urlunsplit
+            parts = urlsplit(frame.url)
+            host = parts.netloc.rsplit("@", 1)[-1]
+            path = re.sub(r"\(S\([^)]*\)\)", "[SESSION]", parts.path)
+            item = {
+                "url": urlunsplit((parts.scheme, host, path, "", ""))[:500],
+                "name": str(frame.name or "")[:120],
+                "main_frame": frame == active.main_frame,
+                "locator_count": None,
+            }
+            if raw_locator:
+                try:
+                    item["locator_count"] = frame.locator(raw_locator).count()
+                except Exception as ex:
+                    item["probe_error"] = type(ex).__name__
+            context["frames"].append(item)
     except Exception:
         pass
     return context
@@ -772,7 +826,7 @@ def _qa_verify_code(code_text, metadata=None):
                 loc.first.wait_for(state="visible", timeout=_QA_DISCOVERY_TIMEOUT_MS)
                 result["visible"] = True
                 result["actionable"] = bool(loc.first.evaluate(r"""el => {
-                    let actionable = el.closest('button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[tabindex]:not([tabindex="-1"])');
+                    let actionable = el.closest('button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[onclick],[draggable="true"],[tabindex]:not([tabindex="-1"])');
                     let cursorNode = el;
                     while (!actionable && cursorNode && cursorNode !== document.body) {
                         if (getComputedStyle(cursorNode).cursor === 'pointer') actionable = cursorNode;
@@ -796,6 +850,7 @@ def _qa_verify_code(code_text, metadata=None):
                         text: clean(el.innerText || el.textContent),
                         role: clean(el.getAttribute('role')),
                         actionable_tag: (el.tagName || '').toLowerCase(),
+                        input_type: el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : '',
                         label: label,
                         name: clean(el.getAttribute('name')),
                         id: clean(el.id),
@@ -925,11 +980,37 @@ def _qa_semantic_compatibility(capture, metadata):
         # uniqueness, visibility, or name matching.
         "button": {"button", "link", "div", "li", "span", "p"},
     }
-    effective_role = actual_role or ({"input": "textbox", "select": "combobox", "button": "button", "a": "link"}.get(actual_tag) or actual_tag)
+    input_type = str(capture.get("input_type") or "text").lower()
+    input_role = (
+        "button" if input_type in {"button", "submit", "reset", "image"} else
+        input_type if input_type in {"checkbox", "radio"} else "textbox"
+    )
+    effective_role = actual_role or ({"input": input_role, "select": "combobox", "button": "button", "a": "link"}.get(actual_tag) or actual_tag)
+    # Non-ARIA calendars can expose actionable DIV/SPAN date cells.
+    # Accept only an exact full recorded date title, never a day-number
+    # match or a generated ID. The caller still enforces uniqueness,
+    # visibility and actionability before dispatch.
+    if (expected_type == "date" and action_type == "select_date"
+            and actual_tag in {"div", "span", "td", "a"}
+            and str(capture.get("title") or "").strip().casefold() == expected_name.casefold()
+            and expected_name and not expected_name.isdigit()):
+        effective_role = "gridcell"
     allowed = type_roles.get(expected_type)
+    # Scripts recorded before checkbox/radio had their own FIELD_TYPE tag a
+    # checkbox/radio click as a generic "button" but still carry the control's
+    # own recorded ARIA role. Accept exactly that recorded role -- never a
+    # wider set -- so the element must still match what was recorded.
+    recorded_control_role = str((metadata or {}).get("control_role") or "").strip().lower()
+    if (allowed and expected_type == "button"
+            and recorded_control_role in {"checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox",
+                                           "menuitemradio", "option", "treeitem"}):
+        allowed = set(allowed) | {recorded_control_role}
     if allowed and effective_role not in allowed:
         return False, f"Selected {effective_role or actual_tag} is not semantically compatible with recorded {expected_type} action {action_type or "click"}."
-    if action_type in {"fill", "type"} and actual_tag not in {"input", "textarea"} and effective_role != "textbox":
+    if action_type in {"fill", "type"} and (
+        (actual_tag not in {"input", "textarea"} and effective_role != "textbox")
+        or (actual_tag == "input" and input_role != "textbox")
+    ):
         return False, "Selected element does not accept text input."
     return True, "Semantic and action context match."
 
@@ -987,12 +1068,33 @@ def _qa_select_element(code_text, step_number, metadata=None):
                 if (tag === "textarea") return "textbox";
                 if (tag === "input") {
                     const type = (el.type || "text").toLowerCase();
-                    if (["button", "submit", "reset"].includes(type)) return "button";
+                    if (["button", "submit", "reset", "image"].includes(type)) return "button";
                     if (type === "checkbox") return "checkbox";
                     if (type === "radio") return "radio";
                     return "textbox";
                 }
                 return "";
+            };
+            // GENERIC-ACTIONABLE-OWNER-RESOLUTION: same corroboration-based
+            // rule as web_recorder.py's closestCustomClickable() (see that
+            // function's own comment for the live forensic evidence this
+            // is based on). Mirrored here rather than shared at runtime
+            // because the recorder and this interactive Selection Mode
+            // harness are two separate
+            // injected scripts; kept behaviorally identical by design and by
+            // the shared regression tests covering both.
+            const TEST_ID_ATTRS = ["data-testid", "data-test", "data-qa", "data-cy"];
+            const hasStableTestId = (node) => TEST_ID_ATTRS.some((name) => node.getAttribute && node.getAttribute(name));
+            const INTERACTIVE_ARIA_STATE_ATTRS = ["aria-pressed", "aria-expanded", "aria-selected", "aria-checked", "aria-haspopup"];
+            const hasInteractiveAriaState = (node) => INTERACTIVE_ARIA_STATE_ATTRS.some((name) => node.hasAttribute && node.hasAttribute(name));
+            const isLargeStructuralSurface = (node) => {
+                try {
+                    const rect = node.getBoundingClientRect();
+                    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+                    const vw = window.innerWidth || document.documentElement.clientWidth || 1;
+                    const vh = window.innerHeight || document.documentElement.clientHeight || 1;
+                    return rect.width >= vw * 0.7 && rect.height >= vh * 0.7;
+                } catch (e) { return false; }
             };
             const actionableFor = (leaf) => {
                 const semanticSelector = "button,a[href],input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[role=gridcell],[role=combobox]";
@@ -1010,16 +1112,49 @@ def _qa_select_element(code_text, step_number, metadata=None):
                 if (semantic) return semantic;
                 const descendant = leaf.querySelector && leaf.querySelector(semanticSelector);
                 if (descendant) return descendant;
+                // GENERIC-ACTIONABLE-OWNER-RESOLUTION: legacyNode replays the
+                // EXACT pre-existing rule below (a generic container tag is
+                // always skipped, cursor:pointer alone is enough on anything
+                // else) unchanged, so any click that already resolves
+                // correctly today keeps resolving to the identical element.
+                // preferredNode additionally allows a generic container
+                // (DIV/SPAN/FORM/FIELDSET/SECTION/DIALOG or a framework
+                // wrapper class) to qualify, but ONLY with independent static
+                // corroboration beyond cursor:pointer (its own onclick,
+                // tabindex, stable id, test-id attribute, or interactive ARIA
+                // state) -- never from cursor:pointer alone, and never past a
+                // large structural surface (dialog/overlay boundary).
                 let node = leaf;
                 let depth = 0;
+                let legacyNode = null;
+                let preferredNode = null;
+                let corroborationSearchOpen = true;
                 while (node && node !== document.body && depth < MAX_ANCESTORS) {
                     const genericContainer = /^(DIV|SPAN|FORM|FIELDSET|SECTION|DIALOG)$/.test(node.tagName)
                         || /(?:k-window|k-dialog|k-popup|k-calendar|wrapper|container)/i.test(node.className || "");
-                    if (!genericContainer && getComputedStyle(node).cursor === "pointer") return node;
+                    const cursorPointer = getComputedStyle(node).cursor === "pointer";
+                    if (!legacyNode && !genericContainer && cursorPointer) legacyNode = node;
+                    if (corroborationSearchOpen && !preferredNode && genericContainer) {
+                        const tabIndexAttr = node.getAttribute && node.getAttribute("tabindex");
+                        // GENERIC-ACTIONABLE-OWNER-RESOLUTION: a stable id/
+                        // test-id can never promote a node BY ITSELF -- see
+                        // the matching comment in web_recorder.py's
+                        // closestCustomClickable() for the full reasoning.
+                        // It only ever strengthens a node that already
+                        // shows its own interactivity signal OR its own
+                        // cursor:pointer; it never substitutes for either.
+                        const ownInteractivitySignal = !!node.onclick
+                            || (tabIndexAttr !== null && tabIndexAttr !== undefined && tabIndexAttr !== "-1")
+                            || hasInteractiveAriaState(node);
+                        const ownAddressability = (node.id && !dynamic(node.id)) || hasStableTestId(node);
+                        const ownCorroboration = ownInteractivitySignal || (cursorPointer && ownAddressability);
+                        if (ownCorroboration) preferredNode = node;
+                    }
+                    if (corroborationSearchOpen && isLargeStructuralSurface(node) && node !== leaf) corroborationSearchOpen = false;
                     node = node.parentElement;
                     depth += 1;
                 }
-                return leaf;
+                return preferredNode || legacyNode || leaf;
             };
             const contextFor = (el) => {
                 let node = el.parentElement;
@@ -1828,6 +1963,10 @@ def _qa_try_parent_reopen(metadata):
         return False
 
 
+class _QaCalendarConfirmationError(RuntimeError):
+    """No date action was dispatched; require the existing repair dialog."""
+
+
 class _QaPostActionVerificationError(RuntimeError):
     pass
 
@@ -2058,6 +2197,102 @@ def _qa_wait_for_next_step_readiness(next_metadata):
     return False
 
 
+def _qa_date_entry_plan(code_text, metadata=None):
+    """Plan date-aware entry for ONE step, or None for the ordinary path.
+
+    DATE-ENTRY-ENGINE: a recorded `locator.fill('<date literal>')` used to be
+    replayed as a raw fill. A raw fill never produces key events, so an input
+    mask that owns the field re-renders its prompt template around the
+    injected text (e.g. '01/10/2026__/__/____'). This only plans anything
+    when ALL of these hold, decided from the live field itself (never from an
+    application name, id or format): the step is exactly one .fill() of a
+    date-shaped string literal, the target resolves to exactly one editable
+    text-like/date <input>, and the step is not sensitive. Anything else
+    (and any planning error) returns None, leaving the step on the exact
+    pre-existing exec() path. Planning performs no action.
+    """
+    try:
+        import ast
+        meta = metadata or {}
+        if str(meta.get("field_type") or "").lower() == "password" or str(
+            meta.get("is_sensitive", meta.get("sensitive", False))
+        ).lower() in {"true", "yes", "1"}:
+            return None
+        tree = ast.parse((code_text or "").strip())
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Expr):
+            return None
+        call = tree.body[0].value
+        if not (
+            isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "fill" and len(call.args) == 1 and not call.keywords
+            and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+        ):
+            return None
+        value = call.args[0].value
+        if not _qa_date_engine.is_date_shaped(value):
+            return None
+        locator = eval(ast.unparse(call.func.value), {**globals(), "page": _qa_active_page()})
+        if not hasattr(locator, "count") or locator.count() != 1:
+            return None
+        info = _qa_date_engine.inspect_input(locator.first)
+        if not _qa_date_engine.entry_applicable(info, value):
+            return None
+        return {"locator": locator.first, "value": value, "info": info}
+    except Exception:
+        return None
+
+
+def _qa_exec_action(code_text, metadata=None):
+    """Execute one recorded action exactly once.
+
+    Ordinary steps run through the unchanged exec() path. A date literal
+    filled into a date/text input is entered the way that control expects
+    (native ISO fill for <input type=date>, real keyboard entry for text and
+    masked inputs) by Core.date_entry_engine. This is still ONE action per
+    call: the verdict is always left to _qa_verify_post_action(), and nothing
+    here is ever retried after an uncertain verification.
+    """
+    plan = _qa_date_entry_plan(code_text, metadata)
+    if plan is None:
+        exec(_qa_prepare_exec_code(code_text), globals())
+        return
+    report = _qa_date_engine.enter_date_value(_qa_active_page(), plan["locator"], plan["value"], plan["info"])
+    _qa_send_event({
+        "event": "date_entry_performed", "step": _QA_STATE.get("current_step"),
+        "total_steps": _QA_TOTAL_STEPS, **report,
+    })
+
+
+def _qa_verify_date_entry(node, expected, actual, metadata=None):
+    """Date-aware verdict for a fill whose expected value is a date.
+
+    Returns None when `expected` is not date-shaped (callers then use the
+    ordinary strict comparison, unchanged). Only reached when the field does
+    not hold the entered text verbatim: the same calendar date in another
+    display format verifies; leftover mask slots, partial dates, different
+    dates and non-dates do not. Mask characters are never stripped to force a
+    match, and an exact match is never re-judged.
+    """
+    if not _qa_date_engine.is_date_shaped(expected):
+        return None
+    try:
+        info = _qa_date_engine.inspect_input(node)
+        hint = _qa_date_engine.format_hint_of(info) or str((metadata or {}).get("date_format") or "")
+        settled = _qa_date_engine.settled_value(node, actual)
+        result = _qa_date_engine.compare_date_values(expected, settled, hint)
+        if result["verified"] and info.get("bad_input"):
+            result.update({
+                "verified": False, "status": "incomplete",
+                "reason": "The date input reports an unparsable (incomplete) value.",
+            })
+    except Exception:
+        return None
+    return {
+        "verified": bool(result["verified"]), "checked": True, "reason": result["reason"],
+        "date_verification": {key: result[key] for key in ("status", "expected", "actual")},
+    }
+
+
 def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_action_popup_ids=None, resolved_owner=None):
     """Verify deterministic semantic outcomes; report skipped when no safe assertion exists.
 
@@ -2081,7 +2316,34 @@ def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_act
     """
     field_type = str((metadata or {}).get("field_type") or "").lower()
     action_type = str((metadata or {}).get("action_type") or "").lower()
+    sensitive = field_type == "password" or str(
+        (metadata or {}).get("is_sensitive", (metadata or {}).get("sensitive", False))
+    ).lower() in {"true", "yes", "1"}
     expected = str((metadata or {}).get("expected_value") or "").strip()
+    calendar_data = (metadata or {}).get('calendar_metadata')
+    if action_type == 'select_date' and calendar_data and calendar_data != '{}':
+        try:
+            verify_selection(_qa_active_page(), json.loads(calendar_data))
+            return {'verified': True, 'checked': True, 'reason': 'Exact selected date verified in its owning input.'}
+        except CalendarError as ex:
+            return {'verified': False, 'checked': True, 'reason': str(ex)}
+        except Exception as ex:
+            return {'verified': False, 'checked': True, 'reason': 'Calendar verification could not complete (' + type(ex).__name__ + ').'}
+    # Task-1 Phase 3: a recorded COMPOUND block (for / with / if / try ...)
+    # is executed as one opaque step. It has no single locator/value to
+    # re-verify, and previously crashed here with "invalid syntax" AFTER
+    # the block had already executed. Report it honestly as executed but
+    # not independently verifiable (checked=False) instead of failing.
+    try:
+        import ast as _qa_ast_probe
+        _qa_probe_body = _qa_ast_probe.parse(code_text.strip()).body
+        if _qa_probe_body and not isinstance(_qa_probe_body[0], (_qa_ast_probe.Expr, _qa_ast_probe.Assert)):
+            return {
+                "verified": True, "checked": False,
+                "reason": "Compound recorded block executed; it has no single deterministic post-condition, so it was not independently verified.",
+            }
+    except SyntaxError:
+        pass
     _, code_value = _qa_extract_locator_and_value(code_text)
     expected = expected or (code_value if action_type in {"fill", "type", "select_option"} else "")
     if action_type in {"goto", "navigation", "execute"} or code_text.lstrip().startswith(("assert ", "expect(")):
@@ -2109,8 +2371,51 @@ def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_act
             if locator is None or not hasattr(locator, "count") or locator.count() != 1:
                 return {"verified": False, "checked": True, "reason": "Filled field is no longer uniquely resolvable."}
             node = locator.first
+            sensitive = sensitive or node.get_attribute("type") == "password" or expected.upper() == "[REDACTED]"
+            if sensitive:
+                # Display metadata is not an assertion value. Resolve the
+                # actual action argument locally, never in event payloads.
+                import ast
+                action = ast.parse(code_text.strip()).body[0].value
+                argument = action.args[0] if action.args else next(
+                    (kw.value for kw in action.keywords if kw.arg in {"value", "text"}), None
+                )
+                if argument is None:
+                    return {"verified": False, "checked": True, "reason": "Sensitive input verification could not resolve the entered value."}
+                expected_input = eval(compile(ast.Expression(argument), "<input verification>", "eval"), globals())
+                actual_input = node.input_value()
+                verified = actual_input == str(expected_input)
+                return {"verified": verified, "checked": True, "reason": "Sensitive input value verified." if verified else "Sensitive input does not match the entered value."}
             actual = node.input_value()
-            return {"verified": actual == expected, "checked": True, "reason": f"Expected value '{expected}', found '{actual}'."}
+            if actual == expected:
+                return {"verified": True, "checked": True, "reason": f"Expected value '{expected}', found '{actual}'."}
+            date_result = _qa_verify_date_entry(node, expected, actual, metadata)
+            if date_result is not None:
+                return date_result
+            return {"verified": False, "checked": True, "reason": f"Expected value '{expected}', found '{actual}'."}
+        if action_type == "select_option" and locator is not None and hasattr(locator, "count"):
+            # Native <select>: the deterministic post-condition is the control's
+            # own selected option, not a popup (a native list has none).
+            if locator.count() == 1 and locator.first.evaluate("el => el.tagName") == "SELECT":
+                selected = locator.first.evaluate(
+                    "el => ({value: el.value, labels: Array.from(el.selectedOptions).map(o => (o.text || '').trim())})"
+                )
+                wanted = {item for item in (expected, code_value) if item}
+                ok = (not wanted) or bool(wanted & ({selected.get("value")} | set(selected.get("labels") or [])))
+                return {
+                    "verified": ok, "checked": True,
+                    "reason": ("Selected option verified in the native select." if ok else
+                               f"Native select shows value '{selected.get('value')}' / label {selected.get('labels')}, expected '{expected or code_value}'."),
+                }
+        if action_type == "upload" or ".set_input_files(" in code_text:
+            if locator is None or not hasattr(locator, "count") or locator.count() != 1:
+                return {"verified": False, "checked": True, "reason": "Upload input is no longer uniquely resolvable."}
+            attached = locator.first.evaluate("el => Array.from(el.files || []).map(file => file.name)")
+            return {
+                "verified": bool(attached), "checked": True,
+                "reason": ("Chosen file(s) attached to the input: " + ", ".join(attached)) if attached
+                          else "The input holds no file after the upload step.",
+            }
         if field_type == "modal" or action_type in {"open_modal", "dialog"}:
             # UNIVERSAL STEP COMPLETION GATE: the recorder tags a control
             # as field_type "modal" whenever it lives inside a dialog/
@@ -2307,16 +2612,22 @@ def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_act
                     f"{post_action_dynamic_deadline_s:.1f}-second synchronization window."
                 ),
             }
-        if field_type == "checkbox":
+        if field_type in {"checkbox", "radio"} or action_type in {"check", "uncheck"}:
+            kind_label = "Radio" if field_type == "radio" else "Checkbox"
             if locator is None or locator.count() != 1:
-                return {"verified": False, "checked": True, "reason": "Checkbox is no longer uniquely resolvable."}
+                return {"verified": False, "checked": True, "reason": f"{kind_label} is no longer uniquely resolvable."}
             node = locator.first
-            return {"verified": node.is_checked(), "checked": True, "reason": "Checkbox did not become checked."}
-        if field_type == "radio":
-            if locator is None or locator.count() != 1:
-                return {"verified": False, "checked": True, "reason": "Radio is no longer uniquely resolvable."}
-            node = locator.first
-            return {"verified": node.is_checked(), "checked": True, "reason": "Radio did not become selected."}
+            expects_unchecked = (
+                action_type == "uncheck" or ".uncheck(" in code_text
+                or str((metadata or {}).get("expected_post_state") or "").strip().lower().startswith("unchecked")
+            )
+            state = node.is_checked()
+            verified = state is (not expects_unchecked)
+            if verified:
+                reason = f"{kind_label} is " + ("unchecked as expected." if expects_unchecked else "checked as expected.")
+            else:
+                reason = f"{kind_label} " + ("did not become unchecked." if expects_unchecked else "did not become checked.")
+            return {"verified": verified, "checked": True, "reason": reason}
         if field_type in {"option", "date"} and expected:
             parent_code = _qa_locator_code((metadata or {}).get("parent_locator"))
             if parent_code:
@@ -2368,8 +2679,8 @@ def _qa_verify_post_action(code_text, metadata=None, next_metadata=None, pre_act
         infrastructure_error = isinstance(
             ex, (NameError, AttributeError, TypeError, KeyError, UnboundLocalError)
         )
-        reason = str(ex)
-        if infrastructure_error:
+        reason = "Sensitive input verification failed (" + type(ex).__name__ + ")." if sensitive else str(ex)
+        if infrastructure_error and not sensitive:
             reason = (
                 f"Verification infrastructure error ({type(ex).__name__}: {ex}). "
                 "This is a bug in the verifier itself, not evidence the application "
@@ -2389,6 +2700,9 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
     generation = _QA_STATE["repair_generation"]
     _qa_mark_failed_control(code_text, metadata)
     locator, value = _qa_extract_locator_and_value(code_text)
+    if code_text.lstrip().startswith('CalendarAction('):
+        locator = str((metadata or {}).get('primary_locator') or '')
+        value = str((metadata or {}).get('expected_value') or '')
     context = _qa_capture_context(locator)
     _qa_send_event({
         "event": "step_failed",
@@ -2405,6 +2719,7 @@ def _qa_handle_step_failure(step_number, code_text, error_text, attempt, metadat
         "accessibility": context["accessibility"],
         "dom_candidates": context["dom_candidates"],
         "failure_matches": context["failure_matches"],
+        "frames": context["frames"],
         **_qa_state_fields(),
     })
     # Loop reading commands for this SAME pause -- "verify_locator" is
@@ -2574,6 +2889,327 @@ def _qa_confirm_repair_persistence(step_number, repair_generation, code_text, co
     return confirmed
 
 
+def _qa_upload_search_dirs():
+    """Folders searched (in order) for a recorded upload file NAME.
+
+    A browser never exposes the real path of a file the operator picked, so
+    the recorder stores the file name only. At replay the name is resolved
+    against operator-configured folders: QA_UPLOAD_DIRS (os.pathsep list),
+    then <repo>/Output/TestData, then the working directory.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+    folders = [item for item in _os.environ.get("QA_UPLOAD_DIRS", "").split(_os.pathsep) if item.strip()]
+    try:
+        import Core.calendar_engine as _calendar_module
+        folders.append(str(_Path(_calendar_module.__file__).resolve().parents[1] / "Output" / "TestData"))
+    except Exception:
+        pass
+    folders.append(_os.getcwd())
+    return folders
+
+
+def _qa_prepare_exec_code(code):
+    """Resolve recorded upload file NAMES to real files before the single exec().
+
+    Only `set_input_files(<string literal(s)>)` is touched. A missing file
+    fails the step with an explicit, actionable message -- an upload is never
+    silently skipped, and the persisted script text is never rewritten.
+    """
+    if "set_input_files" not in code:
+        return code
+    import ast as _ast
+    import os as _os
+    try:
+        tree = _ast.parse(code.strip())
+    except SyntaxError:
+        return code
+
+    def resolve(name):
+        if not isinstance(name, str) or not name:
+            return name
+        if _os.path.isabs(name) and _os.path.isfile(name):
+            return name
+        base = _os.path.basename(name.replace("\\", "/"))
+        for folder in _qa_upload_search_dirs():
+            for candidate in (_os.path.join(folder, name), _os.path.join(folder, base)):
+                if _os.path.isfile(candidate):
+                    return candidate
+        raise RuntimeError(
+            "Upload file '" + base + "' was not found. Place it in a folder listed in QA_UPLOAD_DIRS "
+            "or in Output/TestData, or re-record the step with an absolute file path."
+        )
+
+    class _Resolver(_ast.NodeTransformer):
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            if isinstance(node.func, _ast.Attribute) and node.func.attr == "set_input_files" and node.args:
+                first = node.args[0]
+                if isinstance(first, _ast.Constant) and isinstance(first.value, str):
+                    node.args[0] = _ast.copy_location(_ast.Constant(resolve(first.value)), first)
+                elif isinstance(first, (_ast.List, _ast.Tuple)):
+                    first.elts = [
+                        _ast.copy_location(_ast.Constant(resolve(item.value)), item)
+                        if isinstance(item, _ast.Constant) and isinstance(item.value, str) else item
+                        for item in first.elts
+                    ]
+            return node
+
+    return _ast.unparse(_ast.fix_missing_locations(_Resolver().visit(tree)))
+
+
+def _qa_adapt_imported_change_step(code_text, metadata):
+    """Type-aware handling of an IMPORTED Chrome Recorder ``change`` step.
+
+    Chrome DevTools Recorder records a typed value AND a dropdown choice with the very same
+    ``change`` step, so the importer can only translate it to ``fill``.  Playwright's fill() cannot
+    drive a native <select>, and the semantic gate (correctly) refuses it.  For steps imported from a
+    recording ONLY, when the single resolved element is a native <select> and the recorded value
+    equals exactly one of its option values/labels, run it as ``select_option`` instead.  Anything
+    else (no/many elements, not a <select>, value is not an option) is returned UNCHANGED and keeps
+    failing closed.  The adaptation is reported through the normal repair/persistence protocol so the
+    stored script is corrected after the operator confirms.  A previously persisted adaptation
+    (code already select_option, metadata still saying fill) just gets its metadata normalised.
+    """
+    meta = dict(metadata or {})
+    # An imported step keeps its adaptation after the operator/auto-repair persisted it: the repair
+    # writer re-labels the step's SOURCE as "repaired/user-selected", so that label is accepted too.
+    if str(meta.get("source") or "").lower() not in {"chrome-recorder-import", "repaired/user-selected"}:
+        return code_text, metadata
+    action = str(meta.get("action_type") or "").lower()
+    if action not in {"fill", "select_option", "click"}:
+        return code_text, metadata
+    try:
+        expr = _qa_locator_expression_from_code(code_text)
+        if not expr.startswith("page."):
+            return code_text, metadata
+        locator = eval(expr, {**globals(), "page": _qa_active_page()})
+        if not hasattr(locator, "count") or locator.count() != 1:
+            # The saved primary no longer resolves (the page drifted): identify the control through
+            # the step's own saved fallbacks instead, so a drifted dropdown / checkbox can still be
+            # healed.  Only a candidate that resolves to exactly ONE element is accepted.
+            locator = None
+            for candidate_code in _qa_persisted_candidate_codes(code_text, meta):
+                try:
+                    candidate_expr = _qa_locator_expression_from_code(candidate_code)
+                    if not candidate_expr.startswith("page."):
+                        continue
+                    candidate = eval(candidate_expr, {**globals(), "page": _qa_active_page()})
+                    if hasattr(candidate, "count") and candidate.count() == 1:
+                        locator = candidate
+                        break
+                except Exception:
+                    continue
+            if locator is None:
+                return code_text, metadata
+        if action == "click":
+            # Chrome records a checkbox / radio toggle as a plain click. Keep the click (it toggles
+            # exactly like the recording did) but give it checkbox/radio semantics so the gate accepts
+            # the control and verification checks the state really flipped.
+            kind = locator.first.evaluate(
+                "el => el.tagName === 'INPUT' && ['checkbox','radio'].includes(el.type) ? "
+                "[el.type, el.checked] : null"
+            )
+            if not kind:
+                return code_text, metadata
+            will_uncheck = kind[0] == "checkbox" and bool(kind[1])
+            return code_text, dict(meta, field_type=kind[0], expected_post_state="unchecked" if will_uncheck else "checked")
+        info = locator.first.evaluate(
+            "el => el.tagName === 'SELECT' ? Array.from(el.options).map(o => [o.value, (o.label || o.text || '').trim()]) : null"
+        )
+        if not info:
+            return code_text, metadata
+        adapted = dict(meta, action_type="select_option", field_type="dropdown")
+        if action == "select_option" or (".select_option(" in code_text and ".fill(" not in code_text):
+            # Already adapted (and saved) earlier: only the step's metadata is stale.
+            return code_text, adapted
+        match = re.search(r"\.fill\((['\"])(.*)\1\)\s*$", code_text.strip(), re.S)
+        if not match:
+            return code_text, metadata
+        wanted = match.group(2)
+        hits = [o for o in info if wanted in (o[0], o[1])]
+        if len(hits) != 1:
+            return code_text, metadata
+        new_code = code_text.strip()[: match.start()] + ".select_option(" + repr(wanted) + ")"
+        _qa_send_event({
+            "event": "action_adapted", "step": _QA_STATE.get("current_step"), "total_steps": _QA_TOTAL_STEPS,
+            "from_action": "fill", "to_action": "select_option",
+            "reason": "Imported 'change' step targets a native dropdown and the value is one of its options.",
+        })
+        return new_code, adapted
+    except Exception:
+        return code_text, metadata
+
+
+# POPUP-SELECTION-CAPTURE --------------------------------------------
+# A step performed INSIDE a popup / lookup window can return a value to the
+# window that opened it (a selectable item that fills a parent form field and
+# closes the popup). The recorder stores what the popup returned (POPUP_RETURN:
+# the opener's changed control(s) and whether the step closed the popup).
+# Replay must not report such a step as passed merely because the click ran:
+# the popup must have closed when it did at record time and the opener's
+# control must now hold the recorded value. A mismatch is a real failure and
+# is never retried (the click already happened -- repeating it could select a
+# different row or submit twice).
+_QA_POPUP_CONTROL_VALUE_JS = r"""
+el => {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || (tag === 'input' ? 'text' : tag)).toLowerCase();
+    if (tag === 'select') { const o = el.selectedOptions && el.selectedOptions[0]; return o ? (o.text || o.value || '') : ''; }
+    if (type === 'checkbox' || type === 'radio') return el.checked ? 'checked' : 'unchecked';
+    return el.value == null ? '' : String(el.value);
+}
+"""
+
+
+def _qa_popup_return_spec(metadata):
+    raw = str((metadata or {}).get("popup_return") or "").strip()
+    if not raw or raw == "-":
+        return None
+    try:
+        spec = json.loads(raw)
+    except Exception:
+        return {"unreadable": True}
+    return spec if isinstance(spec, dict) else {"unreadable": True}
+
+
+def _qa_popup_control(opener, change):
+    # Resolve the opener's control for one recorded change; never ambiguous.
+    candidates = []
+    display = str(change.get("locator") or "").strip()
+    if display and display != "-":
+        try:
+            code = _qa_locator_code(display)
+            candidates.append(eval(code, {"page": opener}))
+        except Exception:
+            pass
+    xpath = str(change.get("xpath") or "").strip()
+    if xpath:
+        try:
+            candidates.append(opener.locator("xpath=" + xpath))
+        except Exception:
+            pass
+    for locator in candidates:
+        try:
+            if locator.count() == 1:
+                return locator
+        except Exception:
+            continue
+    return None
+
+
+def _qa_normalise_popup_value(value):
+    return re.sub(r"\s+", " ", str(value if value is not None else "")).strip()
+
+
+def _qa_verify_popup_return(metadata, popup=None):
+    # Returns None when the step carries no recorded popup return; otherwise a
+    # dict {verified, checked, reason, ...} in the post-action verdict shape.
+    spec = _qa_popup_return_spec(metadata)
+    if spec is None:
+        return None
+    if spec.get("unreadable"):
+        return {"verified": False, "checked": True, "reason": "The recorded popup return metadata could not be read; re-record this step."}
+    popup = popup if popup is not None else globals().get("page")
+    if popup is None:
+        return {"verified": False, "checked": True, "reason": "No popup window is available to verify the selection."}
+    timeout_ms = 6000
+    if spec.get("popup_closed"):
+        waited = 0
+        while waited < timeout_ms:
+            try:
+                if popup.is_closed():
+                    break
+            except Exception:
+                break
+            time.sleep(0.1)
+            waited += 100
+        try:
+            still_open = not popup.is_closed()
+        except Exception:
+            still_open = False
+        if still_open:
+            return {"verified": False, "checked": True, "popup_closed": False,
+                    "reason": "The popup was recorded closing after this selection but it is still open: the selection did not take effect."}
+    changes = [change for change in (spec.get("changes") or []) if isinstance(change, dict)]
+    result = {"verified": True, "checked": True, "popup_closed": bool(spec.get("popup_closed")), "returned": [],
+              "reason": "Popup closed as recorded." if spec.get("popup_closed") and not changes else "Popup step verified."}
+    if not changes:
+        return result
+    opener = None
+    try:
+        opener = popup.opener()
+    except Exception:
+        opener = None
+    if opener is None:
+        try:
+            opener = _qa_active_page()
+        except Exception:
+            opener = None
+    if opener is None or opener is popup:
+        return {"verified": False, "checked": True,
+                "reason": "The page that opened the popup is no longer available, so the returned selection cannot be verified."}
+    for change in changes:
+        expected = _qa_normalise_popup_value(change.get("expected"))
+        field = change.get("field") or change.get("locator") or "field"
+        actual = None
+        waited = 0
+        control = None
+        while waited <= timeout_ms:
+            control = _qa_popup_control(opener, change)
+            if control is not None:
+                try:
+                    actual = _qa_normalise_popup_value(control.evaluate(_QA_POPUP_CONTROL_VALUE_JS))
+                except Exception:
+                    actual = None
+                if actual == expected:
+                    break
+            time.sleep(0.2)
+            waited += 200
+        if control is None:
+            return {"verified": False, "checked": True,
+                    "reason": "The form field '" + str(field) + "' that the popup selection should update was not found on the opening page."}
+        if actual != expected:
+            return {"verified": False, "checked": True, "expected": expected, "actual": actual,
+                    "reason": "The popup selection did not update '" + str(field) + "': expected '" + expected + "' but the field holds '" + str(actual) + "'."}
+        result["returned"].append({"field": field, "value": actual})
+    result["reason"] = "Popup selection verified: " + ", ".join(
+        "'" + str(item["field"]) + "' = '" + str(item["value"]) + "'" for item in result["returned"]
+    ) + (" and the popup closed." if spec.get("popup_closed") else ".")
+    return result
+
+
+# Popups opened by a step that no later step ever switches to. A recorded
+# script cannot select anything in a window it never touches, so this is
+# reported (never silently) as soon as the script moves on without it.
+_QA_POPUP_LEDGER = {}
+
+
+def _qa_note_popup_activity(step_number, code_text):
+    try:
+        text = str(code_text or "")
+        opened = re.search(r"expect_popup\(\)\s+as\s+(\w+)_info", text)
+        if opened:
+            _QA_POPUP_LEDGER[opened.group(1)] = {"opened_step": step_number, "used": False, "warned": False}
+            return
+        switch = re.match(r"\s*page\s*=\s*(\w+)_info\.value\s*$", text)
+        if switch and switch.group(1) in _QA_POPUP_LEDGER:
+            _QA_POPUP_LEDGER[switch.group(1)]["used"] = True
+            return
+        for name, entry in _QA_POPUP_LEDGER.items():
+            if entry["used"] or entry["warned"] or step_number <= entry["opened_step"]:
+                continue
+            entry["warned"] = True
+            _qa_send_event({
+                "event": "popup_unattended", "step": step_number, "total_steps": _QA_TOTAL_STEPS,
+                "popup": name, "opened_step": entry["opened_step"],
+                "reason": "Step " + str(entry["opened_step"]) + " opened a popup window but no recorded step interacts with it. "
+                          "If a selection is made in that window, it is missing from this script: re-record it.",
+            })
+    except Exception:
+        pass
+
+
 def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
     global _QA_LAST_DYNAMIC_CONTROL
     if step_number <= _QA_STATE["last_passed_step"]:
@@ -2597,6 +3233,8 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
         raise _QaNonReplayableRuntimePlaceholderError(step_number, code_text)
     _QA_STATE.update({"current_step": step_number, "repair_state": "executing"})
     current_code = code_text
+    current_code, metadata = _qa_adapt_imported_change_step(current_code, metadata)
+    _qa_note_popup_activity(step_number, code_text)
     attempt = 0
     while True:
         _qa_send_event({"event": "step_started", "step": step_number, "total_steps": _QA_TOTAL_STEPS, "attempt": attempt + 1, "details": _qa_step_details(current_code, metadata)})
@@ -2622,6 +3260,11 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
             locator_action = (
                 expression.startswith("page.")
                 and expression != current_code.strip()
+                # Page-level input devices (page.keyboard / page.mouse /
+                # page.touchscreen) act on the focused/pointer state, not on
+                # a locator -- their string arguments are key names or text,
+                # never selectors, so they must not enter locator resolution.
+                and expression not in {"page.keyboard", "page.mouse", "page.touchscreen"}
                 and action_type not in {"goto", "navigation", "execute", "assert"}
                 and not current_code.lstrip().startswith(("assert ", "expect("))
             )
@@ -2641,7 +3284,14 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
                         "actionable": bool(item.get("actionable")),
                         "semantic_compatible": bool(item.get("semantic_compatible")),
                         "semantic_reason": item.get("semantic_reason") or "",
-                    } for item in resolution_attempts],
+                        "rejection_reason": (
+                            "not found" if not item.get("count") else
+                            "ambiguous" if item.get("count") != 1 else
+                            "not visible" if not item.get("visible") else
+                            "not actionable" if not item.get("actionable") else
+                            "semantic mismatch" if not item.get("semantic_compatible") else ""
+                        ),
+                    } for item in resolution_attempts[:50]],
                 })
                 if not resolved_code:
                     raise _QaLocatorResolutionError(resolution_attempts)
@@ -2762,7 +3412,17 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
                 # accepting an unrelated popup that was already open
                 # elsewhere on the page.
                 pre_action_popup_ids = _qa_popup_surface_snapshot()
-            exec(current_code, globals())
+            try:
+                if current_code.lstrip().startswith('CalendarAction(page,'):
+                    # Honor the same script-bound/closed-popup restoration
+                    # rule as ordinary locator actions.
+                    _qa_active_page()
+                acting_page = globals().get("page")
+                _qa_exec_action(current_code, metadata)
+            except CalendarVerificationError as ex:
+                raise _QaPostActionVerificationError('Calendar selection could not be verified: ' + str(ex)) from ex
+            except CalendarError as ex:
+                raise _QaCalendarConfirmationError('Calendar confirmation required: ' + str(ex)) from ex
             _qa_smart_wait(metadata)
             post_check = _qa_verify_post_action(
                 current_code, metadata, next_metadata, pre_action_popup_ids, resolved_owner=resolved_candidate
@@ -2770,6 +3430,14 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
             _qa_send_event({"event": _qa_post_action_event_name(post_check), "step": step_number, "total_steps": _QA_TOTAL_STEPS, **post_check})
             if not post_check["verified"]:
                 raise _QaPostActionVerificationError("Post-action verification failed: " + post_check["reason"])
+            popup_check = _qa_verify_popup_return(metadata, popup=acting_page)
+            if popup_check is not None:
+                _qa_send_event({
+                    "event": "popup_return_verified" if popup_check["verified"] else "post_action_failed",
+                    "step": step_number, "total_steps": _QA_TOTAL_STEPS, **popup_check,
+                })
+                if not popup_check["verified"]:
+                    raise _QaPostActionVerificationError("Popup selection verification failed: " + popup_check["reason"])
             if str((metadata or {}).get("field_type") or "").lower() in {"dropdown", "calendar", "autocomplete", "accordion"}:
                 # Track the durable logical control here, not whatever
                 # physical surface this particular run happened to
@@ -2824,6 +3492,22 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
             _qa_replay_speed_pause()
             return
         except Exception as ex:
+            if isinstance(ex, _QaCalendarConfirmationError):
+                # Safe deterministic calendar recovery was exhausted BEFORE
+                # selection. Ask through the established same-session repair
+                # protocol; never fall back to a generated day-ID click.
+                attempt += 1
+                if attempt > _QA_MAX_REPAIR_ROUNDS:
+                    raise
+                outcome = _qa_handle_step_failure(step_number, current_code, str(ex), attempt, metadata)
+                if outcome is None:
+                    _qa_clear_failed_control()
+                    _qa_send_event({'event':'run_cancelled_by_operator','step':step_number})
+                    sys.exit(2)
+                current_code = outcome
+                _QA_STATE['repair_state'] = 'retrying'
+                _qa_send_event({'event':'step_retrying','step':step_number,'attempt':attempt+1})
+                continue
             if isinstance(ex, _QaOwnerScopedTargetResolutionError):
                 _QA_STATE.update({"failed_step": step_number, "repair_state": "owner_scoped_target_resolution_failed"})
                 _qa_send_event({
@@ -2862,7 +3546,7 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
                 )
                 for fallback_code in fallback_codes:
                     try:
-                        exec(fallback_code, globals())
+                        _qa_exec_action(fallback_code, metadata)
                         _qa_smart_wait(metadata)
                         post_check = _qa_verify_post_action(
                             fallback_code, metadata, next_metadata,
@@ -2909,7 +3593,7 @@ def _qa_run_step(step_number, code_text, metadata=None, next_metadata=None):
                 if _qa_try_parent_reopen(metadata):
                     _qa_send_event({"event": "parent_reopen_succeeded", "step": step_number, "total_steps": _QA_TOTAL_STEPS})
                     try:
-                        exec(current_code, globals())
+                        _qa_exec_action(current_code, metadata)
                         _qa_smart_wait(metadata)
                         post_check = _qa_verify_post_action(
                             current_code, metadata, next_metadata,
@@ -3612,7 +4296,7 @@ class PlaywrightRunner:
                 pending = {"step": int(marker.group(1)), "description": (marker.group(2) or "").strip()}
                 continue
             metadata_match = re.match(
-                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|EXPECTED_VALUE|EXPECTED_POST_STATE|PRIMARY_LOCATOR|FALLBACK_LOCATORS|INTERACTION_TARGET_SCOPE|INTERACTION_TARGET|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE):\s*(.*)",
+                r"#\s*(DESCRIPTION|FIELD_TYPE|FIELD_NAME|SECTION|ACTION_TYPE|CONTROL_ROLE|CONTROL_CONTEXT|CONTROL_TRANSACTION|TRANSACTION_OPENER|TRANSACTION_POPUP|OWNERSHIP_EVIDENCE|OWNERSHIP_ACCEPTED|PARENT_LOCATOR|POPUP_LOCATOR|EXPECTED_VALUE|EXPECTED_POST_STATE|PRIMARY_LOCATOR|FALLBACK_LOCATORS|INTERACTION_TARGET_SCOPE|INTERACTION_TARGET|XPATH|IS_SENSITIVE|SENSITIVE|SOURCE|CALENDAR_METADATA|POPUP_RETURN):\s*(.*)",
                 line, re.IGNORECASE,
             )
             if metadata_match and pending is not None:
@@ -3627,11 +4311,52 @@ class PlaywrightRunner:
         has_structured_steps = bool(metadata_by_action_line)
         for statement in run_func.body:
             metadata = metadata_by_action_line.get(statement.lineno)
-            if has_structured_steps and metadata is None:
-                continue
             source = ast.get_source_segment(script_text, statement) or ""
-            if not self._is_executable_recorded_statement(statement, source):
+            if has_structured_steps and metadata is None:
+                # Task-1 Phase 3 (D8, no silent action/assertion loss): a
+                # statement WITHOUT QA_STEP metadata inside a structured
+                # script is either harness boilerplate (setup/teardown, bare
+                # locator construction) -- safe to skip -- or real behaviour
+                # the operator added by hand (an expect()/assert, an extra
+                # click, a loop ...).  The latter used to be skipped
+                # silently, so a script could PASS with its own added
+                # assertion never executed.  Decline instead: the generic
+                # extractor wraps and runs EVERY non-setup statement.
+                if (
+                    self._is_executable_recorded_statement(statement, source)
+                    or isinstance(statement, ast.Assert)
+                    or self._is_unrecognised_unstructured_action(statement, source)
+                ):
+                    return None
                 continue
+            if not self._is_executable_recorded_statement(statement, source):
+                if (
+                    metadata is not None
+                    and not any(token in source for token in (
+                        ".launch(", ".new_context(", ".new_page(", "context.close(", "browser.close(",
+                    ))
+                ):
+                    # Task-1 (popup/tab support): the recorder tags a popup
+                    # `with page.expect_popup() ...:` block and a tab switch
+                    # `page = pageN_info.value` with QA_STEP metadata. A tagged
+                    # statement is real recorded behaviour -- it runs as one
+                    # opaque step instead of being dropped by the flat shape
+                    # check below.
+                    pass
+                else:
+                    if (
+                        not has_structured_steps
+                        and self._is_unrecognised_unstructured_action(statement, source)
+                    ):
+                        # Task-1 Phase 3 (no silent action loss): an UNSTRUCTURED
+                        # (no QA_STEP metadata) recorded script contains a
+                        # statement this flat extractor would drop (loop,
+                        # with-block, assignment from a popup, if/try, ...).
+                        # Decline, so the generic extractor -- which wraps
+                        # every non-setup statement -- handles the whole
+                        # script instead of silently running a subset.
+                        return None
+                    continue
             metadata = metadata or {
                 "step": len(parts) + 1,
                 "description": "Execute action",
@@ -3642,6 +4367,50 @@ class PlaywrightRunner:
                 "code": source.strip(),
             })
         return parts or None
+
+    @staticmethod
+    def _is_bare_locator_construction(statement):
+        """True ONLY for a statement that merely builds a locator and
+        performs no action, e.g. ``page.get_by_role("button")``.
+
+        Defect fixed (Task-1 audit D4): the previous regex
+        ``page.(locator|get_by_*)(...)`` also matched complete ACTION
+        statements such as ``page.get_by_role("button").click()``, so the
+        generic extractor silently dropped real recorded actions -- a
+        script could then "PASS" with its clicks never executed."""
+        if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)):
+            return False
+        function = statement.value.func
+        if not isinstance(function, ast.Attribute):
+            return False
+        locator_builders = ("locator", "frame_locator", "nth", "filter")
+        if not (function.attr in locator_builders or function.attr.startswith("get_by_")):
+            return False
+        node = function.value
+        while isinstance(node, (ast.Attribute, ast.Call)):
+            node = node.func if isinstance(node, ast.Call) else node.value
+        return isinstance(node, ast.Name)
+
+    @staticmethod
+    def _is_unrecognised_unstructured_action(statement, source):
+        """True for a statement that is real script behaviour (not
+        browser/context setup-teardown, not a bare locator construction)
+        yet is not one of the flat extractor's recognised actions."""
+        if any(token in source for token in (
+            ".launch(", ".new_context(", ".new_page(",
+            "context.close(", "browser.close(",
+        )) and "\n" not in source.strip():
+            return False
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            function = statement.value.func
+            if (
+                isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "page"
+                and (function.attr == "locator" or function.attr.startswith("get_by_"))
+            ):
+                return False
+        return True
 
     @staticmethod
     def _is_executable_recorded_statement(statement, source):
@@ -3714,8 +4483,11 @@ class PlaywrightRunner:
             for index, item in enumerate(lines)
         )
 
+        flat_constants = self._extract_script_constants(script_text)
+
         return (
             harness
+            + ((flat_constants + "\n\n") if flat_constants else "")
             + "with sync_playwright() as playwright:\n"
             f"    browser = playwright.chromium.launch(headless=False, slow_mo={slow_mo_ms})\n"
             "    page = browser.new_page()\n"
@@ -3806,13 +4578,74 @@ class PlaywrightRunner:
 
             source = ast.get_source_segment(script_text, stmt)
 
-            if source and not re.fullmatch(
-                r"\s*page\.(?:locator|get_by_[a-z_]+)\(.*\)\s*", source,
-            ):
+            if source and not self._is_bare_locator_construction(stmt):
 
                 statements.append(source)
 
         return statements or None
+
+    @staticmethod
+    def _is_pure_constant_expression(node, known):
+        """True for an expression built ONLY from literals, f-strings, string/number
+        concatenation and previously declared constant names -- no calls, attribute
+        access, comprehensions or lambdas, so carrying it into the harness can never run
+        script logic or touch the environment."""
+        if isinstance(node, ast.Constant):
+            return True
+        if isinstance(node, ast.Name):
+            return isinstance(node.ctx, ast.Load) and node.id in known
+        if isinstance(node, ast.JoinedStr):
+            return all(
+                isinstance(v, ast.Constant)
+                or (isinstance(v, ast.FormattedValue) and PlaywrightRunner._is_pure_constant_expression(v.value, known))
+                for v in node.values
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+            return (
+                PlaywrightRunner._is_pure_constant_expression(node.left, known)
+                and PlaywrightRunner._is_pure_constant_expression(node.right, known)
+            )
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return all(PlaywrightRunner._is_pure_constant_expression(e, known) for e in node.elts)
+        if isinstance(node, ast.Dict):
+            return all(
+                k is not None and PlaywrightRunner._is_pure_constant_expression(k, known)
+                and PlaywrightRunner._is_pure_constant_expression(v, known)
+                for k, v in zip(node.keys, node.values)
+            )
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            return PlaywrightRunner._is_pure_constant_expression(node.operand, known)
+        return False
+
+    def _extract_script_constants(self, script_text):
+        """Source of every module-level ``NAME = <pure constant expression>`` assignment.
+
+        Imported / hand-written scripts routinely declare ``BASE = "https://..."`` (or a
+        credentials-free selector/URL constant) at module level and use it inside run().
+        The interactive harness only wraps run()'s body and previously dropped the module
+        level entirely, so step 1 failed with ``name 'BASE' is not defined`` and no operator
+        locator fix could ever help.  Constants are carried across verbatim, in order; an
+        assignment that is anything other than a pure constant expression is NOT carried
+        (it still surfaces as an honest NameError instead of being guessed)."""
+        try:
+            tree = ast.parse(script_text)
+        except SyntaxError:
+            return ""
+        known = set()
+        lines = []
+        for node in tree.body:
+            target = value = None
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target, value = node.targets[0].id, node.value
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+                target, value = node.target.id, node.value
+            if target is None or not self._is_pure_constant_expression(value, known):
+                continue
+            source = ast.get_source_segment(script_text, node)
+            if source:
+                lines.append(source)
+                known.add(target)
+        return "\n".join(lines)
 
     def _extract_script_imports(self, script_text):
         """
@@ -3905,6 +4738,14 @@ class PlaywrightRunner:
             "__STATE_READINESS_TIMEOUT_MS__", str(max(5000, min(timeout_ms // 3, 15000)))
         ).replace(
             "__HARNESS_VERSION__", _QA_HARNESS_TEMPLATE_SHA256
+        ).replace(
+            # Task-1 Phase 3 fix: this generic (Manually Recorded
+            # fallback) builder never filled the Replay Speed
+            # placeholder that _build_interactive_script() fills, so
+            # the child crashed with NameError before Step 1 for any
+            # recorded script containing loops / with-blocks. It is the
+            # same single slow_mo value used by the speed shim below.
+            "__REPLAY_SPEED_MS__", str(slow_mo_ms)
         )
 
         shim = SPEED_SHIM_TEMPLATE.format(
@@ -3985,6 +4826,9 @@ class PlaywrightRunner:
         script_imports = self._extract_script_imports(script_text)
 
         imports_block = (script_imports + "\n\n") if script_imports else ""
+        script_constants = self._extract_script_constants(script_text)
+        if script_constants:
+            imports_block += script_constants + "\n\n"
 
         return (
             shim
@@ -4076,6 +4920,12 @@ class PlaywrightRunner:
         if interactive_script is None:
 
             return {"interactive_supported": False}
+
+        if self.force_headless:
+            # Unattended / server-side evidence run (see
+            # TestExecutionManager.execute_playwright): same step-verifying harness,
+            # but no window. The operator-driven web session never sets force_headless.
+            interactive_script = HEADLESS_SHIM_TEMPLATE + interactive_script
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
 
@@ -4179,6 +5029,10 @@ class PlaywrightRunner:
 
         stdout_lines = []
         saw_step_event = False
+        required_step_ids = list(dict.fromkeys(int(match) for match in re.findall(
+            r"_qa_run_step\(\s*(\d+)\s*,", interactive_script
+        )))
+        passed_step_ids = set()
         last_failure_event = None
         last_repair_event = None
         total_match = re.search(r"^_QA_TOTAL_STEPS\s*=\s*(\d+)", interactive_script, re.MULTILINE)
@@ -4262,6 +5116,12 @@ class PlaywrightRunner:
                     continue
 
                 event_type = event.get("event")
+                if event_type == "step_passed":
+                    passed_step_ids.add(event.get("step"))
+                if event.get("step") in required_step_ids:
+                    event["progress_step"] = required_step_ids.index(event["step"]) + 1
+                    event["completed_steps"] = len(passed_step_ids.intersection(required_step_ids))
+                    event["total_steps"] = len(required_step_ids)
                 if event_type in {"step_started", "step_passed", "step_failed"}:
                     saw_step_event = True
                 if event_type in {
@@ -4282,10 +5142,11 @@ class PlaywrightRunner:
                 if event_type in {
                     "step_started", "step_passed", "step_retrying",
                     "step_failure_detected",
-                    "locator_resolution",
+                    "locator_resolution", "date_entry_performed",
+                    "popup_return_verified", "popup_unattended",
                     "post_action_verified", "post_action_failed",
                     "post_action_uncertain", "post_action_infrastructure_error",
-                    "fallback_succeeded",
+                    "fallback_succeeded", "action_adapted",
                     "selection_started", "selection_waiting",
                     "selection_cancelled", "selection_failed",
                     "selection_rejected", "stale_decision_rejected",
@@ -4414,7 +5275,9 @@ class PlaywrightRunner:
 
         duration = (datetime.now() - start).total_seconds()
 
-        success = (return_code == 0) and not cancelled
+        success = ((return_code == 0) and not cancelled
+                   and bool(required_step_ids)
+                   and passed_step_ids.issuperset(required_step_ids))
 
         startup_diagnostic = None
         if not success and not cancelled and not saw_step_event:

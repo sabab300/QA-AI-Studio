@@ -27,6 +27,15 @@ def semantic_name_compatible(expected, evidence):
     placeholder, label, aria-label, accessible name), not nearby page text.
     """
     expected_tokens = semantic_tokens(expected)
+    # A captured form hierarchy is a control identity, not fuzzy prose.
+    # Shared suffixes (e.g. imgCalendar) must not equate different fields.
+    expected_identity = str(expected or "").strip()
+    if "$" in expected_identity:
+        identities = [match for value in evidence or () for match in re.findall(
+            r"[A-Za-z0-9_]+(?:\$[A-Za-z0-9_]+)+", str(value or "")
+        )]
+        if identities:
+            return all(value == expected_identity for value in identities)
     if not expected_tokens:
         return True
     expected_set = set(expected_tokens)

@@ -91,71 +91,99 @@ class TextExtractor:
     # --------------------------------------------------
 
     def _extract_docx(self, file_path):
+        """Read a Word document in reading order.
+
+        Fixes three problems that damaged Change Request Forms:
+        * a merged table cell was returned once per grid column it spans, so one
+          requirements cell was repeated up to 8 times;
+        * tables were appended after ALL paragraphs, losing the document order;
+        * rows of 'Label | value' were flattened, and ticked boxes ([x]) lost their meaning.
+        """
+        from docx.oxml.ns import qn
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
 
         document = Document(file_path)
-
         parts = []
 
-        # ------------------------
-        # Paragraphs
-        # ------------------------
+        def cell_lines(cell):
+            lines = []
+            for child in cell._tc.iterchildren():
+                if child.tag == qn("w:p"):
+                    text = Paragraph(child, cell).text.strip()
+                    if text:
+                        lines.append(text)
+                elif child.tag == qn("w:tbl"):
+                    lines.extend(table_lines(Table(child, cell)))
+            return lines
 
-        for paragraph in document.paragraphs:
+        def unique_cells(row):
+            seen, cells = set(), []
+            for cell in row.cells:
+                if id(cell._tc) in seen:
+                    continue
+                seen.add(id(cell._tc))
+                cells.append(cell)
+            return cells
 
-            text = paragraph.text.strip()
+        def checkbox_row(texts):
+            marks = {"[x]": True, "[ ]": False, "\u2612": True, "\u2610": False, "\u2611": True}
+            if len(texts) >= 2 and len(texts) % 2 == 0 and all(t.strip().lower() in marks for t in texts[1::2]):
+                return [(texts[i], marks[texts[i + 1].strip().lower()]) for i in range(0, len(texts), 2)]
+            return None
 
-            if text:
-
-                parts.append(text)
-
-        # ------------------------
-        # Tables
-        # ------------------------
-
-        for table in document.tables:
-
+        def table_lines(table):
+            lines, previous = [], None
             for row in table.rows:
+                cells = unique_cells(row)
+                blocks = [cell_lines(cell) for cell in cells]
+                filled = [block for block in blocks if block]
+                if not filled:
+                    continue
+                flat = ["; ".join(block) for block in filled]
+                ticks = checkbox_row([" ".join(block) for block in blocks]) if len(blocks) == len(filled) else None
+                if ticks is not None:
+                    chosen = [label for label, on in ticks if on]
+                    lines.append("Selected: " + (", ".join(chosen) if chosen else "none"))
+                elif len(filled) == 1:
+                    lines.extend(filled[0])
+                elif len(filled) == 2 and len(filled[0]) == 1 and len(filled[0][0]) <= 120:
+                    first, *rest = filled[1]
+                    label = filled[0][0].rstrip(": ")
+                    lines.append(f"{label}: {first}" if first else label)
+                    lines.extend(rest)
+                else:
+                    lines.append(" | ".join(flat))
+                if lines and lines[-1] == previous:
+                    lines.pop()
+                previous = lines[-1] if lines else None
+            return lines
 
-                cells = []
-
-                for cell in row.cells:
-
-                    value = cell.text.strip()
-
-                    if value:
-
-                        cells.append(value)
-
-                if cells:
-
-                    parts.append(" | ".join(cells))
-
-        # ------------------------
-        # Headers
-        # ------------------------
-
-        for section in document.sections:
-
-            for paragraph in section.header.paragraphs:
-
-                text = paragraph.text.strip()
-
+        body = document.element.body
+        for child in body.iterchildren():
+            if child.tag == qn("w:p"):
+                text = Paragraph(child, document).text.strip()
                 if text:
-
                     parts.append(text)
+            elif child.tag == qn("w:tbl"):
+                parts.extend(table_lines(Table(child, document)))
 
-        # ------------------------
-        # Footers
-        # ------------------------
+        pictures = len(document.inline_shapes)
+        if pictures:
+            self.logger.warning(
+                "%s contains %d embedded picture(s). Text inside pictures is not extracted; "
+                "provide that content as text or a table if tests must cover it.",
+                Path(file_path).name, pictures,
+            )
 
         for section in document.sections:
-
-            for paragraph in section.footer.paragraphs:
-
+            for paragraph in section.header.paragraphs:
                 text = paragraph.text.strip()
-
-                if text:
-
+                if text and text not in parts:
+                    parts.append(text)
+            for paragraph in section.footer.paragraphs:
+                text = paragraph.text.strip()
+                if text and text not in parts:
                     parts.append(text)
 
         return "\n".join(parts)

@@ -906,14 +906,27 @@ class ApiAutomationRunner:
         never Pass, and an unexpected 200 could never Fail either.
 
         `assertions` (section F/I/J, a list of the 7 supported types
-        — see evaluate_assertions()): when given (non-empty), THIS is
-        what decides auto_verdict — Pass only if EVERY assertion
-        passes (section J's explicit example: an expected JSON field
-        value that doesn't match still FAILS even though the HTTP
-        status itself was 200), and result["assertions"] carries each
+        — see evaluate_assertions()): evaluated in ADDITION to the
+        main Expected HTTP Status, never instead of it. The main
+        status check is validated independently whenever the Test
+        Case has an explicit Expected HTTP Status
+        (`expected_status_override`); the verdict is Pass only if
+        EVERY applicable validation passes (section J's explicit
+        examples: expected 400 + actual 200 -> FAIL; an expected JSON
+        field value that doesn't match still FAILS even though the
+        HTTP status was 200). result["status_check"] carries the
+        main status validation and result["assertions"] each
         individual assertion's pass/fail/message for Run Details
-        (section K). When not given, falls back to the legacy
-        single-status comparison against expected_status.
+        (section K).
+
+        Backward compatibility: when NO explicit Expected HTTP
+        Status is configured, the endpoint's own recorded example
+        status is only a DEFAULT — it is still the single check when
+        there are no assertions (legacy behavior), and it is NOT
+        enforced when assertions exist, exactly as before, so test
+        cases saved without an explicit status keep their previous
+        verdict. This is reported in result["status_check"] rather
+        than hidden.
 
         result["auto_verdict"] is "Pass"/"Fail" whenever an
         expectation was actually configured (assertions, or an
@@ -967,6 +980,9 @@ class ApiAutomationRunner:
             "elapsed_ms": None,
             "auto_verdict": None,
             "assertions": [],
+            "status_check": self._status_check_template(
+                expected_status, expected_status_override, bool(assertions),
+            ),
             "extracted_variables": {},
         }
 
@@ -1017,21 +1033,98 @@ class ApiAutomationRunner:
 
         result["response_body_text"] = self._safe_body_text(response)
 
+        # Main Expected HTTP Status — validated on its own, whether or
+        # not additional assertions exist.
+        self._evaluate_status_check(result["status_check"], response.status_code)
+
+        verdicts = []
+
+        if result["status_check"]["enforced"]:
+
+            verdicts.append(bool(result["status_check"]["passed"]))
+
         if assertions:
 
             evaluation = self.evaluate_assertions(assertions, result)
 
             result["assertions"] = evaluation["results"]
 
-            result["auto_verdict"] = evaluation["overall"]
+            verdicts.append(evaluation["overall"] == "Pass")
 
-        elif expected_status:
+        if verdicts:
 
-            result["auto_verdict"] = (
-                "Pass" if int(expected_status) == response.status_code else "Fail"
-            )
+            result["auto_verdict"] = "Pass" if all(verdicts) else "Fail"
 
         return result
+
+    @staticmethod
+    def _status_check_template(expected_status, expected_status_override, has_assertions):
+        """
+        Describes the MAIN Expected HTTP Status validation before the
+        response is known. `source` is "explicit" (the Test Case's own
+        Expected HTTP Status) or "endpoint_example" (the imported
+        endpoint's recorded example status, a default). It is enforced
+        when explicit, or when it is the only expectation (no
+        assertions) — the unchanged legacy behavior.
+        """
+
+        explicit = expected_status_override not in (None, "")
+
+        has_expected = expected_status not in (None, "")
+
+        return {
+            "source": ("explicit" if explicit else ("endpoint_example" if has_expected else None)),
+            "expected": expected_status if has_expected else None,
+            "actual": None,
+            "enforced": bool(has_expected and (explicit or not has_assertions)),
+            "passed": None,
+            "message": "",
+        }
+
+    @staticmethod
+    def _evaluate_status_check(status_check, actual_status):
+        """Fills in actual/passed/message on a _status_check_template() dict. Never raises."""
+
+        status_check["actual"] = actual_status
+
+        expected = status_check.get("expected")
+
+        if expected is None:
+
+            status_check["message"] = "No Expected HTTP Status configured."
+
+            return status_check
+
+        if not status_check.get("enforced"):
+
+            status_check["message"] = (
+                f"Not enforced: no Expected HTTP Status is set on this Test "
+                f"Case. The imported endpoint example status ({expected}) is "
+                f"only a default and is ignored while assertions are "
+                f"configured. Got {actual_status}."
+            )
+
+            return status_check
+
+        try:
+
+            passed = int(expected) == actual_status
+
+        except (TypeError, ValueError):
+
+            status_check["passed"] = False
+
+            status_check["message"] = (
+                f"Expected HTTP Status {expected!r} is not a valid status code; got {actual_status}."
+            )
+
+            return status_check
+
+        status_check["passed"] = passed
+
+        status_check["message"] = f"expected status {expected}, got {actual_status}"
+
+        return status_check
 
     # --------------------------------------------------
     # Assertions & variable extraction (section F/I/J) — evaluated

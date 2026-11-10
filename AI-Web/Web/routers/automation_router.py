@@ -31,12 +31,13 @@ left out rather than faked.
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from Core.automation_web_repository import (
     ApiCollectionsWeb,
     EnvironmentConfigWeb,
+    TokenConfigurationsWeb,
     GitAutomationWeb,
     TestCasesWeb,
     SqlAutomationWeb,
@@ -400,6 +401,14 @@ class GenerateTokenRequest(BaseModel):
     save_to_variable: str
 
 
+class TokenConfigurationRequest(BaseModel):
+    token_name: str
+    request_config: dict
+    extract_type: Optional[str] = "json_path"
+    extract_path: Optional[str] = ""
+    save_to_variable: str
+
+
 @router.get("/environment")
 def get_environment(current_user=Depends(require_permission("automation", "view"))):
 
@@ -512,6 +521,48 @@ def generate_token(
             f"Generated token and saved to variable '{payload.save_to_variable}'",
         )
 
+    return result
+
+
+@router.get("/environment/token-configurations")
+def list_token_configurations(
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return {"items": TokenConfigurationsWeb().list_all()}
+
+
+@router.post("/environment/token-configurations")
+def create_token_configuration(
+    payload: TokenConfigurationRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    result = _value_error_to_400(
+        TokenConfigurationsWeb().create, payload.dict()
+    )
+    _audit(current_user, "CREATE_TOKEN_CONFIGURATION", f"name={result['token_name']}")
+    return result
+
+
+@router.put("/environment/token-configurations/{config_id}")
+def update_token_configuration(
+    config_id: int,
+    payload: TokenConfigurationRequest,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    result = _value_error_to_400(
+        TokenConfigurationsWeb().update, config_id, payload.dict()
+    )
+    _audit(current_user, "UPDATE_TOKEN_CONFIGURATION", f"id={config_id}")
+    return result
+
+
+@router.delete("/environment/token-configurations/{config_id}")
+def delete_token_configuration(
+    config_id: int,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    result = _value_error_to_400(TokenConfigurationsWeb().delete, config_id)
+    _audit(current_user, "DELETE_TOKEN_CONFIGURATION", f"id={config_id}")
     return result
 
 
@@ -781,6 +832,108 @@ def import_playwright_mapping(
     raise HTTPException(status_code=400, detail=detail)
 
 
+# ---------------------------------------------------------------------------
+# Universal script import (Task 1 / Phase 6): Upload -> Detect -> Extract ->
+# Validate -> Convert/Preserve -> Preview -> Save.  Stateless: the commit
+# re-analyses the same files and verifies the reviewed source fingerprints.
+# ---------------------------------------------------------------------------
+def _script_import_service():
+    from Core.script_import.service import ScriptImportService
+    return ScriptImportService(TestCasesWeb().repository)
+
+
+def _read_uploads(files):
+    return [(f.filename or "script", f.file.read()) for f in files]
+
+
+def _json_form(value, default):
+    import json as _json
+    try:
+        return _json.loads(value) if value else default
+    except ValueError:
+        raise HTTPException(status_code=400, detail="A form field contained invalid JSON.")
+
+
+@router.post("/script-imports/analyze")
+def analyze_script_import(
+    files: List[UploadFile] = File(...),
+    test_case_version_id: int = Form(...),
+    test_case_file_id: int = Form(...),
+    forced_formats: str = Form("{}"),
+    current_user=Depends(require_permission("automation", "create")),
+):
+    """Detect, extract, validate and convert every uploaded script. Saves nothing."""
+    try:
+        return _script_import_service().analyze(
+            _read_uploads(files), _json_form(forced_formats, {}), test_case_version_id, test_case_file_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.warning("Script import analysis rejected: %s", error)
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@router.post("/script-imports/commit")
+def commit_script_import(
+    files: List[UploadFile] = File(...),
+    test_case_version_id: int = Form(...),
+    test_case_file_id: int = Form(...),
+    decisions: str = Form("[]"),
+    forced_formats: str = Form("{}"),
+    all_or_nothing: bool = Form(False),
+    current_user=Depends(require_permission("automation", "create")),
+):
+    """Save the reviewer-approved tests. Per-test atomic; all-or-nothing on request."""
+    try:
+        report = _script_import_service().commit(
+            _read_uploads(files), _json_form(decisions, []), test_case_version_id, test_case_file_id,
+            all_or_nothing=all_or_nothing, forced_formats=_json_form(forced_formats, {}),
+            user=current_user.get("username", ""),
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.warning("Script import commit rejected: %s", error)
+        raise HTTPException(status_code=400, detail=str(error))
+    _audit(
+        current_user, "IMPORT_SCRIPTS",
+        f"Script import batch {report['batch_id']}: imported={report['summary']['imported']} "
+        f"failed={report['summary']['failed']} rejected={report['summary']['rejected']} "
+        f"(test_case_version_id={test_case_version_id})",
+    )
+    return report
+
+
+@router.get("/script-imports/history")
+def script_import_history(limit: int = Query(50, ge=1, le=200), current_user=Depends(require_permission("automation", "view"))):
+    return {"imports": _script_import_service().history(limit)}
+
+
+@router.get("/script-imports/history/{batch_id}")
+def script_import_history_item(batch_id: str, current_user=Depends(require_permission("automation", "view"))):
+    item = _script_import_service().history_item(batch_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+    return item
+
+
+@router.post("/script-imports/run-native")
+def run_native_script(
+    files: List[UploadFile] = File(...),
+    key: str = Form(...),
+    forced_formats: str = Form("{}"),
+    current_user=Depends(require_permission("automation", "execute")),
+):
+    """Run ONE imported JS/TS test in the isolated native Node runtime (headless, scrubbed environment)."""
+    try:
+        return _script_import_service().run_native(_read_uploads(files), key, _json_form(forced_formats, {}))
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
 @router.get("/test-cases/{test_case_id}")
 def get_test_case(test_case_id: int, current_user=Depends(require_permission("automation", "view"))):
 
@@ -793,10 +946,48 @@ def get_test_case(test_case_id: int, current_user=Depends(require_permission("au
     return test_case
 
 
-@router.delete("/test-cases/{test_case_id}")
-def delete_test_case(test_case_id: int, current_user=Depends(require_permission("automation", "delete"))):
+def _script_lifecycle():
+    from Core.playwright_script_lifecycle import PlaywrightScriptLifecycle
+    return PlaywrightScriptLifecycle(TestCasesWeb().repository)
 
-    deleted = TestCasesWeb().delete_test_case(test_case_id)
+
+def _lifecycle_call(function, *args, **kwargs):
+    """
+    Task 1 / Phase 7: maps the script-lifecycle outcomes onto HTTP.
+    409 + code BLOCKED          -> cannot proceed now (e.g. a run is in progress)
+    409 + code ACKNOWLEDGEMENT_REQUIRED -> allowed, but the caller must confirm the impact
+    """
+
+    from fastapi.responses import JSONResponse
+    from Core.playwright_script_lifecycle import Blocked, LifecycleError, NeedsAcknowledgement, NotFound
+
+    try:
+        return function(*args, **kwargs)
+    except NotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except Blocked as error:
+        return JSONResponse(status_code=409, content={"detail": str(error), "code": "BLOCKED", "impact": error.impact})
+    except NeedsAcknowledgement as error:
+        return JSONResponse(status_code=409, content={"detail": str(error), "code": "ACKNOWLEDGEMENT_REQUIRED", "impact": error.impact})
+    except LifecycleError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@router.delete("/test-cases/{test_case_id}")
+def delete_test_case(
+    test_case_id: int,
+    acknowledge: bool = Query(False),
+    current_user=Depends(require_permission("automation", "delete")),
+):
+    """Dependency-aware: blocked while a run is in progress; needs acknowledgement
+    when the test case has execution history or scripts (which are retained)."""
+
+    outcome = _lifecycle_call(_script_lifecycle().delete_test_case, test_case_id, acknowledge)
+
+    if isinstance(outcome, Response) or not isinstance(outcome, tuple):
+        return outcome
+
+    deleted, impact = outcome
 
     if not deleted:
 
@@ -804,7 +995,71 @@ def delete_test_case(test_case_id: int, current_user=Depends(require_permission(
 
     _audit(current_user, "DELETE_TEST_CASE", f"Deleted test_case_id={test_case_id}")
 
-    return {"deleted": True}
+    return {"deleted": True, "impact": impact}
+
+
+@router.get("/test-cases/{test_case_id}/deletion-impact")
+def test_case_deletion_impact(test_case_id: int, current_user=Depends(require_permission("automation", "view"))):
+    return _lifecycle_call(_script_lifecycle().test_case_deletion_impact, test_case_id)
+
+
+@router.get("/test-cases/{test_case_id}/script-revisions")
+def list_script_revisions(
+    test_case_id: int,
+    source: Optional[str] = Query(None),
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return _lifecycle_call(_script_lifecycle().list_revisions, test_case_id, source)
+
+
+@router.get("/test-cases/{test_case_id}/script-revisions/{revision_id}")
+def get_script_revision(
+    test_case_id: int, revision_id: int,
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return _lifecycle_call(_script_lifecycle().get_revision, test_case_id, revision_id)
+
+
+@router.post("/test-cases/{test_case_id}/script-revisions/{revision_id}/rollback")
+def rollback_script_revision(
+    test_case_id: int, revision_id: int,
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    """Saves the chosen revision as a NEW revision; the script must be re-validated before it can be active again."""
+
+    outcome = _lifecycle_call(
+        _script_lifecycle().rollback, test_case_id, revision_id, current_user.get("username")
+    )
+    if isinstance(outcome, dict):
+        _audit(current_user, "ROLLBACK_PLAYWRIGHT_SCRIPT",
+               f"test_case_id={test_case_id} revision_id={revision_id} source={outcome.get('source')}")
+        outcome["test_case"] = TestCasesWeb().get_test_case(test_case_id)
+    return outcome
+
+
+@router.get("/test-cases/{test_case_id}/scripts/{source}/impact")
+def script_removal_impact(
+    test_case_id: int, source: str,
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return _lifecycle_call(_script_lifecycle().script_impact, test_case_id, source)
+
+
+@router.delete("/test-cases/{test_case_id}/scripts/{source}")
+def remove_playwright_script(
+    test_case_id: int, source: str,
+    acknowledge: bool = Query(False),
+    current_user=Depends(require_permission("automation", "edit")),
+):
+    """Removes ONE script slot (reversible through Rollback)."""
+
+    outcome = _lifecycle_call(
+        _script_lifecycle().delete_script, test_case_id, source, current_user.get("username"), acknowledge
+    )
+    if isinstance(outcome, dict):
+        _audit(current_user, "REMOVE_PLAYWRIGHT_SCRIPT", f"test_case_id={test_case_id} source={source.upper()}")
+        outcome["test_case"] = TestCasesWeb().get_test_case(test_case_id)
+    return outcome
 
 
 @router.post("/test-cases/import")
@@ -1229,6 +1484,95 @@ def get_run(run_id: str, current_user=Depends(require_permission("automation", "
     return job
 
 
+class RunReportRequest(BaseModel):
+    run_uuids: List[str]
+    format: str = "json"
+    title: Optional[str] = None
+
+
+_MAX_REPORT_RUNS = 500
+
+
+def _build_report_response(run_uuids, fmt, title, current_user, single=False):
+    """
+    Task 1 / Phase 8: unified execution-results download. Builds the report
+    from the PERSISTED run rows only (never re-executes), sanitises every
+    credential-like value, and streams it as an attachment.
+    """
+
+    from datetime import datetime
+    from Core import playwright_report
+
+    ordered = []
+    for run_uuid in run_uuids or []:
+        run_uuid = str(run_uuid or "").strip()
+        if run_uuid and run_uuid not in ordered:
+            ordered.append(run_uuid)
+
+    if not ordered:
+        raise HTTPException(status_code=400, detail="Select at least one run to download.")
+
+    if len(ordered) > _MAX_REPORT_RUNS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A report can contain at most {_MAX_REPORT_RUNS} runs; {len(ordered)} were requested.",
+        )
+
+    runs, missing = [], []
+    web = TestCasesWeb()
+    for run_uuid in ordered:
+        job = web.get_job(run_uuid)
+        (runs if job else missing).append(job or run_uuid)
+
+    if not runs:
+        raise HTTPException(status_code=404, detail="None of the selected runs exist any more.")
+
+    report = playwright_report.build_batch_report(
+        runs,
+        title=title or ("Playwright execution report" if len(runs) > 1 else f"Run report {runs[0].get('tc_number') or ''}".strip()),
+        generated_by=(current_user or {}).get("username"),
+    )
+    if missing:
+        report["missing_runs"] = missing
+
+    try:
+        body, media_type, extension = playwright_report.render(report, fmt)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"qa_ai_studio_execution_report_{stamp}.{extension}"
+    _audit(current_user, "DOWNLOAD_EXECUTION_REPORT", f"{len(runs)} run(s) as {extension}")
+
+    return Response(
+        content=body.encode("utf-8-sig") if extension == "csv" else body.encode("utf-8"),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "X-Report-Runs": str(len(runs)),
+            "X-Report-Missing": str(len(missing)),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/runs/report")
+def download_runs_report(
+    payload: RunReportRequest,
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return _build_report_response(payload.run_uuids, payload.format, payload.title, current_user)
+
+
+@router.get("/runs/{run_id}/report")
+def download_run_report(
+    run_id: str,
+    format: str = Query("json"),
+    current_user=Depends(require_permission("automation", "view")),
+):
+    return _build_report_response([run_id], format, None, current_user, single=True)
+
+
 class DeleteRunsRequest(BaseModel):
     run_uuids: List[str]
 
@@ -1274,6 +1618,15 @@ def get_run_evidence(run_id: str, current_user=Depends(require_permission("autom
 
 @router.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: str, current_user=Depends(require_permission("automation", "execute"))):
+    """
+    Cancels a BACKGROUND (non-interactive) Execute that is still running in this server process.
+
+    Documented limitation: an INTERACTIVE replay (Execute with the repair dialog, over the
+    /test-cases/{id}/execute/interactive/ws WebSocket) is owned by that WebSocket session, not by the
+    background-job registry, so this REST endpoint answers 409 for it. Such a run is stopped with the
+    "Stop Replay" button of the replay dialog (WebSocket "cancel"), which ends the run as Cancelled and
+    saves nothing. A finished run, or a run started before a server restart, also answers 409.
+    """
 
     cancelled = TestCasesWeb().cancel_execution(run_id)
 
@@ -1282,8 +1635,9 @@ def cancel_run(run_id: str, current_user=Depends(require_permission("automation"
         raise HTTPException(
             status_code=409,
             detail=(
-                "Nothing to cancel — this run has already finished, or "
-                "the server restarted since it started."
+                "Nothing to cancel here — this run has already finished, the server restarted "
+                "since it started, or it is an interactive replay (stop those with Stop Replay "
+                "in the replay window)."
             ),
         )
 

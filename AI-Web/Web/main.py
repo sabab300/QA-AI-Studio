@@ -73,10 +73,25 @@ from Web.routers.users_router import (
 from Web.routers.knowledge_router import router as knowledge_router
 from Web.routers.automation_router import router as automation_router
 from Web.routers.recorder_router import router as recorder_router
+from Web.routers.api_discovery_router import router as api_discovery_router
+try:  # QA-AI-STUDIO-UIUX: a missing optional dependency must never stop the rest of QA AI Studio from starting
+    from Web.routers.uiux_router import router as uiux_router, reconcile_on_startup as uiux_reconcile
+except Exception as _uiux_error:  # noqa: BLE001
+    from fastapi import APIRouter as _UiuxRouter, HTTPException as _UiuxHTTPError
+    uiux_reconcile = None
+    uiux_router = _UiuxRouter(prefix="/api/uiux")
+    _uiux_message = ("AI UI/UX Testing could not start: " + type(_uiux_error).__name__ + ": " + str(_uiux_error)[:200] +
+                     ". Run 'pip install -r requirements-web.txt' and restart QA AI Studio.")
+    print("WARNING: " + _uiux_message)
+
+    @uiux_router.api_route("/{uiux_rest_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    def _uiux_unavailable(uiux_rest_path: str):
+        raise _UiuxHTTPError(503, _uiux_message)
 from Web.routers.interactive_execution_router import (
     router as interactive_execution_router,
 )
 from Web.routers.ai_assistant_router import router as ai_assistant_router
+from Web.routers.ai_platform_router import router as ai_platform_router  # QA-AI-STUDIO-TASK4
 from Web.routers.dashboard_router import router as dashboard_router
 from Web.routers.qa_engineering_router import router as qa_engineering_router
 from Web.routers.publishing_router import router as publishing_router
@@ -125,6 +140,12 @@ def on_startup():
     # API-collection tables, if they don't already exist — safe to
     # run on every startup, same as the desktop app's App/main.py.
     DatabaseManager().initialize_database()
+    from Core.api_discovery.repository import DiscoveryRepository
+    DiscoveryRepository().reconcile_interrupted()
+    try:  # QA-AI-STUDIO-UIUX: a run still active at startup was interrupted by a restart; mark it so, never resume silently
+        uiux_reconcile()
+    except Exception:
+        pass
 
     # Constructing UserRepository() runs ensure_schema(), which
     # creates the users/roles/role_permissions/audit_logs tables
@@ -144,6 +165,19 @@ def on_startup():
     # Generation history is durable; jobs left running by a prior process
     # are marked interrupted instead of remaining misleadingly active.
     QaEngineeringWeb().reconcile_stale_jobs()
+    # QA-AI-STUDIO-TASK6: additive ci_* tables; any analysis a previous process left running is marked interrupted.
+    try:
+        from Core.change_impact.repository import ChangeImpactRepository
+        ChangeImpactRepository().reconcile_stale()
+    except Exception:
+        Logger.get_logger().exception('Change Impact schema check failed; the module is unavailable but the app continues.')
+
+    # QA-AI-STUDIO-CIA: additive cia_* tables; any analysis a previous process left running is marked interrupted.
+    try:
+        from Core.cia.service import CiaService
+        CiaService().reconcile_stale()
+    except Exception:
+        Logger.get_logger().exception('Change Impact Analysis setup failed; the module is unavailable but the app continues.')
 
     # QA-AI-STUDIO-FINAL-ARCHITECTURE-UI-AUTOMATION-COMPLETION-V4:
     # a prior pass (QA-AI-STUDIO-LIVE-CORRECTION-PASS-V2 item 10) added
@@ -176,6 +210,14 @@ def health():
     return {"status": "ok", "service": "qa-ai-studio-api"}
 
 
+@app.on_event("shutdown")
+def stop_api_discovery():
+    from Core.api_discovery.capture import CAPTURES
+    from Core.api_discovery.execution import REPLAYS
+    CAPTURES.shutdown()
+    REPLAYS.shutdown()
+
+
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(roles_router)
@@ -184,10 +226,17 @@ app.include_router(knowledge_router)
 app.include_router(qa_engineering_router)
 app.include_router(automation_router)
 app.include_router(recorder_router)
+app.include_router(api_discovery_router)
+app.include_router(uiux_router)
 app.include_router(interactive_execution_router)
 app.include_router(ai_assistant_router)
+app.include_router(ai_platform_router)  # QA-AI-STUDIO-TASK4: Settings -> LLM
 app.include_router(dashboard_router)
 app.include_router(publishing_router)
+from Web.routers.change_impact_router import router as change_impact_router  # QA-AI-STUDIO-TASK6
+app.include_router(change_impact_router)
+from Web.routers.cia_router import router as cia_router  # QA-AI-STUDIO-CIA: merged Change Impact Analysis
+app.include_router(cia_router)
 app.include_router(settings_router)
 
 # The redesign frontend is deliberately served by the same local process as

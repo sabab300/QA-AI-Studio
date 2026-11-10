@@ -169,7 +169,8 @@ Rules:
 
                 ),
 
-                "confidence": 90
+                "confidence": 90,
+                "warnings": search_result.get("warnings", [])
 
             }
 

@@ -800,6 +800,27 @@ class KnowledgeRepository:
             return {"updated": 1, "physical_path": str(target)}
         raise ValueError("This node has no safe editable property.")
 
+    def _replace_descendant_paths(self, old_path, new_path):
+        """Keep retained artifact-folder renames on the canonical path service."""
+        import sqlite3
+        connection = self.metadata.db.get_connection()
+        try:
+            connection.execute('PRAGMA foreign_keys=ON')
+            connection.execute('BEGIN IMMEDIATE')
+            from Shared.hierarchy_administration import HierarchyAdministration
+            HierarchyAdministration(self.metadata.db, self.repository.central)._rewrite_paths(connection, [(Path(old_path), Path(new_path))])
+            if connection.execute('PRAGMA foreign_key_check').fetchall():
+                raise ValueError('Artifact rename would violate a managed dependency.')
+            connection.commit()
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            raise ValueError('Artifact rename conflicts with a retained dependency or immutable execution history. No paths were changed.') from None
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _prune_unused_domain_module_masters(self, node_type, old_value, domain_context=None):
         """After a rename/move away from `old_value` at the domain or
         module level, remove the now-unused old master row(s) bottom-up.
@@ -1055,6 +1076,7 @@ class KnowledgeRepository:
         document_type="",
         source_type="FILE",
         reviewed_analysis=None,
+        created_by="",
     ):
 
         from Core.upload_pipeline import UploadPipeline
@@ -1070,6 +1092,15 @@ class KnowledgeRepository:
             "URL_CAPTURE": "URL",
         }.get(source_type, source_type)
         allowed_source_types = {"Files"}
+        # QA-AI-STUDIO-UIUX-KH: Source Type Figma (UI/UX Design assets) is handled by the shared design service below.
+        try:
+            from Core.uiux.kh_bridge import is_figma
+        except Exception:  # the design service is optional; every other source type is unaffected
+            def is_figma(value):
+                return False
+        if is_figma(source_type):
+            source_type = "Figma"
+            allowed_source_types.add("Figma")
         if source_type not in allowed_source_types:
             raise ValueError("Unsupported document source type.")
 
@@ -1098,6 +1129,13 @@ class KnowledgeRepository:
             problem = ", ".join(missing) if missing else "file"
 
             raise ValueError(f"Required and missing: {problem}.")
+
+        if source_type == "Figma":
+            from Core.uiux.kh_bridge import upload_from_knowledge_hub
+            return upload_from_knowledge_hub(
+                file_bytes=file_bytes, original_filename=original_filename, domain=domain, module=module,
+                knowledge_name=knowledge_name, version=version, document_type=document_type, created_by=created_by,
+            )
 
         safe_name = Path(original_filename or "upload").name or "upload"
         # A plain NamedTemporaryFile gets a random generated basename

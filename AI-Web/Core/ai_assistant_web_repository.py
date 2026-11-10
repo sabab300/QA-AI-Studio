@@ -31,7 +31,7 @@ class AiAssistantRepository:
 
         self.orchestrator = AIOrchestrator()
 
-    def ask(self, prompt, session_id="default", domain=None, module=None, knowledge_name=None, version=None, document_type=None, document_version_id=None):
+    def ask(self, prompt, session_id="default", domain=None, module=None, knowledge_name=None, version=None, document_type=None, document_version_id=None, mode=None, model_mode=None, model_selection=None, request_id=None, user=None, use_tools=False):
 
         if not (prompt or "").strip():
 
@@ -41,6 +41,8 @@ class AiAssistantRepository:
             prompt=prompt, session_id=session_id, domain=domain,
             module=module, knowledge_name=knowledge_name, version=version,
             document_type=document_type,document_version_id=document_version_id,
+            mode=mode, model_mode=model_mode, model_selection=model_selection,
+            request_id=request_id, user=user, use_tools=use_tools,
         )
 
     def history(self, session_id="default", limit=10):
@@ -57,7 +59,7 @@ class AiAssistantRepository:
     # QA-AI-STUDIO-IMPACT-ANALYSIS-V1
     # --------------------------------------------------
 
-    def impact_analysis(self, session_id, source, target, question=None):
+    def impact_analysis(self, session_id, source, target, question=None, progress_callback=None, cancel_check=None):
         """Thin delegation to Core/impact_analysis_service.py's
         ImpactAnalysisService -- same pattern as ask() delegating to
         AIOrchestrator. Imported lazily so a role without Impact
@@ -72,6 +74,7 @@ class AiAssistantRepository:
 
         return ImpactAnalysisService().analyze(
             session_id=session_id, source=source, target=target, question=question,
+            progress_callback=progress_callback, cancel_check=cancel_check,
         )
 
     def impact_analysis_history(self, session_id="default", limit=10):

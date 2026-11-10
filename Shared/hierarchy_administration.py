@@ -70,6 +70,11 @@ class HierarchyAdministration:
             if context.get('source_type'):context['source_type']=canonical_source_type(context['source_type'])
             if new_context.get('source_type'):new_context['source_type']=canonical_source_type(new_context['source_type'])
             selected=[row for row in sources if all(str(row.get(key) or '')==str(context.get(key) or '') for key in FIELDS[:index+1])]
+            if selected and {'api_discovery_collections','api_discovery_runs'}<=tables:
+                selected_ids=[row['id'] for row in selected]
+                marks=','.join('?' for _ in selected_ids)
+                if connection.execute('SELECT 1 FROM api_discovery_runs r JOIN api_discovery_collections c ON c.id=r.collection_id WHERE c.source_id IN ('+marks+") AND r.status IN ('QUEUED','RUNNING') LIMIT 1",selected_ids).fetchone():
+                    raise HierarchyConflict('An active API Discovery replay owns this source. Finish or cancel it before changing the hierarchy.')
             owner_ids={row.get('document_version_id') for row in selected if row.get('document_version_id')}
             for table in ('qa_generation_jobs','automation_runs'):
                 columns={row[1] for row in connection.execute('PRAGMA table_info('+table+')')}
@@ -115,7 +120,12 @@ class HierarchyAdministration:
                     updated['source_file_id']=source_id
                     folder=self.central.build_source_path(**{key:updated[key] for key in ('domain','module','knowledge_name','version','document_type','source_type')},source_file_id=source_id)
                     target=folder/old.name
-                    if old.parent.name.startswith('SD-'):
+                    # A managed Source Document container sits exactly seven levels below the repository root
+                    # (Domain/Module/Knowledge/Document Type/Version/Source Type/Source Document) with the file inside it.
+                    # The old layout marked it with an "SD-" prefix; the depth rule works for both layouts.
+                    try:relative_depth=len(old.resolve().relative_to(self.central.root.resolve()).parts)
+                    except ValueError:relative_depth=0
+                    if old.parent.name.startswith('SD-') or relative_depth==8:
                         old_object,new_object=old.parent,folder
                     else:
                         dependent=connection.execute('SELECT 1 FROM test_case_versions WHERE source_knowledge_id=? LIMIT 1',(row['id'],)).fetchone() if 'test_case_versions' in tables else None
@@ -220,6 +230,16 @@ class HierarchyAdministration:
                     for old,new in moves:
                         if path==old or old in path.parents:
                             connection.execute('UPDATE '+table+' SET '+column+'=? WHERE rowid=?',(str(new/path.relative_to(old)),row_id));break
+        # Discovery versions/runs retain immutable logical evidence but their
+        # managed artifact references must follow a canonical source move.
+        table_names={row[0] for row in tables}
+        for table in ('api_discovery_collection_versions','api_discovery_runs'):
+            if table not in table_names:continue
+            for row_id,raw in connection.execute('SELECT rowid,relative_path FROM '+table+" WHERE relative_path<>''").fetchall():
+                path=self.central.resolve_managed('',raw)
+                for old,new in moves:
+                    if path==old or old in path.parents:
+                        connection.execute('UPDATE '+table+' SET relative_path=? WHERE rowid=?',(self.central.relative(new/path.relative_to(old)),row_id));break
 
     def _sync_aliases(self,connection,hierarchy):
         for table in ('knowledge_versions','test_cases','api_collections','qa_generation_jobs','automation_runs'):

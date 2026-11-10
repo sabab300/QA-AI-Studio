@@ -42,9 +42,32 @@ class DocumentHierarchy:
         self.connection = connection
 
     def ensure_schema(self):
+        # Schema introspection and ALTER must share a SQLite writer reservation.
+        # A Python lock cannot protect Desktop/Web workers in other processes.
+        # Preserve an existing caller transaction; never commit its pending data.
+        owned = not self.connection.in_transaction
+        if owned:
+            self.connection.execute('BEGIN IMMEDIATE')
+        self.connection.execute('SAVEPOINT document_hierarchy_schema')
+        try:
+            self._ensure_schema_locked()
+            self.connection.execute('RELEASE SAVEPOINT document_hierarchy_schema')
+            if owned:
+                self.connection.commit()
+        except BaseException:
+            self.connection.execute('ROLLBACK TO SAVEPOINT document_hierarchy_schema')
+            self.connection.execute('RELEASE SAVEPOINT document_hierarchy_schema')
+            if owned:
+                self.connection.rollback()
+            raise
+
+    def _ensure_schema_locked(self):
         cursor=self.connection.cursor();cursor.row_factory=None
         for sql in SCHEMA:
             cursor.execute(sql)
+        # Existing caller transactions can be deferred. Acquire their writer
+        # reservation BEFORE reading table_info (zero rows/data changed).
+        cursor.execute('UPDATE knowledge_entities SET id=id WHERE 0')
         tables = {r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ('knowledge_items','knowledge_versions','test_case_versions','test_cases',
                       'api_collections','qa_generation_jobs','automation_runs','sql_scripts'):

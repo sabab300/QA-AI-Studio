@@ -64,6 +64,31 @@ class CentralRepository:
         return value
 
     @classmethod
+    def exact_segment(cls, value, label="path segment") -> str:
+        """Folder name that carries EXACTLY what the user entered or selected.
+
+        Only characters Windows cannot store in a folder name are replaced
+        (with "_"), plus trailing spaces/dots. There is no prefix, no
+        truncation and no hash suffix. Overall path length is checked
+        separately (``check_path_budget``) so an over-long name produces a
+        clear error instead of a silently shortened folder.
+        """
+        original = str(value or "").strip()
+        if not original or original in {".", ".."}:
+            raise ValueError(f"Invalid {label}.")
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", original).rstrip(" .")
+        if not cleaned or cleaned in {".", ".."}:
+            raise ValueError(f"Invalid {label}.")
+        if cleaned.split(".", 1)[0].upper() in cls._RESERVED:
+            cleaned = "_" + cleaned
+        if len(cleaned) > 150:
+            raise ValueError(
+                f"The {label} is {len(cleaned)} characters long; folder names are limited to 150. "
+                "Please use a shorter name."
+            )
+        return cleaned
+
+    @classmethod
     def compact_segment(cls, prefix: str, value, label="path segment", max_length: int = 14) -> str:
         """Return a length-bounded physical segment while DB/UI retain the full value.
 
@@ -184,31 +209,39 @@ class CentralRepository:
     def resolve_unique_segment(cls, parent: Path, prefix: str, value, *, identity: str,
                                 table: str, path_column: str, identity_column: str,
                                 container_is_path: bool, label: str = "path segment",
-                                max_length: int = 22) -> str:
+                                max_length: int | None = 22) -> str:
         """Return the physical segment name to use for `value` under `parent`.
 
-        Prefers the full readable cleaned value; truncates cleanly (no
-        hash) when it would exceed `max_length`. Only appends a short
-        numeric disambiguator when the resulting name already exists
-        under `parent` AND belongs to a DIFFERENT stable `identity` —
-        an actual collision between two unrelated documents, not merely
-        a second file legitimately landing in the SAME logical
-        container (which correctly reuses the same folder; see
-        RepositoryManager.save_file()'s own handling of that case).
-        """
-        cleaned = cls.sanitize_segment(value, label)
-        base = f"{prefix}-{cleaned}"
-        if len(base) > max_length:
-            available = max(1, max_length - len(prefix) - 1)
-            base = f"{prefix}-{cleaned[:available].rstrip(' ._-')}"
+        ``max_length=None`` (the current layout) keeps the exact name the
+        user entered: no truncation, no hash. A legacy caller may still pass
+        a number to get the old bounded behaviour (the one-time hash-name
+        migration relies on it). ``prefix`` may be empty for no prefix.
 
-        existing = cls._existing_segment_identities(
-            table, path_column, identity_column, parent, container_is_path
-        )
+        A short numeric disambiguator ("-2", "-3") is appended only when
+        the resulting name already exists under `parent` AND belongs to a
+        DIFFERENT stable `identity` - an actual collision between two
+        unrelated documents. Comparison ignores case because Windows folder
+        names are case-insensitive.
+        """
+        if max_length is None:
+            cleaned = cls.exact_segment(value, label)
+            base = f"{prefix}-{cleaned}" if prefix else cleaned
+        else:
+            cleaned = cls.sanitize_segment(value, label)
+            base = f"{prefix}-{cleaned}"
+            if len(base) > max_length:
+                available = max(1, max_length - len(prefix) - 1)
+                base = f"{prefix}-{cleaned[:available].rstrip(' ._-')}"
+
+        existing = {
+            name.casefold(): owner for name, owner in cls._existing_segment_identities(
+                table, path_column, identity_column, parent, container_is_path
+            ).items()
+        }
         identity = str(identity or "")
         candidate = base
         attempt = 1
-        while candidate in existing and existing[candidate] != identity:
+        while candidate.casefold() in existing and existing[candidate.casefold()] != identity:
             attempt += 1
             candidate = f"{base}-{attempt}"
         return candidate
@@ -329,84 +362,122 @@ class CentralRepository:
         return digest.hexdigest()
 
     def hierarchy_root(self, domain, module, knowledge_name, version, document_type, source_type) -> Path:
+        """<root>/<Domain>/<Module>/<Knowledge Name>/<Document Type>/<Version>/<Source Type>.
+
+        Every level carries exactly the value the user entered or selected.
+        """
         source_type = {
             "FILE": "Files", "FILES": "Files", "FOLDER": "Files",
             "MANUAL_UPLOAD": "Files", "SMART_UPLOAD": "Files",
             "API_COLLECTION": "API Collection", "URL_CAPTURE": "URL",
         }.get(str(source_type or "Files").upper(), source_type or "Files")
         parts = (
-            ("D", domain, "domain"), ("M", module, "module"),
-            ("K", knowledge_name, "knowledge name"),
-            ("DT", document_type or "Other", "document type"), ("V", version, "version"),
-            ("ST", source_type or "Files", "source type"),
+            (domain, "domain", "domain"), (module, "module", "module"),
+            (knowledge_name, "knowledge name", "knowledge_name"),
+            (document_type or "Other", "document type", "document_type"),
+            (version, "version", "version"),
+            (source_type or "Files", "source type", "source_type"),
         )
         path = self.root
-        fields=('domain','module','knowledge_name','document_type','version','source_type')
-        for (prefix, value, label),field in zip(parts,fields):
-            path /= self._hierarchy_segment(path,prefix,value,label,field)
+        for value, label, field in parts:
+            path /= self._hierarchy_segment(path, value, label, field)
         return path
 
-    def _hierarchy_segment(self,parent,prefix,value,label,field,max_length=14):
-        """Reuse persisted ownership; new lossy names need deterministic identity.
+    def _hierarchy_segment(self, parent, value, label, field):
+        """Exact folder name for one hierarchy level, with ownership protection.
 
-        Root truncation previously merged distinct business names silently.
-        Existing unambiguous compact segments remain unchanged. New truncated
-        or sanitized names carry a bounded digest, never a display label.
+        The folder is named exactly as the user entered or selected it. If a
+        DIFFERENT business value already owns that physical folder (two
+        names that only differ by characters Windows cannot store, e.g.
+        "A/B" and "A_B"), the request is refused instead of silently
+        merging two entities. Case-only differences are the same folder on
+        Windows and are treated as the same entity.
         """
-        original=str(value or '').strip();cleaned=self.sanitize_segment(original,label)
-        existing={}
-        database=self._metadata_db_path()
+        original = str(value or "").strip()
+        candidate = self.exact_segment(original, label)
+        owners_by_segment: dict = {}
+        database = self._metadata_db_path()
         if database.is_file():
-            connection=sqlite3.connect('file:'+str(database)+'?mode=ro',uri=True)
+            connection = sqlite3.connect("file:" + str(database) + "?mode=ro", uri=True)
             try:
-                columns={row[1] for row in connection.execute('PRAGMA table_info(knowledge_items)')}
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(knowledge_items)")}
                 if field in columns:
-                    for stored,identity in connection.execute('SELECT repository_path,'+field+" FROM knowledge_items WHERE repository_path IS NOT NULL AND repository_path<>''"):
-                        try:relative=Path(stored).resolve().relative_to(parent.resolve())
-                        except (ValueError,OSError):continue
-                        if relative.parts and relative.parts[0].startswith(prefix+'-'):
-                            identity=canonical_source_type(identity) if field=='source_type' else str(identity or '')
-                            existing.setdefault(relative.parts[0],set()).add(identity)
-            finally:connection.close()
-        owned=[segment for segment,owners in existing.items() if original in owners]
-        if any(len(existing[segment])!=1 for segment in owned) or len(owned)>1:
-            raise ValueError('Managed hierarchy segment has ambiguous persisted ownership; explicit migration is required.')
-        if owned:return owned[0]
-        candidate=self.compact_segment(prefix,original,label,max_length)
-        lossy=cleaned!=original or len(prefix+'-'+cleaned)>max_length
-        if lossy:
-            suffix=hashlib.sha256(original.encode('utf8')).hexdigest()[:6]
-            stem=cleaned[:max(1,max_length-len(prefix)-len(suffix)-2)].rstrip(' ._-')
-            candidate=prefix+'-'+stem+'_'+suffix
-        conflicts=[owners for segment,owners in existing.items() if segment.casefold()==candidate.casefold() and owners!={original}]
-        if conflicts:raise ValueError('Managed hierarchy path belongs to another entity; no folder merge was applied.')
+                    resolved_parent = parent.resolve()
+                    for stored, identity in connection.execute(
+                        "SELECT repository_path," + field + " FROM knowledge_items "
+                        "WHERE repository_path IS NOT NULL AND repository_path<>''"
+                    ):
+                        try:
+                            relative = Path(stored).resolve().relative_to(resolved_parent)
+                        except (ValueError, OSError):
+                            continue
+                        if len(relative.parts) < 2:
+                            continue
+                        identity = canonical_source_type(identity) if field == "source_type" else str(identity or "")
+                        owners_by_segment.setdefault(relative.parts[0].casefold(), set()).add(identity.strip().casefold())
+            finally:
+                connection.close()
+        owners = owners_by_segment.get(candidate.casefold(), set())
+        wanted = canonical_source_type(original).strip().casefold() if field == "source_type" else original.casefold()
+        if owners and owners != {wanted}:
+            raise ValueError(
+                f"The folder '{candidate}' is already used by a different {label}. "
+                "Use a different name; no folders were merged."
+            )
         return candidate
 
     def create_source_file_id(self, source_name: str) -> str:
         stem = self.sanitize_segment(Path(source_name).stem or "Source", "source name")
         return f"{stem}-V1"
 
+    # Excel cannot open workbooks whose full path exceeds ~255 characters on Windows, so a
+    # workbook path longer than MAX_MANAGED_PATH is refused (validate_excel_path).
+    MAX_MANAGED_PATH = 240
+    # Room that the system-generated levels below a Source Document need (Test Case folder,
+    # workbook, automation folder and script file), in their shortest form.
+    SOURCE_PATH_RESERVE = 45
+
+    def check_path_budget(self, source_path: Path) -> None:
+        """Refuse names that would later produce an unusable path, with a clear message now."""
+        used = len(str(source_path))
+        limit = self.MAX_MANAGED_PATH - self.SOURCE_PATH_RESERVE
+        if used > limit:
+            raise ValueError(
+                f"The folder path for this document would be {used} characters; the limit is {limit}. "
+                "Use shorter Domain/Module/Knowledge/Version/file names, or move the Central Repository "
+                "to a shorter folder (for example C:\\QAAIStudio)."
+            )
+
     def build_source_path(self, *, domain, module, knowledge_name, version,
                           document_type, source_type, source_file_id) -> Path:
         managed_name = re.sub(r"-V\d+$", "", str(source_file_id), flags=re.IGNORECASE)
         parent = self.hierarchy_root(domain, module, knowledge_name, version, document_type, source_type)
         segment = self.resolve_unique_segment(
-            parent, "SD", managed_name, identity=str(source_file_id),
+            parent, "", managed_name, identity=str(source_file_id),
             table="knowledge_items", path_column="repository_path",
             identity_column="source_file_id", container_is_path=False,
-            label="source document name", max_length=22,
+            label="source document name", max_length=None,
         )
-        return parent / segment
+        path = parent / segment
+        self.check_path_budget(path)
+        return path
 
     def build_test_case_version_path(self, source_path: str | Path, version: int, source_file_id: str) -> Path:
+        """Test Case version folder: TC-V<n>-<source name>, or just TC-V<n> when the long form
+        would push the workbook or automation files past the Windows path limit."""
         source_base = re.sub(r"-V\d+$", "", str(source_file_id or "Source"), flags=re.IGNORECASE)
         parent = Path(source_path)
         segment = self.resolve_unique_segment(
             parent, f"TC-V{int(version)}", source_base, identity=str(source_file_id),
             table="test_case_versions", path_column="folder_path",
             identity_column="source_file_id", container_is_path=True,
-            label="source base name", max_length=24,
+            label="source base name", max_length=None,
         )
+        workbook = len(str(parent)) + 1 + len(segment) + 1 + len(segment) + len("-TC99.xlsx")
+        automation = (len(str(parent)) + 1 + len(segment) + 1
+                      + len(f"Playwright-TC-V{int(version)}-{self.sanitize_segment(source_file_id)}") + 1 + 40)
+        if workbook > self.MAX_MANAGED_PATH or automation > 255:
+            return parent / f"TC-V{int(version)}"
         return parent / segment
 
     @staticmethod
@@ -423,7 +494,13 @@ class CentralRepository:
                               version: int, source_file_id: str) -> Path:
         names = {"Playwright": "Playwright", "API": "API", "API Automation": "API", "SQL": "SQL", "SQL Automation": "SQL"}
         prefix = names.get(str(automation_type), str(automation_type))
-        return Path(test_case_path) / f"{prefix}-TC-V{int(version)}-{self.sanitize_segment(source_file_id)}"
+        base = Path(test_case_path)
+        short = f"{prefix}-TC-V{int(version)}"
+        full = f"{short}-{self.sanitize_segment(source_file_id)}"
+        # A compact Test Case folder (TC-V<n>) means the name did not fit; keep the automation folder short too.
+        if base.name == f"TC-V{int(version)}" or len(str(base)) + 1 + len(full) + 40 > 255:
+            return base / short
+        return base / full
 
     @staticmethod
     def ensure_path(path: str | Path) -> Path:
@@ -435,7 +512,7 @@ class CentralRepository:
     def get_next_test_case_version(source_path: str | Path) -> int:
         versions = []
         for child in Path(source_path).iterdir() if Path(source_path).is_dir() else ():
-            match = re.match(r"(?:TC|Test Cases)-V(\d+)-", child.name)
+            match = re.match(r"(?:TC|Test Cases)-V(\d+)(?:-|$)", child.name)
             if match:
                 versions.append(int(match.group(1)))
         return max(versions, default=0) + 1

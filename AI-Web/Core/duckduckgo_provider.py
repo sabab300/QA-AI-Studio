@@ -273,6 +273,14 @@ class DuckDuckGoProvider:
 
                 "references": references,
 
+                # QA-AI-STUDIO-TASK4: additive, per-result items so answers
+                # can cite individual web sources ([W1], [W2]...). Existing
+                # consumers read only context/references and are unaffected.
+                "items": [
+                    {"text": text_piece, "url": url_piece}
+                    for text_piece, url_piece in zip(contents, references)
+                ],
+
                 "provider": "duckduckgo"
 
             }

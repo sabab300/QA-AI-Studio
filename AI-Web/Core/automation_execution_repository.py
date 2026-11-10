@@ -390,7 +390,7 @@ class AutomationExecutionRepository:
 
         cursor.execute(
             "UPDATE automation_runs SET status='Running', started_at=? "
-            "WHERE run_uuid=?",
+            "WHERE run_uuid=? AND status='Queued'",
             (datetime.now().isoformat(), run_uuid),
         )
 
@@ -454,6 +454,15 @@ class AutomationExecutionRepository:
             status = "Error"
 
             outcome = "Error"
+
+        elif result.get("not_verified"):
+
+            # Ran to a clean exit but produced no step-level evidence: never a Pass.
+            # Stored as a terminal "Error" status (every client already treats it as
+            # finished) with an explicit outcome the report maps to NOT VERIFIED.
+            status = "Error"
+
+            outcome = "Not Verified"
 
         elif result.get("success"):
 
@@ -524,7 +533,7 @@ class AutomationExecutionRepository:
                 slow_mo_ms=?,
                 timeout_ms=?,
                 finished_at=?
-            WHERE run_uuid=?
+            WHERE run_uuid=? AND status IN ('Queued', 'Running')
             """,
             (
                 status,

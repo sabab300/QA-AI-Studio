@@ -76,10 +76,6 @@ AI/Database/*.db
 
 # Node
 node_modules/
-package-lock.json
-package.json
-pages/
-tests/
 playwright.config.ts
 
 # Analysis files
@@ -123,3 +119,53 @@ AI/Claude outputs/
 
 # QA AI Studio runtime Central Repository
 Central Repository-QA AI Studio/
+
+# Local worktrees and temporary folders
+.worktrees/
+%SystemDrive%/
+Backups/
+recovery/
+
+# Local database files and backups
+AI-Web/Database/
+AI-Web/_backup_cia_v1_20261023/
+AI-Web/_backup_cia_v2_interim_20261023/
+
+# Old backup copies
+*PRE*BACKUP*
+
+# Local exports
+WeBOC%20Export%201.json
+WeBOC_Export_1_QA_AI_Studio_Upload.json
+
+
+# Exclude old duplicate and accidental local files
+/pages/
+/tatus --short
+tools/tcv3_eval_runs_20261027/*.xlsx
+
+
+# Exclude old duplicate Python files
+/AI-Web/Core/playwright_runner-1.py
+/AI-Web/Core/web_recorder-1.py
+
+# Local and test data - do not upload
+/AI-Web/Frontend/_task1_fixture/
+/tests/generation/fixtures/
+/tests/uiux/results/
+/AI-Web/Config/test_environment_config.json
+/AI-Web/Config/recording_targets.json
+
+# Database and backup files
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+/backups/
+
+
+# Development-only test code
+/tests/
+/AI-Web/dev-tools-not-for-production/
+

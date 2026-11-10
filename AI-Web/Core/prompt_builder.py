@@ -701,6 +701,9 @@ no commentary before or after it, no explanation. Exactly this shape:
         context,
     ):
 
+        # QA-AI-STUDIO-IMPACT-ANALYSIS-ACCURACY: the old rule called a target "CONFIRMED" whenever it documented the same
+        # field, so a target that ALREADY implements the requirement was reported as impacted. The question is now whether the
+        # target must CHANGE, and the model must say what the target currently does and quote it. Code verifies the quote.
         return self.clean_prompt(f"""
 {self._context_block(context)}
 
@@ -718,49 +721,50 @@ Target System
 
 Task
 
-Decide whether the Target System evidence above establishes an impact from
-the Source Change, using ONLY that evidence.
+Decide whether the TARGET SYSTEM must change because of the Source Change, using ONLY the numbered target evidence above.
+Each evidence block is labelled [E1], [E2] ... and states which document it comes from. A block marked "target document"
+describes how the target system is documented today. A block marked "ANOTHER CHANGE REQUEST" describes behaviour that a
+different change request asks for - not behaviour that is implemented. Against such a block, ALREADY_IMPLEMENTED means
+that change request already asks for the same requirement, and DIFFERENT means it asks for something that conflicts.
 
-Classification Rules
+Important
 
-- CONFIRMED IMPACT — use ONLY when the target evidence explicitly shows
-  the same field/API/message/interface/dependency the source change
-  affects (a direct, named match — not merely a related topic).
-- POTENTIAL IMPACT — use when the target evidence discusses a plausibly
-  related concept, process, or component, but does NOT explicitly prove
-  the same dependency. Vector/text similarity between the source change
-  and target evidence is NEVER sufficient by itself for CONFIRMED IMPACT
-  — similarity alone is at most POTENTIAL IMPACT.
-- NO DOCUMENTED IMPACT — use when the target evidence above has nothing
-  identifiably related to this source change. Never write "no impact" —
-  the source change may still have a real-world impact that is simply not
-  documented in the currently indexed target knowledge.
+- A target that already documents the same field, rule or interface is NOT impacted by the change: that is
+  ALREADY_IMPLEMENTED. Matching words are not an impact.
+- An impact exists only when the target is documented as doing something DIFFERENT from what the source change requires,
+  or when a related target component is documented but the requested capability is not described there.
+
+target_state (choose exactly one)
+
+- ALREADY_IMPLEMENTED — the target evidence already states the same requirement (same field/rule, same conditions, same values).
+- DIFFERENT — the target evidence states behaviour for the same component that contradicts or differs from the source change
+  (for example a different condition, value, mandatory/optional setting, or field list).
+- MISSING — a related target component is documented, but the requested capability or field is not described for it.
+- NOT_DOCUMENTED — nothing in the evidence relates to the source change.
+- UNCLEAR — the evidence relates, but you cannot tell which of the above applies.
 
 Evidence Strength
 
-- DIRECT — the same API/field/message/integration/dependency is
-  explicitly documented in the target evidence.
-- INDIRECT — a related concept is present but the specific dependency is
-  not explicitly documented.
-- INSUFFICIENT — the target evidence does not support any relationship.
+- DIRECT — you can quote the target statement that proves target_state.
+- INDIRECT — a related statement exists but does not prove it.
+- INSUFFICIENT — the evidence does not support a conclusion.
 
 Rules
 
-- Never invent a target component, interface, or field the target
-  evidence does not contain.
-- Never convert a lexical/semantic similarity directly into CONFIRMED
-  IMPACT — require an explicit, named dependency in the evidence.
-- reasoning_summary must be a concise, evidence-based explanation — not
-  hidden chain-of-thought, just the conclusion and why.
+- target_evidence_quote must be copied word for word from ONE evidence block (use "..." to skip text). If you cannot quote
+  the target, use an empty string and state UNCLEAR or NOT_DOCUMENTED.
+- existing_target_behaviour: what the target documentation currently says, in one or two sentences. Empty if nothing relates.
+- required_target_change: what must change in the target. Empty when the target is ALREADY_IMPLEMENTED or NOT_DOCUMENTED.
+- Never invent a target component, interface or field that the evidence does not contain.
+- Never convert word similarity into an impact.
+- reasoning_summary must be a short, evidence-based conclusion — not hidden chain-of-thought.
 
 Output Format
 
-Return ONLY a single JSON object, nothing else — no markdown code fences,
-no commentary before or after it. Exactly this shape:
+Return ONLY a single JSON object, nothing else — no markdown code fences, no commentary. Exactly this shape:
 
-{{"classification": "CONFIRMED IMPACT", "evidence_strength": "DIRECT", "impact_area": "...", "target_component": "...", "impact_description": "...", "reasoning_summary": "...", "recommended_verification": ["...", "..."]}}
+{{"target_state": "DIFFERENT", "classification": "CONFIRMED IMPACT", "evidence_strength": "DIRECT", "impact_area": "...", "target_component": "...", "evidence_id": "E1", "target_evidence_quote": "...", "existing_target_behaviour": "...", "required_target_change": "...", "impact_description": "...", "reasoning_summary": "...", "recommended_verification": ["...", "..."]}}
 
-If there is no identifiable target component at all, use classification
-"NO DOCUMENTED IMPACT", evidence_strength "INSUFFICIENT", and an empty
-string for target_component.
-""")
+classification must be one of: CONFIRMED IMPACT (target_state DIFFERENT), POTENTIAL IMPACT (MISSING or UNCLEAR),
+ALREADY COVERED (ALREADY_IMPLEMENTED), NO DOCUMENTED IMPACT (NOT_DOCUMENTED).
+""")

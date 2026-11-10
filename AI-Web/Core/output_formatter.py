@@ -282,9 +282,14 @@ class OutputFormatter:
         )
 
 
-        answer = self.format(
-            answer
-        )
+        # QA-AI-STUDIO-TASK4: answers from the enhanced pipeline are already
+        # formatted. format() strips indentation and removes repeated lines
+        # across the whole answer, which corrupts tables, code and lists.
+        if not result.get("preformatted"):
+
+            answer = self.format(
+                answer
+            )
 
 
         success = result.get(
@@ -358,9 +363,15 @@ class OutputFormatter:
             "answer": answer,
 
 
-            "sources": result.get(
-                "references",
-                []
+            # QA-AI-STUDIO-TASK4: the enhanced pipeline returns structured
+            # source objects (id, file, excerpt, ...); the legacy pipeline
+            # returns a list of reference strings. Existing consumers only
+            # use the list length, which stays correct for both.
+            "sources": (
+                result.get("sources")
+                if result.get("preformatted")
+                and isinstance(result.get("sources"), list)
+                else result.get("references", [])
             ),
 
 
@@ -400,6 +411,11 @@ class OutputFormatter:
             ),
 
 
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+
+            # QA-AI-STUDIO-TASK4: additive fields for the AI Assistant UI.
+            "citations": result.get("citations", []),
+
+            "platform": result.get("platform"),
 
         }

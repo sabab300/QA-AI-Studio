@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "require_independent_approval": false,
+  "min_review_comment_length": 1,
+  "review_transitions": {
+    "Draft": ["In Review", "Retired"],
+    "In Review": ["Draft", "Approved", "Retired"],
+    "Approved": ["Ready for Execution", "In Review", "Retired"],
+    "Ready for Execution": ["In Review", "Retired"],
+    "Retired": ["Draft"]
+  }
+}

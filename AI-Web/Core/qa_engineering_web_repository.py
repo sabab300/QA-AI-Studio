@@ -270,9 +270,7 @@ class QaEngineeringWeb:
         try:
             from Core.test_case_generator import TestCaseGenerator, normalize_test_types
             requested = payload.get("number_of_cases", "all")
-            batch_sizes = self._batch_sizes(requested)
-            all_rows, references = [], []
-            provider = model = None
+            references = []
             generator = TestCaseGenerator()
             source_ids = payload.get("knowledge_source_ids") or []
             source_names = self._resolve_source_file_names(
@@ -283,33 +281,40 @@ class QaEngineeringWeb:
                 f"Document Type: {payload.get('document_type')}; selected sources: "
                 + (", ".join(source_names) if source_names else "none")
             )
-            for index, batch_size in enumerate(batch_sizes, start=1):
-                label = f"Batch {index} of {len(batch_sizes)}" if len(batch_sizes) > 1 else "Generation"
-                self._set_job(job_id, message=f"{label}: calling AI model")
-                self._append_log(job_id, "Generating", f"{label} requested {batch_size} test case(s).")
-                result = generator.generate(
-                    requirement=("Generate comprehensive QA test cases grounded only in the selected "
-                                 f"Knowledge '{payload['knowledge_name']}' under "
-                                 f"{payload['domain']} / {payload['module']}."),
-                    number_of_cases=batch_size, domain=payload["domain"],
-                    module=payload["module"], knowledge_name=payload["knowledge_name"],
-                    version=payload.get("version"), test_types=payload["test_types"],
-                    document_type=payload.get('document_type'),
-                    source_file_names=source_names,
-                    output_formats=[], persist=False, create_exports=False,
-                )
-                if not result.get("success"):
-                    raise RuntimeError(result.get("error") or "Generation failed.")
-                rows = result.get("rows") or []
-                for row in rows:
-                    normalize_test_types(row, payload.get("test_types"))
-                    row["source_knowledge_ids"] = list(source_ids)
-                self._append_log(job_id, "Normalizing Test Types", f"Normalized {len(rows)} row(s) to canonical selected Test Types.")
-                all_rows.extend(rows)
-                references.extend(result.get("references") or [])
-                provider, model = result.get("provider"), result.get("model")
-                self._set_job(job_id, generated_count=len(all_rows))
-                self._append_log(job_id, "Validated", f"{label} returned {len(rows)} structured test case(s).")
+            self._append_log(
+                job_id, "Test Types",
+                "Selected types: " + ", ".join(payload.get("test_types") or []) + f"; requested cases: {requested}."
+            )
+            self._set_job(job_id, message="Generation: reading the whole document and calling the AI model")
+
+            def progress(stage, message):
+                self._append_log(job_id, stage, message)
+                self._set_job(job_id, message=message[:200])
+
+            result = generator.generate(
+                requirement=("Generate comprehensive QA test cases grounded only in the selected "
+                             f"Knowledge '{payload['knowledge_name']}' under "
+                             f"{payload['domain']} / {payload['module']}."),
+                number_of_cases=requested, domain=payload["domain"],
+                module=payload["module"], knowledge_name=payload["knowledge_name"],
+                version=payload.get("version"), test_types=payload["test_types"],
+                document_type=payload.get('document_type'),
+                source_file_names=source_names,
+                output_formats=[], persist=False, create_exports=False,
+                progress=progress,
+            )
+            for line in (result.get("quality_report") or {}).get("summary", []):
+                self._append_log(job_id, "Quality Check", line)
+            if not result.get("success"):
+                raise RuntimeError(result.get("error") or "Generation failed.")
+            all_rows = result.get("rows") or []
+            for row in all_rows:
+                normalize_test_types(row, payload.get("test_types"))
+                row["source_knowledge_ids"] = list(source_ids)
+            references = result.get("references") or []
+            provider, model = result.get("provider"), result.get("model")
+            self._set_job(job_id, generated_count=len(all_rows))
+            self._append_log(job_id, "Validated", f"{len(all_rows)} structured test case(s) passed the quality checks.")
             if len(source_ids) != 1:
                 raise RuntimeError("AI generation requires one managed Source File/Source Doc context.")
             from Core.qa_engineering_version_service import QaEngineeringVersionService
@@ -325,6 +330,7 @@ class QaEngineeringWeb:
                 "case_count": len(all_rows), "rows": persisted["test_cases"],
                 "test_case_ids": created["test_case_ids"], "created": created,
                 "references": references, "provider": provider, "model": model,
+                "quality_report": result.get("quality_report"),
             }
             self._append_log(job_id, "Persisted", f"Created Test Cases V{created['version_number']} with {len(all_rows)} row(s).")
             self._set_job(job_id, status="finished", message="Completed",

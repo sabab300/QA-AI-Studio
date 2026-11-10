@@ -59,10 +59,15 @@ class TestExecutionManager:
 
         self.repository = TestCaseRepository()
 
+        # The AI automation generator builds the whole RAG stack (embedding model, cross-encoder,
+        # ChromaDB). Only AI generation needs it, yet every Playwright Validate / Set Active /
+        # Execute constructs a TestExecutionManager. Creating it eagerly made the first such call
+        # after a server start load ~30 s of models and fail outright when ChromaDB was not ready
+        # ("Could not connect to tenant default_tenant"). It is now created on first real use.
+        self._automation_generator = None
+
         if not initialize_automation:
             return
-
-        self.automation_generator = AutomationGenerator()
 
         self.llm = LLMEngine()
 
@@ -71,6 +76,19 @@ class TestExecutionManager:
         self.playwright_runner = PlaywrightRunner(force_headless=force_headless)
 
         self.environment_config = TestEnvironmentConfig()
+
+    @property
+    def automation_generator(self):
+
+        if self._automation_generator is None:
+            self._automation_generator = AutomationGenerator()
+
+        return self._automation_generator
+
+    @automation_generator.setter
+    def automation_generator(self, value):
+
+        self._automation_generator = value
 
     # --------------------------------------------------
     # Listing
@@ -1816,6 +1834,18 @@ class TestExecutionManager:
 
             raise ValueError("source must be 'AUTO', 'UPLOADED', or 'MANUAL'.")
 
+        # Task-1 reliability fix (defence in depth - the web layer checks first): never activate a recording
+        # that is missing user actions.
+        from Core.recording_completeness import RecordingCompleteness
+
+        incomplete_reason = RecordingCompleteness(self.repository).block_reason(
+            self.repository.get_test_case(test_case_id), source
+        )
+
+        if incomplete_reason:
+
+            raise ValueError(incomplete_reason)
+
         self.repository.set_active_script_source(
             test_case_id, source
         )
@@ -1902,7 +1932,8 @@ class TestExecutionManager:
                 locator_text,
             ) and action_type in {"fill", "type", "click"}:
                 classification, reason = "Invalid", "layout container is not an actionable control"
-            elif re.search(r":nth-(?:of-type|child)\(", locator_text) or len(locator_text) > 220:
+            elif (re.search(r":nth-(?:of-type|child)\(", locator_text) or len(locator_text) > 220
+                  or re.search(r"xpath=\(//[^\n]*\)\[\d+\]", locator_text)):
                 classification, reason = "High Risk", "positional or unusually long locator requires review"
 
             evidence_text = " ; ".join([
@@ -1914,7 +1945,7 @@ class TestExecutionManager:
                 r"get_by_(?:text|label|placeholder|title)\(\s*['\"]([^'\"]+)",
                 r"get_by_role\([^\n]*?name\s*=\s*['\"]([^'\"]+)",
                 r"\[name=['\"]([^'\"]+)['\"]\]",
-                r"@(?:name|placeholder|aria-label)=['\"]([^'\"]+)['\"]",
+                r"@(?:name|placeholder|aria-label|title|alt)=['\"]([^'\"]+)['\"]",
             ):
                 evidence.extend(re.findall(pattern, evidence_text, re.I))
             generic_field = field_name.lower() in {"", "action", "field", "selection", "element", "button"}
@@ -2298,6 +2329,15 @@ class TestExecutionManager:
         # string literal"). Treated the same as "didn't even run" (no
         # Pass/Fail recorded) rather than a Fail, since the test
         # itself never actually executed.
+        # Task-1 reliability fix: a recording that is missing user actions must never run (false-PASS risk).
+        from Core.recording_completeness import RecordingCompleteness
+
+        incomplete_reason = RecordingCompleteness(self.repository).block_reason(test_case, None)
+
+        if incomplete_reason:
+
+            return {"success": False, "error": incomplete_reason}
+
         valid, syntax_error = self._validate_python_syntax(script)
 
         if not valid:
@@ -2310,6 +2350,59 @@ class TestExecutionManager:
                 ),
             }
 
+        # EVIDENCE-BASED VERDICT (Task 1): a process exit code of 0 is NOT a pass.
+        # A pass requires the step-verifying harness to have executed EVERY
+        # recorded action/assertion step and to have observed each one pass its
+        # post-action verification (PlaywrightRunner.run_script_interactive()).
+        # The run is unattended, so a failed step is never "repaired by an
+        # operator" -- it is cancelled and reported as a failure.
+        events = []
+
+        def _remember(event):
+            events.append({
+                "timestamp": datetime.now().isoformat(),
+                "type": event.get("event"),
+                "event": event,
+            })
+
+        result = self.playwright_runner.run_script_interactive(
+            script,
+            tc_number=test_case.get("tc_number", "script"),
+            on_step_failed=lambda event: {"action": "cancel"},
+            on_repaired=lambda repair: False,   # unattended: reported, never silently persisted
+            on_runtime_event=_remember,
+            max_repair_rounds=1,
+            script_source=(test_case.get("active_script_source") or "AUTO").upper(),
+            script_id=test_case_id,
+        )
+
+        if result.get("interactive_supported"):
+
+            result["runtime_activity"] = events
+            result["execution_mode"] = "evidence"
+
+            if result.get("cancelled"):
+
+                # A step failed and nobody was there to repair it: that is a FAIL,
+                # not a user cancellation.
+                result["cancelled"] = False
+                result["success"] = False
+                result.setdefault("final_message", "A step failed during the unattended run.")
+
+            if "error" in result and not result.get("stdout"):
+
+                return result
+
+            outcome = "Pass" if result.get("success") else "Fail"
+
+            self.repository.update_result(test_case_id, outcome)
+
+            result["outcome"] = outcome
+
+            return result
+
+        # The script's structure cannot be step-verified. Run it anyway so a real
+        # failure is still reported, but a clean exit alone is NEVER recorded as Pass.
         result = self.playwright_runner.run_script(
             script,
             tc_number=test_case.get("tc_number", "script"),
@@ -2318,16 +2411,24 @@ class TestExecutionManager:
 
         if "error" in result and not result.get("stdout"):
 
-            # Didn't even run (e.g. Playwright not installed) —
-            # don't record a Pass/Fail result for this, since the
-            # test itself never actually executed.
             return result
 
-        outcome = "Pass" if result.get("success") else "Fail"
+        if result.get("success"):
 
-        self.repository.update_result(test_case_id, outcome)
+            result["success"] = False
+            result["not_verified"] = True
+            result["execution_mode"] = "exit-code-only"
+            result["final_message"] = (
+                "NOT VERIFIED: the script exited normally, but its structure does not allow "
+                "step-level verification, so no per-step execution evidence exists. A process "
+                "exit code alone is not recorded as a pass. Re-import or re-record the script "
+                "in the supported structure (def run(playwright) with one action per statement)."
+            )
+            return result
 
-        result["outcome"] = outcome
+        result["outcome"] = "Fail"
+
+        self.repository.update_result(test_case_id, "Fail")
 
         return result
 
@@ -2399,6 +2500,16 @@ class TestExecutionManager:
             script_fingerprint,
             len(script),
         )
+
+        from Core.recording_completeness import RecordingCompleteness
+
+        incomplete_reason = RecordingCompleteness(self.repository).block_reason(test_case, None)
+        if incomplete_reason:
+            return {
+                "interactive_supported": True,
+                "success": False,
+                "error": incomplete_reason,
+            }
 
         valid, validation_error = self._validate_python_syntax(script)
         if not valid:
@@ -2736,6 +2847,19 @@ class TestExecutionManager:
                         lines[index] = indent + corrected.strip()
                         replaced = True
                         corrected_metadata = self._structured_step_metadata(corrected, "repaired/user-selected")
+                        # A repair can also change WHAT the step does (an imported 'change' on a native
+                        # dropdown becomes select_option).  The step's metadata must then describe the new
+                        # action, or the next replay judges the corrected code against the old metadata.
+                        action_changed = (
+                            corrected_metadata["action_type"]
+                            != self._structured_step_metadata(original, "x")["action_type"]
+                        )
+                        if action_changed:
+                            for meta_index in range(marker_index + 1, end):
+                                if re.match(r"^\s*#\s*ACTION_TYPE:", lines[meta_index]):
+                                    lines[meta_index] = indent + metadata_comment("ACTION_TYPE", corrected_metadata["action_type"])
+                                if corrected_metadata["action_type"] == "select_option" and re.match(r"^\s*#\s*FIELD_TYPE:", lines[meta_index]):
+                                    lines[meta_index] = indent + metadata_comment("FIELD_TYPE", "dropdown")
                         if corrected_metadata["primary_locator"] != "-":
                             selection = repair.get("selection") or {}
                             selected = selection.get("selected_candidate") or {}

@@ -5,6 +5,10 @@ Knowledge Router
 Version: 1.0
 """
 
+import re
+
+import re
+
 from Core.logger import Logger
 
 
@@ -12,6 +16,14 @@ class KnowledgeRouter:
 
     def __init__(self):
         self.logger = Logger.get_logger()
+
+    @staticmethod
+    def _has(text, word):
+        # QA-AI-STUDIO-TASK4: whole-word match. The previous substring test
+        # made short keywords such as "gd" and "tp" fire inside ordinary words.
+        return re.search(
+            r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])", text
+        ) is not None
 
     def route(self, question: str):
 
@@ -59,12 +71,12 @@ class KnowledgeRouter:
         ]
 
         for word in local_keywords:
-            if word in q:
+            if self._has(q, word):
                 self.logger.info("Knowledge Router -> LOCAL")
                 return "local"
 
         for word in global_keywords:
-            if word in q:
+            if self._has(q, word):
                 self.logger.info("Knowledge Router -> GLOBAL")
                 return "global"
 

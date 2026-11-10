@@ -22,7 +22,7 @@ from openpyxl import Workbook
 
 from Core.automation_execution_repository import AutomationExecutionRepository
 from Core.qa_engineering_version_service import QaEngineeringVersionService
-from Core.test_case_workbook import COLUMNS, REQUIRED_FIELDS, normalize_status, normalize_template_tokens, normalize_test_case, workbook_bytes
+from Core.test_case_workbook import COLUMNS, PUBLISH_COLUMNS, REQUIRED_FIELDS, normalize_status, normalize_template_tokens, normalize_test_case, workbook_bytes
 from Database.db_manager import DatabaseManager
 
 
@@ -177,6 +177,36 @@ class PublishingRepository:
         for row in rows: result.setdefault(row["stable_test_case_id"],row)
         return result
 
+    def with_publication_state(self, rows):
+        """Read both destinations independently from successful publication history."""
+        identifiers = list(dict.fromkeys(str(row.get("tc_id") or row.get("tc_number") or row.get("id")) for row in rows))
+        states = {}
+        conn = self.db.get_connection(); conn.row_factory = self._dict_factory
+        try:
+            for offset in range(0, len(identifiers), 500):
+                batch = identifiers[offset:offset + 500]
+                marks = ",".join("?" for _ in batch)
+                records = conn.execute(
+                    f"SELECT stable_test_case_id,target,external_id,external_custom_id FROM publication_items "
+                    f"WHERE status='PUBLISHED' AND target IN ('CLICKUP','TESTMANAGER') "
+                    f"AND stable_test_case_id IN ({marks}) ORDER BY id DESC", batch,
+                ).fetchall()
+                for record in records:
+                    identifier = str(record.get("external_id") or record.get("external_custom_id") or "").strip()
+                    if not identifier:
+                        continue
+                    state = states.setdefault(record["stable_test_case_id"], {
+                        "publishing_status": "Published", "clickup_id": "", "testmanager_id": "",
+                    })
+                    field = "clickup_id" if record["target"] == "CLICKUP" else "testmanager_id"
+                    if not state[field] and identifier:
+                        state[field] = identifier
+        finally:
+            conn.close()
+        return [dict(row, **states.get(str(row.get("tc_id") or row.get("tc_number") or row.get("id")), {
+            "publishing_status": "Not Published", "clickup_id": "", "testmanager_id": "",
+        })) for row in rows]
+
     def create_run(self,target,config_id,version_id,file_id,count,username):
         run_uuid=str(uuid.uuid4()); now=datetime.now().isoformat(); conn=self.db.get_connection()
         cursor=conn.execute("INSERT INTO publication_runs(run_uuid,target,configuration_id,source_version_id,source_file_id,selected_count,status,published_by,created_date) VALUES(?,?,?,?,?,?,? ,?,?)",(run_uuid,target,int(config_id),int(version_id),int(file_id),count,"RUNNING",username,now)); conn.commit(); run_id=cursor.lastrowid; conn.close(); return run_id,run_uuid
@@ -204,13 +234,13 @@ class PublishingService:
         stable_ids=[str(row.get("tc_id") or row.get("tc_number") or row.get("id")) for row in rows]
         published=self.repository.latest_clickup_publications(stable_ids)
         for row in rows:
-            run=latest.get(row.get("id")) or {}; method=str(row.get("automation_type") or row.get("execution") or "").strip()
+            run=latest.get(row.get("id")) or {}; method=str(row.get("execution") or row.get("automation_type") or "").strip()
             if method not in {"Playwright","API","SQL"}: method="Manual"
-            raw=run.get("outcome") or run.get("status") or row.get("last_result") or row.get("status") or ""
+            raw=row.get("status") or row.get("last_result") or run.get("outcome") or run.get("status") or ""
             status=normalize_status({"status":raw})
             stable_id=str(row.get("tc_id") or row.get("tc_number") or row.get("id")); publication=published.get(stable_id)
             row.update({"stable_id":stable_id,"execution_type":method,"test_case_status":status,"execution_method":method,"execution_result":status,"execution":method,"status":status,"last_execution":run.get("finished_at") or run.get("created_date") or row.get("last_run_date") or "","run_id":run.get("run_uuid") or "","publishing_status":"Published" if publication else "Not Published","published_external_id":(publication or {}).get("external_id") or "","published_external_custom_id":(publication or {}).get("external_custom_id") or "","published_external_url":(publication or {}).get("external_url") or ""})
-        return {"version":loaded["version"],"file":loaded["file"],"columns":[{"field":field,"label":label,"required":field in REQUIRED_FIELDS} for field,label in COLUMNS],"test_cases":rows}
+        return {"version":loaded["version"],"file":loaded["file"],"columns":[{"field":field,"label":label,"required":field in REQUIRED_FIELDS} for field,label in COLUMNS],"test_cases":self.repository.with_publication_state(rows)}
 
     @staticmethod
     def validate_rows(rows):
@@ -430,7 +460,7 @@ class PublishingService:
                 destinations=list(mappings); sheet.append(destinations)
                 for item in preview["rows"]: sheet.append([item["fields"].get(key,"") for key in destinations])
                 stream=BytesIO(); book.save(stream); return stream.getvalue()
-        return workbook_bytes(rows)
+        return workbook_bytes(self.repository.with_publication_state(rows), columns=PUBLISH_COLUMNS)
 
     def _request(self,config,method,path,payload=None):
         raw=self.repository.get_config(config["id"],include_secret=True)

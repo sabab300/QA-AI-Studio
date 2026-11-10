@@ -206,6 +206,15 @@ class WebInteractiveExecutionSession:
                 "or Record Manually first."
             )
 
+        # Task-1 reliability fix: a recording missing user actions cannot be replayed either.
+        from Core.recording_completeness import RecordingCompleteness
+
+        incomplete_reason = RecordingCompleteness().block_reason(test_case, None)
+
+        if incomplete_reason:
+
+            raise ValueError(incomplete_reason)
+
         run = self.runs.create_run(
             test_case, self.executed_by_user_id, self.executed_by_username,
         )
